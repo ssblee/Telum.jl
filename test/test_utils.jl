@@ -1,6 +1,11 @@
 using LinearAlgebra
 using SparseArrayKit
 using Test
+const _compress_sector = QSpaces._compress_sector
+const _contract_om_axis = QSpaces._contract_om_axis
+const _row_qlabel = QSpaces._row_qlabel
+const change_dir = QSpaces.change_dir
+const contract_v2 = QSpaces.contract_v2
 ⊗(a, b) = kron(b, a)
 
 """
@@ -222,14 +227,14 @@ function doCLD(ozin::AbstractVector, rhoV2in::AbstractVector,
     return ff, gg
 end
 
-function NRG_IterDiag(H0::QSpaces.QSpace{T, 2, N}, 
-    A0::QSpaces.QSpace{T, 3, N}, 
+function NRG_IterDiag(H0::QSpace{T, 2, N}, 
+    A0::QSpace{T, 3, N}, 
     λ::Float64, 
     ff::Vector{Float64}, 
-    q0F::QSpaces.QSpace{T, 3, N}, 
+    q0F::QSpace{T, 3, N}, 
     gg::Vector{Float64}, 
-    n0::QSpaces.QSpace{T, 2, N}, 
-    q0Z::QSpaces.QSpace{T, 2, N}, 
+    n0::QSpace{T, 2, N}, 
+    q0Z::QSpace{T, 2, N}, 
     Nkeep::Int) where {T, N}
     # Placeholder for the actual NRG iteration and diagonalization routine.
     # This function would perform the iterative diagonalization of the Wilson
@@ -241,8 +246,8 @@ function NRG_IterDiag(H0::QSpaces.QSpace{T, 2, N},
 
     Nsite = length(ff) + 1
     EScale = [1, (λ.^(((Nsite-2):-1:0)./2).*ff[end])...]
-    AK = Vector{QSpaces.QSpace{T, 3, N}}(undef, Nsite)
-    AD = Vector{QSpaces.QSpace{T, 3, N}}(undef, Nsite)
+    AK = Vector{QSpace{T, 3, N}}(undef, Nsite)
+    AD = Vector{QSpace{T, 3, N}}(undef, Nsite)
     EK = []
     ED = []
     E0 = Vector{Float64}(undef, Nsite)
@@ -252,41 +257,41 @@ function NRG_IterDiag(H0::QSpaces.QSpace{T, 2, N},
     Fprev = q0F
     for itN=1:Nsite
         si = itN - 1
-        Z = QSpaces.QSpace(q0Z, ("s,$si", "s,$si"))
-        n0 = QSpaces.QSpace(n0, ("s,$si", "s,$si"))
-        F = QSpaces.QSpace(q0F, ("s,$si", "s,$si", "op"))
+        Z = QSpace(q0Z, ("s,$si", "s,$si"))
+        n0 = QSpace(n0, ("s,$si", "s,$si"))
+        F = QSpace(q0F, ("s,$si", "s,$si", "op"))
         if itN == 1
             AK[itN] = A0
             # Do not update AD since there is no discarded states
-            e = QSpaces.eigQS(H0)
-            ek, ed = QSpaces.discard_eigQS(e, Nkeep, "K,$si", "D,$si")
+            e = eigQS(H0)
+            ek, ed = discard_eigQS(e, Nkeep, "K,$si", "D,$si")
             push!(EK, ek.eig_list)
             push!(ED, ed.eig_list)
 
         else
-            l = QSpaces.findleg(Hprev; dir='-')
-            Anow = QSpaces.getIdentity((Hprev, l), (Z, 2); itags="L,$si")
+            l = findleg(Hprev; dir='-')
+            Anow = getIdentity((Hprev, l), (Z, 2); itags="L,$si")
             
-            Hnow = QSpaces.lock(Anow'; itags="L") * (Hprev * Anow)
+            Hnow = lock(Anow'; itags="L") * (Hprev * Anow)
             Hnow = Hnow * (EScale[itN-1] / EScale[itN])
 
-            Fnow = F' * QSpaces.lock(Z, 2)
-            Hhop = QSpaces.lock(Anow'; itags="L") * (Fprev * Anow * Fnow)
+            Fnow = F' * lock(Z, 2)
+            Hhop = lock(Anow'; itags="L") * (Fprev * Anow * Fnow)
             Hhop = Hhop * (ff[itN-1] / EScale[itN])
             Hhop = Hhop + Hhop'
 
-            Hon = QSpaces.lock(Anow'; itags="L") * (n0 * Anow)
+            Hon = lock(Anow'; itags="L") * (n0 * Anow)
             Hon = (gg[itN-1] / EScale[itN]) * Hon
 
             Hnow = Hnow + Hhop + Hon
             Hnow = (Hnow + Hnow') / 2 # Ensure Hermiticity
 
             # Eigendecomposition and discard spaces
-            e = QSpaces.eigQS(Hnow)
+            e = eigQS(Hnow)
             e0 = e.eig_list[1][1] # Ground state energy
             E0[itN] = e0
 
-            ek, ed = QSpaces.discard_eigQS(e, Nkeep, "K,$si", "D,$si")
+            ek, ed = discard_eigQS(e, Nkeep, "K,$si", "D,$si")
 
             # Shift energies to make the lowest energy value be 0
             Hprev = ek.D - e0
@@ -298,7 +303,7 @@ function NRG_IterDiag(H0::QSpaces.QSpace{T, 2, N},
 
         if itN < Nsite
             ak = AK[itN]
-            Fprev = ak' * QSpaces.lock(F * ak; itags="K,$si")
+            Fprev = ak' * lock(F * ak; itags="K,$si")
         end
     end
 
@@ -317,15 +322,15 @@ function NRG_test()
 
     ff, gg = doCLD([-1, 1], [1, 1].*(Γ/pi), λ, N)
 
-    option = QSpaces.FermionSOptions(LurCGT.U1, LurCGT.SU{2}, nothing, 1)
-    q0 = QSpaces.getLocalSpace(option, ("s,0", "s,0", "op"))
-    n0 = QSpaces.lock(q0.F', 2) * q0.F
+    option = FermionSOptions(U1, SU{2}, nothing, 1)
+    q0 = getLocalSpace(option, ("s,0", "s,0", "op"))
+    n0 = lock(q0.F', 2) * q0.F
 
-    H0 = U/2*QSpaces.lock(n0, 1) * (n0 - q0.I) + epsd * n0 
-    v = QSpaces.getvac(q0.I, ("K,vac", "K,vac"))
-    A0 = QSpaces.permuteQS(QSpaces.getIdentity((v, 2), (H0, 2); itags="K,0"), (1, 3, 2))
+    H0 = U/2*lock(n0, 1) * (n0 - q0.I) + epsd * n0 
+    v = getvac(q0.I, ("K,vac", "K,vac"))
+    A0 = permuteQS(getIdentity((v, 2), (H0, 2); itags="K,0"), (1, 3, 2))
 
-    H0 = A0' * QSpaces.lock(A0 * H0, 2)
+    H0 = A0' * lock(A0 * H0, 2)
 
     return NRG_IterDiag(H0, A0, λ, ff, q0.F, gg, n0, q0.Z, Nkeep)
 end
@@ -535,8 +540,8 @@ function get_offset(symm::Tuple, splist::Vector)
     
     for (RMTd, qlabels) in splist
         irep_dim = prod(
-            LurCGT.isabelian(symm[n]) ? 1 :
-            LurCGT.dimension(LurCGT.getNsave_irep(symm[n], BigInt, qlabels[n]))
+            isabelian(symm[n]) ? 1 :
+            dimension(getNsave_irep(symm[n], BigInt, qlabels[n]))
             for n in 1:N)
         sz = irep_dim * RMTd
         sector_size[qlabels] = sz
@@ -556,7 +561,7 @@ end
 
 # ─── to_sparse_array ───────────────────────────────────────────────────────────
 # Convert a QSpace to a sparse array using its spaces field for offset computation.
-function to_sparse_array(q::QSpaces.QSpace{T, QD, N, RD},
+function to_sparse_array(q::QSpace{T, QD, N, RD},
     ::Type{FT} = Float64) where {T, QD, N, RD, FT}
 
     symm = q.symm
@@ -584,7 +589,7 @@ function to_sparse_array(q::QSpaces.QSpace{T, QD, N, RD},
             cgr = r.cgrs[n]
             M   = size(cgr.wmat.data, 2)
 
-            if LurCGT.isabelian(S)
+            if isabelian(S)
                 # Abelian symmetry: irrep dim = 1 at every leg, outer multiplicity = 1.
                 # CGT is trivially the scalar 1; the contracted result is just the
                 # w-matrix row reshaped to (1,...,1, M).
@@ -595,14 +600,14 @@ function to_sparse_array(q::QSpaces.QSpace{T, QD, N, RD},
                 nin, nout = cgr.legdir
                 insp  = Tuple(cgr.qlabels[i] for i in 1:nin)
                 outsp = Tuple(cgr.qlabels[i] for i in nin+1:QD)
-                insp_, _ = LurCGT.remove_zeros(S, insp)
-                outsp_, _ = LurCGT.remove_zeros(S, outsp)
+                insp_, _ = remove_zeros(S, insp)
+                outsp_, _ = remove_zeros(S, outsp)
 
-                CGTom = LurCGT.get_CGTom(S, insp_, outsp_)
+                CGTom = get_CGTom(S, insp_, outsp_)
                 om    = CGTom.totalOM
                 @assert om == size(cgr.wmat.data, 1) "outer multiplicity mismatch for symmetry $n"
 
-                canbasis = LurCGT.get_canonical_basis(S, insp, outsp, CGTom)
+                canbasis = get_canonical_basis(S, insp, outsp, CGTom)
 
                 # b. Allocate (CGT_shape..., om).
                 cgt_shape = size(Array(canbasis[1]))   # (d_in_1,...,d_out_NO) in canonical order
@@ -655,7 +660,7 @@ function to_sparse_array(q::QSpaces.QSpace{T, QD, N, RD},
         end
 
         # ── Step 3c: Scatter block into result at the correct qlabel offsets ─
-        ranges = Tuple(leg_offsets[l][LurCGT._row_qlabel(r, l)] for l in 1:QD)
+        ranges = Tuple(leg_offsets[l][_row_qlabel(r, l)] for l in 1:QD)
         result[ranges...] .+= block
     end
 
@@ -700,11 +705,11 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
         end
     end
 
-    new_wmats = Tuple(QSpaces.QTensor{Float64, 2}[QSpaces.QTensor(W[n][p]) for p in 1:K]
+    new_wmats = Tuple(QTensor{Float64, 2}[QTensor(W[n][p]) for p in 1:K]
                       for n in 1:N)
-    new_RMTs  = [QSpaces.QTensor(RMTs[p]) for p in 1:K]
+    new_RMTs  = [QTensor(RMTs[p]) for p in 1:K]
 
-    U_mats, result_RMT = LurCGT._compress_sector(new_wmats, new_RMTs, QD_out, 0.0)
+    U_mats, result_RMT = _compress_sector(new_wmats, new_RMTs, QD_out, 0.0)
 
     if verbose
         for n in 1:N
@@ -716,7 +721,7 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
     # Reconstruct: contract result_RMT with U[n] along axis QD_out+n for each n.
     reconstructed = result_RMT.data
     for n in 1:N
-        reconstructed = LurCGT._contract_om_axis(reconstructed, U_mats[n].data, QD_out + n)
+        reconstructed = _contract_om_axis(reconstructed, U_mats[n].data, QD_out + n)
     end
     # shape: (free_sizes..., OM3_sizes...)
 
@@ -725,7 +730,7 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
     for p in 1:K
         contrib = RMTs[p]
         for n in 1:N
-            contrib = LurCGT._contract_om_axis(contrib, W[n][p], QD_out + n)
+            contrib = _contract_om_axis(contrib, W[n][p], QD_out + n)
         end
         direct .+= contrib
     end
@@ -740,12 +745,12 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
     println("test_compress_sector passed (N=$N, K=$K, QD_out=$QD_out).")
 end
 
-function test_FAcont(option::QSpaces.LocalSpaceOptions)
-    q = QSpaces.getLocalSpace(option);
-    qi1 = QSpaces.QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpaces.QSpace(q.I, ("lur2", "lur2"))
-    qf = QSpaces.QSpace(q.F, ("lur2", "lur2", "op"))
-    a = QSpaces.getIdentity((qi1, 2), (qi2, 2));
+function test_FAcont(option::LocalSpaceOptions)
+    q = getLocalSpace(option);
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qf = QSpace(q.F, ("lur2", "lur2", "op"))
+    a = getIdentity((qi1, 2), (qi2, 2));
 
     ct = qf * a
     Farr = to_sparse_array(q.F)
@@ -760,22 +765,22 @@ function test_FAcont(option::QSpaces.LocalSpaceOptions)
     return q, a, ct, ctarr1, ctarr2
 end
 
-function test_1jpair(option::QSpaces.LocalSpaceOptions)
-    q = QSpaces.getLocalSpace(option);
-    qi1 = QSpaces.QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpaces.QSpace(q.I, ("lur2", "lur2"))
+function test_1jpair(option::LocalSpaceOptions)
+    q = getLocalSpace(option);
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
 
-    q1, q2 = QSpaces.get1jpair(qi1, 2)
-    mult = LurCGT.contract(q1, 2, q2, 1)
+    q1, q2 = get1jpair(qi1, 2)
+    mult = contract(q1, 2, q2, 1)
     arr1 = to_sparse_array(q.I)
     arr2 = to_sparse_array(mult)
 
     println(norm(arr1 - arr2))
     @test norm(arr1 - arr2) < 1e-10
 
-    a = QSpaces.getIdentity((qi1, 2), (qi2, 2))
-    q1, q2 = QSpaces.get1jpair(a, 3)
-    mult = LurCGT.contract(q1, 2, q2, 1)
+    a = getIdentity((qi1, 2), (qi2, 2))
+    q1, q2 = get1jpair(a, 3)
+    mult = contract(q1, 2, q2, 1)
 
     arr1 = to_sparse_array(mult)
     sz = size(arr1)[1]
@@ -802,12 +807,12 @@ end
 # Physical qlabels do not change under conjugation (only stored CGR ordering
 # flips), so both sparse arrays have the same shape and qlabel offsets.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_conj(option::QSpaces.LocalSpaceOptions)
-    q   = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpaces.QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpaces.QSpace(q.I, ("lur2", "lur2"))
-    a   = QSpaces.getIdentity((qi1, 2), (qi2, 2))
-    qf  = QSpaces.QSpace(q.F, ("lur2", "lur2", "op"))
+function test_conj(option::LocalSpaceOptions)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    a   = getIdentity((qi1, 2), (qi2, 2))
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a
 
     # Pairs (label, QSpace) to test
@@ -852,7 +857,7 @@ end
 #   4. Permute reconstructed to match original leg order
 #   5. Convert both to sparse arrays and compute norm of difference
 # ─────────────────────────────────────────────────────────────────────────────
-function test_svdQS(q::QSpaces.QSpace{T, QD, N, RD},
+function test_svdQS(q::QSpace{T, QD, N, RD},
                     left_legs;
                     cutoff::Float64 = 1e-12,
                     tol::Float64 = 1e-9,
@@ -863,7 +868,7 @@ function test_svdQS(q::QSpaces.QSpace{T, QD, N, RD},
     NL, NR = length(left_legs), length(right_legs)
     
     # Step 1: Perform SVD
-    U, S, Vd = QSpaces.svdQS(q, left_legs; cutoff=cutoff)
+    U, S, Vd = svdQS(q, left_legs; cutoff=cutoff)
     
     if verbose
         println("SVD completed:")
@@ -934,7 +939,7 @@ function test_svdQS(q::QSpaces.QSpace{T, QD, N, RD},
     # So perm[orig_leg] = inv_perm[orig_leg], i.e., perm = inv_perm
     
     perm = Tuple(inv_perm)
-    rec_permuted = QSpaces.permuteQS(rec, perm)
+    rec_permuted = permuteQS(rec, perm)
     
     if verbose
         println("  rec_permuted: legs permuted to original order")
@@ -976,12 +981,12 @@ end
 # directions, so the pairing is always leg-for-leg given that all legs of q
 # already carry distinct QIndex values (full-rank contraction → 0D scalar).
 # ─────────────────────────────────────────────────────────────────────────────
-function test_norm(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-9)
-    q   = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpaces.QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpaces.QSpace(q.I, ("lur2", "lur2"))
-    a   = QSpaces.getIdentity((qi1, 2), (qi2, 2); itags="lurlur")
-    qf  = QSpaces.QSpace(q.F, ("lur2", "lur2", "op"))
+function test_norm(option::LocalSpaceOptions; tol::Float64 = 1e-9)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    a   = getIdentity((qi1, 2), (qi2, 2); itags="lurlur")
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a   # rank-4: legs (lur1_in, lur2_in, lur2_out, op)
 
     cases = [
@@ -1024,8 +1029,8 @@ end
 #   (d) eig_list order  : sorted ascending by eigenvalue
 #   (e) eig_list space  : each entry carries its sector and in-sector index
 # ─────────────────────────────────────────────────────────────────────────────
-function test_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-9)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
 
     # Copy q.I (keeps CGRs/inds/spaces intact) then overwrite each RMT block
     # with a random real-symmetric (= Hermitian) matrix of the same block size.
@@ -1041,7 +1046,7 @@ function test_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-9)
         r.RMT.data .= reshape(Float64.(H), sz)
     end
 
-    result = QSpaces.eigQS(A; hermitian = true)
+    result = eigQS(A; hermitian = true)
     @test isnothing(result.V_inv)
     D = result.D
     V = result.V
@@ -1049,7 +1054,7 @@ function test_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-9)
     println("test_eigQS: $(length(eig_list)) eigenvalues, $(length(D.rows)) D-rows, $(length(V.rows)) V-rows")
 
     # ── (a) Reconstruction: V * D * V' ≈ A ──────────────────────────────────
-    rec      = QSpaces.lock(V, 1) * (D * V')
+    rec      = lock(V, 1) * (D * V')
     arr_A    = Array(to_sparse_array(A))
     arr_rec  = Array(to_sparse_array(rec))
     ref_norm = max(norm(arr_A), 1.0)
@@ -1058,7 +1063,7 @@ function test_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-9)
     @test diff_a < tol
 
     # ── (b) Orthonormality: V' * V ≈ I ──────────────────────────────────────
-    VtV     = V' * QSpaces.lock(V, 2)
+    VtV     = V' * lock(V, 2)
     arr_VtV = Array(to_sparse_array(VtV))
     n_bond  = size(arr_VtV, 1)
     diff_b  = norm(arr_VtV - Matrix(I, n_bond, n_bond))
@@ -1098,8 +1103,8 @@ end
 #   (d) D and V share the same bond space: D.spaces[1] == V.spaces[2]
 #   (e) Bond qlabels of D (and V) are a subset of input qlabels
 # ─────────────────────────────────────────────────────────────────────────────
-function test_spaces_eigQS(option::QSpaces.LocalSpaceOptions)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_spaces_eigQS(option::LocalSpaceOptions)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
     rng = Random.MersenneTwister(0)
     for r in A.rows
@@ -1112,7 +1117,7 @@ function test_spaces_eigQS(option::QSpaces.LocalSpaceOptions)
     # (a) Input spaces are equal on both legs
     @test q.I.spaces[1] == q.I.spaces[2]
 
-    result = QSpaces.eigQS(A; hermitian = true)
+    result = eigQS(A; hermitian = true)
     D = result.D
     V = result.V
 
@@ -1137,8 +1142,8 @@ end
 # Verify that sectors present only in the space list are treated as zero blocks:
 # zero eigenvalues appear in eig_list and identity rows are inserted in V.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_missing_spaces_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-9)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_missing_spaces_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
     @test !isempty(q.I.rows)
 
     removed_row = q.I.rows[1]
@@ -1146,9 +1151,9 @@ function test_missing_spaces_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float
     removed_dim = size(removed_row.RMT.data, 1)
 
     kept_rows = copy(q.I.rows[2:end])
-    A = QSpaces.QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
+    A = QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
 
-    result = QSpaces.eigQS(A; hermitian = true)
+    result = eigQS(A; hermitian = true)
     D = result.D
     V = result.V
 
@@ -1162,7 +1167,7 @@ function test_missing_spaces_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float
 
     @test any(ql == removed_sector for (_, ql) in D.spaces[1])
 
-    VtV = V' * QSpaces.lock(V, 2)
+    VtV = V' * lock(V, 2)
     arr_VtV = Array(to_sparse_array(VtV))
     @test norm(arr_VtV - Matrix(I, size(arr_VtV, 1), size(arr_VtV, 2))) < tol
 end
@@ -1171,8 +1176,8 @@ end
 # Verify that truncation preserves sectors selected only through zero
 # eigenvalues, even when the corresponding D rows are absent.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_truncate_missing_zero_spaces_eigQS(option::QSpaces.LocalSpaceOptions)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_truncate_missing_zero_spaces_eigQS(option::LocalSpaceOptions)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
     @test !isempty(q.I.rows)
 
     removed_row = q.I.rows[1]
@@ -1180,10 +1185,10 @@ function test_truncate_missing_zero_spaces_eigQS(option::QSpaces.LocalSpaceOptio
     removed_dim = size(removed_row.RMT.data, 1)
 
     kept_rows = copy(q.I.rows[2:end])
-    A = QSpaces.QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
+    A = QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
 
-    result = QSpaces.eigQS(A; hermitian = true)
-    kept, discarded = QSpaces.discard_eigQS(result, removed_dim, "eigK", "eigD"; hermitian = true)
+    result = eigQS(A; hermitian = true)
+    kept, discarded = discard_eigQS(result, removed_dim, "eigK", "eigD"; hermitian = true)
     eig_tag = result.D.inds[1].itags
     v_orig_leg = only(findall(i -> result.V.inds[i].itags != eig_tag, 1:2))
     v_eig_leg = only(findall(i -> result.V.inds[i].itags == eig_tag, 1:2))
@@ -1205,8 +1210,8 @@ function test_truncate_missing_zero_spaces_eigQS(option::QSpaces.LocalSpaceOptio
     @test any(ql == removed_sector for (_, ql) in kept.V.spaces[2])
     @test all(ql != removed_sector for (_, ql) in discarded.D.spaces[1])
 
-    result_full = QSpaces.eigQS_full(A)
-    kept_full, discarded_full = QSpaces.discard_eigQS(result_full, removed_dim, "eigKf", "eigDf"; hermitian = false)
+    result_full = eigQS_full(A)
+    kept_full, discarded_full = discard_eigQS(result_full, removed_dim, "eigKf", "eigDf"; hermitian = false)
     eig_tag_full = result_full.D.inds[1].itags
     v_full_orig_leg = only(findall(i -> result_full.V.inds[i].itags != eig_tag_full, 1:2))
     v_full_eig_leg = only(findall(i -> result_full.V.inds[i].itags == eig_tag_full, 1:2))
@@ -1228,8 +1233,8 @@ end
 # Verify that eigenvalue truncation keeps the Nkeep smallest eigenvalues and
 # splits the eigendecomposition consistently into kept and discarded parts.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_truncate_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-9)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_truncate_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
 
     offset = 0.0
@@ -1241,12 +1246,12 @@ function test_truncate_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1
         r.RMT.data .= reshape(Matrix(Diagonal(vals)), sz)
     end
 
-    result = QSpaces.eigQS(A; hermitian = true)
+    result = eigQS(A; hermitian = true)
     D = result.D
     V = result.V
     eig_list = result.eig_list
     Nkeep = min(3, length(eig_list))
-    kept, discarded = QSpaces.discard_eigQS(result, Nkeep, "eigK", "eigD"; hermitian = true)
+    kept, discarded = discard_eigQS(result, Nkeep, "eigK", "eigD"; hermitian = true)
     Vkeep = kept.V
     Dkeep = kept.D
     eig_keep = kept.eig_list
@@ -1297,24 +1302,24 @@ function test_truncate_eigQS(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1
     @test issubset(discard_qls, Set(ql for (_, ql) in D.spaces[1]))
 
     if !isempty(Dkeep.rows)
-        rec_keep = QSpaces.lock(Vkeep, 1) * (Dkeep * Vkeep')
+        rec_keep = lock(Vkeep, 1) * (Dkeep * Vkeep')
         arr_keep = Array(to_sparse_array(rec_keep))
         @test isfinite(norm(arr_keep))
     end
 
     if !isempty(Ddiscard.rows)
-        rec_discard = QSpaces.lock(Vdiscard, 1) * (Ddiscard * Vdiscard')
+        rec_discard = lock(Vdiscard, 1) * (Ddiscard * Vdiscard')
         arr_discard = Array(to_sparse_array(rec_discard))
         @test isfinite(norm(arr_discard))
     end
 
     rec_total = nothing
     if !isempty(Dkeep.rows)
-        rec_keep = QSpaces.lock(Vkeep, 1) * (Dkeep * Vkeep')
+        rec_keep = lock(Vkeep, 1) * (Dkeep * Vkeep')
         rec_total = isnothing(rec_total) ? rec_keep : rec_total + rec_keep
     end
     if !isempty(Ddiscard.rows)
-        rec_discard = QSpaces.lock(Vdiscard, 1) * (Ddiscard * Vdiscard')
+        rec_discard = lock(Vdiscard, 1) * (Ddiscard * Vdiscard')
         rec_total = isnothing(rec_total) ? rec_discard : rec_total + rec_discard
     end
 
@@ -1328,8 +1333,8 @@ end
 # Verify that the result struct and discard path also work for the full
 # non-Hermitian eigendecomposition, including V_inv slicing.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_eigQS_full_discard(option::QSpaces.LocalSpaceOptions)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_eigQS_full_discard(option::LocalSpaceOptions)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
     rng = Random.MersenneTwister(7)
 
@@ -1340,11 +1345,11 @@ function test_eigQS_full_discard(option::QSpaces.LocalSpaceOptions)
         r.RMT.data .= reshape(ComplexF64.(M), sz)
     end
 
-    result = QSpaces.eigQS_full(A)
+    result = eigQS_full(A)
     @test !isnothing(result.V_inv)
 
     Nkeep = min(2, length(result.eig_list))
-    kept, discarded = QSpaces.discard_eigQS(result, Nkeep, "eigK", "eigD"; hermitian = false)
+    kept, discarded = discard_eigQS(result, Nkeep, "eigK", "eigD"; hermitian = false)
 
     @test !isnothing(kept.V_inv)
     @test !isnothing(discarded.V_inv)
@@ -1366,8 +1371,8 @@ end
 # Verify that discard_eigQS retags the bond legs of D, V, and V_inv for kept
 # and discarded eigenspaces independently.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_discard_eigQS_tags(option::QSpaces.LocalSpaceOptions)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_discard_eigQS_tags(option::LocalSpaceOptions)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
     rng = Random.MersenneTwister(17)
 
@@ -1378,10 +1383,10 @@ function test_discard_eigQS_tags(option::QSpaces.LocalSpaceOptions)
         r.RMT.data .= reshape(ComplexF64.(M), sz)
     end
 
-    result = QSpaces.eigQS_full(A, "origEig")
+    result = eigQS_full(A, "origEig")
     kept_tag = "keptEig"
     discarded_tag = "discardedEig"
-    kept, discarded = QSpaces.discard_eigQS(
+    kept, discarded = discard_eigQS(
         result,
         min(2, length(result.eig_list)),
         kept_tag,
@@ -1424,12 +1429,12 @@ end
 #   (i) St left ⊆ Ut bond  (S reduced; U/Vd bond inherits full pre-trunc space)
 #   (j) Ut / Vdt non-bond leg spaces still match input qf spaces
 # ─────────────────────────────────────────────────────────────────────────────
-function test_spaces_svdQS(option::QSpaces.LocalSpaceOptions)
-    q   = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpaces.QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpaces.QSpace(q.I, ("lur2", "lur2"))
-    a   = QSpaces.getIdentity((qi1, 2), (qi2, 2); itags="lurlur")
-    qf  = QSpaces.QSpace(q.F, ("lur2", "lur2", "op"))
+function test_spaces_svdQS(option::LocalSpaceOptions)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    a   = getIdentity((qi1, 2), (qi2, 2); itags="lurlur")
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a   # rank-4: legs (lur1_in, lur2_in, lur2_out, op)
 
     # qlabel set from a splist
@@ -1439,12 +1444,12 @@ function test_spaces_svdQS(option::QSpaces.LocalSpaceOptions)
     # Compute the dual of a splist: apply get_dualq per-symmetry to every qlabel tuple.
     function dual_sp(sp)
         ET = eltype(sp)
-        sort!(ET[(d, Tuple(LurCGT.get_dualq(symm[n], ql[n]) for n in 1:N))
+        sort!(ET[(d, Tuple(get_dualq(symm[n], ql[n]) for n in 1:N))
                  for (d, ql) in sp]; by = x -> x[2])
     end
 
     # ── No-truncation case ──────────────────────────────────────────────────
-    U, S, Vd = QSpaces.svdQS(ct, (1, 2))
+    U, S, Vd = svdQS(ct, (1, 2))
     println("test_spaces_svdQS (no trunc): U bond=$(length(U.spaces[end])), " *
             "S=$(length(S.spaces[1]))/$(length(S.spaces[2])), " *
             "Vd bond=$(length(Vd.spaces[1])) sectors")
@@ -1466,7 +1471,7 @@ function test_spaces_svdQS(option::QSpaces.LocalSpaceOptions)
     @test Vd.spaces[2] == ct.spaces[3]
 
     # ── Truncation case (Nkeep=1) ───────────────────────────────────────────
-    Ut, St, Vdt = QSpaces.svdQS(ct, (1, 2); Nkeep = 1)
+    Ut, St, Vdt = svdQS(ct, (1, 2); Nkeep = 1)
     println("test_spaces_svdQS (Nkeep=1): Ut bond=$(length(Ut.spaces[end])), " *
             "St=$(length(St.spaces[1]))/$(length(St.spaces[2])) sectors")
 
@@ -1488,7 +1493,7 @@ function test_spaces_svdQS(option::QSpaces.LocalSpaceOptions)
     @test Vdt.spaces[2] == ct.spaces[3]
 
     # ── Truncation case (Nkeep=2) ───────────────────────────────────────────
-    Ut, St, Vdt = QSpaces.svdQS(ct, (1, 2); Nkeep = 2)
+    Ut, St, Vdt = svdQS(ct, (1, 2); Nkeep = 2)
     println("test_spaces_svdQS (Nkeep=2): Ut bond=$(length(Ut.spaces[end])), " *
             "St=$(length(St.spaces[1]))/$(length(St.spaces[2])) sectors")
 
@@ -1516,15 +1521,15 @@ end
 # missing sectors are still counted as zero singular values when enough states
 # are kept to include them. Original-leg spaces on U and Vd must stay intact.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_truncate_svdQS(option::QSpaces.LocalSpaceOptions)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_truncate_svdQS(option::LocalSpaceOptions)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
     @test !isempty(q.I.rows)
 
     removed_row = q.I.rows[1]
     removed_dim = size(removed_row.RMT.data, 1)
 
     kept_rows = copy(q.I.rows[2:end])
-    A = QSpaces.QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
+    A = QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
 
     offset = 0.0
     all_positive_vals = Float64[]
@@ -1538,7 +1543,7 @@ function test_truncate_svdQS(option::QSpaces.LocalSpaceOptions)
     end
 
     npositive_keep = min(2, length(all_positive_vals))
-    Utop, Stop, Vdtop = QSpaces.svdQS(A, (1,); Nkeep = npositive_keep)
+    Utop, Stop, Vdtop = svdQS(A, (1,); Nkeep = npositive_keep)
 
     @test Utop.spaces[1] == A.spaces[1]
     @test Vdtop.spaces[2] == A.spaces[2]
@@ -1551,7 +1556,7 @@ function test_truncate_svdQS(option::QSpaces.LocalSpaceOptions)
     @test kept_vals ≈ expected_vals
 
     total_keep = length(all_positive_vals) + removed_dim
-    U, S, Vd = QSpaces.svdQS(A, (1,); Nkeep = total_keep)
+    U, S, Vd = svdQS(A, (1,); Nkeep = total_keep)
 
     @test U.spaces[1] == A.spaces[1]
     @test Vd.spaces[2] == A.spaces[2]
@@ -1598,8 +1603,8 @@ end
 #   Scenario 2 — no match        : A free leg "unique" lock=1, B has no "unique" → lock stays 1
 #   Scenario 3 — lock already 0  : match present but lock=0 → lock stays 0
 # ─────────────────────────────────────────────────────────────────────────────
-function test_lock_reduce(option::QSpaces.LocalSpaceOptions)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_lock_reduce(option::LocalSpaceOptions)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
 
     # ── Scenario 1: matching leg present → lock decrements ───────────────────
     # q.I has legs ('+', '-').  A1 is built from q.I (same dirs), B1 from q.I'
@@ -1607,12 +1612,12 @@ function test_lock_reduce(option::QSpaces.LocalSpaceOptions)
     # A1: ("ct" '+' lock=0,  "free" '-' lock=1)
     # B1: ("ct" '-' lock=0,  "free" '+' lock=0)
     # Contract A1*B1 on "ct"; A1's "free" lock=1 has a match in B1 → lock → 0.
-    A1 = QSpaces.QSpace(q.I,
-        (QSpaces.QIndex("ct",   '+', 0, 0),
-         QSpaces.QIndex("free", '-', 0, 1)))
-    B1 = QSpaces.QSpace(q.I',
-        (QSpaces.QIndex("ct",   '-', 0, 0),
-         QSpaces.QIndex("free", '+', 0, 0)))
+    A1 = QSpace(q.I,
+        (QIndex("ct",   '+', 0, 0),
+         QIndex("free", '-', 0, 1)))
+    B1 = QSpace(q.I',
+        (QIndex("ct",   '-', 0, 0),
+         QIndex("free", '+', 0, 0)))
 
     C1 = A1 * B1
     free_pos1 = findfirst(idx -> idx.itags == "free" && idx.dir == '-', C1.inds)
@@ -1622,12 +1627,12 @@ function test_lock_reduce(option::QSpaces.LocalSpaceOptions)
     # ── Scenario 2: no matching leg → lock unchanged ─────────────────────────
     # A2: ("ct" '+' lock=0,  "unique" '-' lock=1)   — from q.I
     # B2: ("ct" '-' lock=0,  "other"  '+' lock=0)   — from q.I'; "unique" absent
-    A2 = QSpaces.QSpace(q.I,
-        (QSpaces.QIndex("ct",     '+', 0, 0),
-         QSpaces.QIndex("unique", '-', 0, 1)))
-    B2 = QSpaces.QSpace(q.I',
-        (QSpaces.QIndex("ct",    '-', 0, 0),
-         QSpaces.QIndex("other", '+', 0, 0)))
+    A2 = QSpace(q.I,
+        (QIndex("ct",     '+', 0, 0),
+         QIndex("unique", '-', 0, 1)))
+    B2 = QSpace(q.I',
+        (QIndex("ct",    '-', 0, 0),
+         QIndex("other", '+', 0, 0)))
 
     C2 = A2 * B2
     unique_pos = findfirst(idx -> idx.itags == "unique", C2.inds)
@@ -1637,10 +1642,10 @@ function test_lock_reduce(option::QSpaces.LocalSpaceOptions)
     # ── Scenario 3: lock already 0 with match → stays 0 ─────────────────────
     # A3's "free" lock=0 and B1 has a matching "free" leg, but 0 cannot go lower.
     # Must use explicit contract (not *) to avoid auto-contracting both "ct" and "free".
-    A3 = QSpaces.QSpace(q.I,
-        (QSpaces.QIndex("ct",   '+', 0, 0),
-         QSpaces.QIndex("free", '-', 0, 0)))
-    C3 = LurCGT.contract(A3, (1,), B1, (1,))
+    A3 = QSpace(q.I,
+        (QIndex("ct",   '+', 0, 0),
+         QIndex("free", '-', 0, 0)))
+    C3 = contract(A3, (1,), B1, (1,))
     free_pos3 = findfirst(idx -> idx.itags == "free" && idx.dir == '-', C3.inds)
     @test C3.inds[free_pos3].lock == 0
     println("test_lock_reduce (lock=0):   \"free\" lock=$(C3.inds[free_pos3].lock) (expected 0)")
@@ -1649,19 +1654,19 @@ end
 # ─── test_contract_requires_matching_spaces_in_star ─────────────────────────
 # Verify that automatic contraction via `*` does not match tagged legs when
 # their precomputed space metadata differs, even if the QIndex fields match.
-function test_contract_requires_matching_spaces_in_star(option::QSpaces.LocalSpaceOptions)
-    q = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
+function test_contract_requires_matching_spaces_in_star(option::LocalSpaceOptions)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
 
-    A = QSpaces.QSpace(q.I,
-        (QSpaces.QIndex("ct", '+', 0, 0),
-         QSpaces.QIndex("",   '-', 0, 0)))
-    B = QSpaces.QSpace(q.I',
-        (QSpaces.QIndex("ct", '-', 0, 0),
-         QSpaces.QIndex("",   '+', 0, 0)))
+    A = QSpace(q.I,
+        (QIndex("ct", '+', 0, 0),
+         QIndex("",   '-', 0, 0)))
+    B = QSpace(q.I',
+        (QIndex("ct", '-', 0, 0),
+         QIndex("",   '+', 0, 0)))
 
     first_dim, first_sector = first(B.spaces[1])
     bad_leg1 = vcat([(first_dim + 1, first_sector)], B.spaces[1][2:end])
-    B_bad = QSpaces.QSpace(B.symm, B.rows, B.inds, (bad_leg1, B.spaces[2]))
+    B_bad = QSpace(B.symm, B.rows, B.inds, (bad_leg1, B.spaces[2]))
 
     @test_throws AssertionError A * B_bad
 end
@@ -1680,7 +1685,7 @@ end
 # Helper: replicate the matching logic of Base.:*(::QSpace, ::QSpace) to find
 # the contracted leg pairs, then call both contract and contract_v2 with
 # those same explicit legs. Returns (arr_old, arr_new, diff_norm).
-function _compare_contract_v1v2(q1::QSpaces.QSpace, q2::QSpaces.QSpace;
+function _compare_contract_v1v2(q1::QSpace, q2::QSpace;
                                  tol::Float64 = 1e-10)
     QD1 = length(q1.inds)
     QD2 = length(q2.inds)
@@ -1691,7 +1696,7 @@ function _compare_contract_v1v2(q1::QSpaces.QSpace, q2::QSpaces.QSpace;
     legs1 = Int[];  legs2 = Int[];  matched2 = Set{Int}()
     for (i, idx1) in cands1
         hits = [(pos, j) for (pos, (j, idx2)) in enumerate(cands2)
-                if idx1 == LurCGT.change_dir(idx2) &&
+                if idx1 == change_dir(idx2) &&
                    q1.spaces[i] == q2.spaces[j] &&
                    pos ∉ matched2]
         if length(hits) == 1
@@ -1701,8 +1706,8 @@ function _compare_contract_v1v2(q1::QSpaces.QSpace, q2::QSpaces.QSpace;
     end
     @assert !isempty(legs1) "No matching legs found for v1-vs-v2 comparison"
 
-    ct_v1 = LurCGT.contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
-    ct_v2 = LurCGT.contract_v2(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
+    ct_v1 = contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
+    ct_v2 = contract_v2(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
 
     # For 0-D (scalar) results, compare scalar values directly.
     if length(ct_v1.inds) == 0
@@ -1724,12 +1729,12 @@ function _compare_contract_v1v2(q1::QSpaces.QSpace, q2::QSpaces.QSpace;
     return diff
 end
 
-function test_contract_v2(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-10)
-    q   = QSpaces.getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpaces.QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpaces.QSpace(q.I, ("lur2", "lur2"))
-    qf  = QSpaces.QSpace(q.F, ("lur2", "lur2", "op"))
-    a   = QSpaces.getIdentity((qi1, 2), (qi2, 2))
+function test_contract_v2(option::LocalSpaceOptions; tol::Float64 = 1e-10)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    a   = getIdentity((qi1, 2), (qi2, 2))
 
     # ── Case 1: F × Identity (3-leg × 4-leg, 1 contracted leg) ──────────────
     d1 = _compare_contract_v1v2(qf, a; tol=tol)
@@ -1741,8 +1746,8 @@ function test_contract_v2(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-1
 
     # ── Case 3: Identity × Identity (2-leg × 2-leg, 1 contracted leg) ───────
     # Use explicit legs; verify_legs=false since tags may not match.
-    ct3_v1 = LurCGT.contract(qi1, (2,), qi2, (1,); verify_legs=false)
-    ct3_v2 = LurCGT.contract_v2(qi1, (2,), qi2, (1,); verify_legs=false)
+    ct3_v1 = contract(qi1, (2,), qi2, (1,); verify_legs=false)
+    ct3_v2 = contract_v2(qi1, (2,), qi2, (1,); verify_legs=false)
     arr3_v1 = Array(to_sparse_array(ct3_v1))
     arr3_v2 = Array(to_sparse_array(ct3_v2))
     d3 = norm(arr3_v1 - arr3_v2)
@@ -1757,4 +1762,6 @@ function test_contract_v2(option::QSpaces.LocalSpaceOptions; tol::Float64 = 1e-1
 
     println("test_contract_v2 passed (all cases).")
 end
+
+
 
