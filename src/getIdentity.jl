@@ -55,6 +55,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
             ET = eltype(leginfos[d].splist)
             new_splist = ET[(dim, Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N))
                             for (dim, qlabels) in leginfos[d].splist]
+            sort!(new_splist; by = x -> x[2])
             leginfo{N}(leginfos[d].symm, leginfos[d].ind, new_splist)
         else
             leginfos[d]
@@ -95,8 +96,10 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
         end
     end
 
-    # Build rows of the result QSpace.
-    # The result is a (D+1)-leg QSpace: D input legs + 1 fused output leg.
+    # Build rows of the internal fused QSpace.
+    # Before the final fixup for originally-incoming legs, the tensor has
+    # D selected legs + 1 fused output leg, where selected incoming legs have
+    # been dualized so every selected leg can be fused as incoming.
     # RMT shape: (rmts_dims..., space_cnt).
     # For each entry, the block [:,...,:, sti:edi] is an identity matrix
     # (repeated prod_oms times along the outer-multiplicity sub-blocks).
@@ -150,16 +153,16 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
         end
     end
 
-    # Assemble result QSpace: D input legs + 1 fused output leg.
-    # Input legs are converted to incoming ('+'); if the original leg was already
-    # incoming (dir == '+'), toggle its green field to signal the direction flip.
+    # Assemble an internal QSpace whose selected legs are ready for fusion.
+    # For originally-incoming legs we expose the dualized leg with green=true so
+    # we can contract a 1j tensor and recover a directly-contractable external leg.
     fused_ind = QIndex(itags, '-', plev, lock)
     inds = (ntuple(d -> begin
-        idx = to_incoming(leginfos[d].ind)
-        leginfos[d].ind.dir == '+' ? QIndex(idx.itags, idx.dir, idx.plev, idx.lock, !idx.green) : idx
+        idx = leginfos[d].ind.dir == '+' ? green(leginfos[d].ind) : leginfos[d].ind
+        to_incoming(idx)
     end, D)..., fused_ind)
     
-    # Build spaces tuple: first D legs from input leginfos, last leg from merged_info
+    # Build spaces tuple: first D legs use the adjusted spaces, last leg from merged_info
     # Fused leg space: for each fused_qlabel, RMT dim = total dimension (last edi)
     fused_splist = Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}()
     for (fused_qlabels, entries) in merged_info
@@ -168,7 +171,19 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
     end
     sort!(fused_splist; by = x -> x[2])  # sort by qlabels for consistency
     
-    spaces = (ntuple(d -> leginfos[d].splist, D)..., fused_splist)
-    
-    return QSpace(symm, rows, inds, spaces)
+    spaces = (ntuple(d -> leginfos_adj[d].splist, D)..., fused_splist)
+
+    q = QSpace(symm, rows, inds, spaces)
+
+    # For an originally-incoming selected leg, attach a 1j tensor so the returned
+    # leg is directly contractable with the original tensor leg.
+    for d in 1:D
+        leginfos[d].ind.dir == '+' || continue
+        j = get1jtensor(leginfos[d])
+        q = contract(q, (d,), j, (2,); reduce_lock=false)
+        perm = (ntuple(i -> i, d - 1)..., D + 1, ntuple(i -> d - 1 + i, D + 1 - d)...)
+        q = permutedims(q, perm)
+    end
+
+    return q
 end

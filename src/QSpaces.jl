@@ -5,10 +5,10 @@ using SparseArrays
 
 import Base: lock, unlock
 import LurCGT
-import LurCGT: AbelianSymm, NonabelianSymm, Symmetry, SO, SU, Sp, U1
+import LurCGT: AbelianSymm, NonabelianSymm, Symmetry, SO, SU, Sp, U1, Z
 import LurCGT: add_qn, decompose_irop, decompose_space, detect_1j, dimension
 import LurCGT: get_CGTom, get_IROP, get_conj_perm, get_dualq
-import LurCGT: getNsave_CGTperm, getNsave_Rsymbol, getNsave_Xsymbol
+import LurCGT: getNsave_CGTperm, getNsave_Xsymbol
 import LurCGT: getNsave_omlist, getNsave_validout, isabelian
 import LurCGT: nzops, remove_zeros, totxt, transf_basis!
 
@@ -20,10 +20,14 @@ include("QSpace.jl")
 
 export QSpace, QTensor, QIndex, CGR, row
 export LocalSpaceOptions, SpinOptions, FermionOptions, FermionSOptions
-export getLocalSpace, getIdentity, get1jpair, contract
-export permuteQS, svdQS, eigQS, eigQS_full, discard_eigQS
+export Z, U1, SU, SO, Sp
+export getLocalSpace, getIdentity, get1jtensor, contract
+export eigQS_full, discard_eigQS
 export svd_leg, get_new_cgp
 export empty_qspace, getvac
+export addSingleton, ⊗
+export oplus
+export complete_oplus_matrix
 export findlegs, findleg
 export prime, setprime, noprime
 export lock, lockp, unlock

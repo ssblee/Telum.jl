@@ -1,4 +1,4 @@
-# ─── eigQS ────────────────────────────────────────────────────────────────────
+# ─── eigen ────────────────────────────────────────────────────────────────────
 #
 # Perform symmetry-adapted eigendecomposition of a rank-2 QSpace object.
 #
@@ -214,17 +214,17 @@ function _split_eig_result(result::EigQSResult, Nkeep::Integer;
     return kept, discarded
 end
 
-function eigQS(q::QSpace{T, 2, N, RD},
-               eig_tag::String = "eig";
-               hermitian::Bool = true) where {T, N, RD}
+function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
+                             eig_tag::String = "eig";
+                             hermitian::Bool = true) where {T, N, RD}
 
     symm = q.symm
 
     # ── Validate input ───────────────────────────────────────────────────────
-    @assert length(q.inds) == 2 "eigQS requires a rank-2 QSpace"
+    @assert length(q.inds) == 2 "eigen requires a rank-2 QSpace"
     dirs = (q.inds[1].dir, q.inds[2].dir)
-    @assert (dirs == ('+', '-') || dirs == ('-', '+')) "eigQS requires one incoming ('+') and one outgoing ('-') leg"
-    @assert q.spaces[1] == q.spaces[2] "eigQS: both legs of input QSpace must have the same space list (same sectors and dimensions)"
+    @assert (dirs == ('+', '-') || dirs == ('-', '+')) "eigen requires one incoming ('+') and one outgoing ('-') leg"
+    @assert q.spaces[1] == q.spaces[2] "eigen: both legs of input QSpace must have the same space list (same sectors and dimensions)"
     out_leg = dirs[1] == '-' ? 1 : 2
     cgp = dirs == ('+', '-') ? (1, 2) : (2, 1)
 
@@ -238,7 +238,7 @@ function eigQS(q::QSpace{T, 2, N, RD},
     for r in q.rows
         rmt = r.RMT.data
         sL, sR = size(rmt, 1), size(rmt, 2)
-        @assert sL == sR "eigQS: RMT must be square for eigendecomposition, got ($sL, $sR)"
+        @assert sL == sR "eigen: RMT must be square for eigendecomposition, got ($sL, $sR)"
 
         mat = reshape(rmt, sL, sR)
 

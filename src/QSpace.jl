@@ -547,7 +547,7 @@ _lock_inc(current_lock, inc) = current_lock == -1 ? -1 : current_lock + inc
 Increase lock level of a single specified leg by `inc` (default 1).
 Permanently locked legs (lock=-1) are unchanged.
 """
-function lock(q::QSpace, leg::Integer; inc::Int=1)
+function Base.lock(q::QSpace, leg::Integer; inc::Int=1)
     return _modify_lock(q, (leg,), lk -> _lock_inc(lk, inc))
 end
 
@@ -558,7 +558,7 @@ Increase lock level of the specified legs by `inc` (default 1).
 `legs` can be any vector, range, or tuple of integers, e.g. `[1, 3]`, `1:3`, or `(1, 3)`.
 Permanently locked legs (lock=-1) are unchanged.
 """
-function lock(q::QSpace, legs::LegList; inc::Int=1)
+function Base.lock(q::QSpace, legs::LegList; inc::Int=1)
     return _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
 end
 
@@ -567,7 +567,7 @@ end
 
 Increase lock level of legs satisfying predicate by `inc` (default 1).
 """
-function lock(q::QSpace, pred::Function; inc::Int=1)
+function Base.lock(q::QSpace, pred::Function; inc::Int=1)
     legs = findlegs(q, pred)
     return _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
 end
@@ -586,7 +586,7 @@ lock(q; lock=0)                   # lock all currently-unlocked legs by 1
 lock(q; dir='-', rev=true)        # lock all legs that are NOT outgoing
 ```
 """
-function lock(q::QSpace; inc::Int=1, dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+function Base.lock(q::QSpace; inc::Int=1, dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false)
     legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
     return _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
 end
@@ -643,7 +643,7 @@ end
 
 Unlock a single specified leg (set lock=0). Also removes permanent lock.
 """
-function unlock(q::QSpace, leg::Integer)
+function Base.unlock(q::QSpace, leg::Integer)
     return _modify_lock(q, (leg,), _ -> 0)
 end
 
@@ -653,7 +653,7 @@ end
 Unlock the specified legs (set lock=0).
 `legs` can be any vector, range, or tuple of integers.
 """
-function unlock(q::QSpace, legs::LegList)
+function Base.unlock(q::QSpace, legs::LegList)
     return _modify_lock(q, legs, _ -> 0)
 end
 
@@ -662,7 +662,7 @@ end
 
 Unlock legs satisfying predicate.
 """
-function unlock(q::QSpace, pred::Function)
+function Base.unlock(q::QSpace, pred::Function)
     legs = findlegs(q, pred)
     return _modify_lock(q, legs, _ -> 0)
 end
@@ -680,7 +680,7 @@ unlock(q; lock=1)              # unlock all legs currently at lock=1
 unlock(q; dir='-', rev=true)   # unlock all legs that are NOT outgoing
 ```
 """
-function unlock(q::QSpace; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+function Base.unlock(q::QSpace; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false)
     legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
     return _modify_lock(q, legs, _ -> 0)
 end
@@ -1344,7 +1344,7 @@ function Base.:+(qs1::QSpace{T1, QD, N, RD},
 
     if qs1.inds != qs2.inds || qs1.spaces != qs2.spaces
         perm = _find_leg_permutation(qs1.inds, qs1.spaces, qs2.inds, qs2.spaces)
-        qs2  = permuteQS(qs2, perm)
+        qs2  = permutedims(qs2, perm)
     end
 
     T    = promote_type(T1, T2)
@@ -1407,6 +1407,331 @@ Base.:+(q::QSpace, x::Number) = q + x * _identity_on_qspace(q)
 Base.:+(x::Number, q::QSpace) = q + x
 Base.:-(q::QSpace, x::Number) = q + (-x) * _identity_on_qspace(q)
 Base.:-(x::Number, q::QSpace) = x * _identity_on_qspace(q) + (-q)
+
+function _normalize_oplus_dims(dimensions, QD::Int; sort_dims::Bool=true)
+    dims = dimensions isa Integer ? (Int(dimensions),) : Tuple(Int(d) for d in dimensions)
+    isempty(dims) && throw(ArgumentError("oplus requires at least one dimension"))
+    all(d -> 1 <= d <= QD, dims) || throw(ArgumentError(
+        "oplus dimensions must lie in 1:$QD, got $(collect(dims))"))
+    length(unique(dims)) == length(dims) || throw(ArgumentError(
+        "oplus dimensions must be unique, got $(collect(dims))"))
+    return sort_dims ? Tuple(sort(collect(dims))) : dims
+end
+
+function _normalize_oplus_matrix_dims(dimensions, QD::Int)
+    dimensions isa Tuple && length(dimensions) == 2 || throw(ArgumentError(
+        "matrix oplus requires exactly two axis-dimension specifications"))
+
+    dims1 = _normalize_oplus_dims(dimensions[1], QD)
+    dims2 = _normalize_oplus_dims(dimensions[2], QD)
+    isempty(intersect(dims1, dims2)) || throw(ArgumentError(
+        "matrix-axis oplus legs must be disjoint, got $(collect(dims1)) and $(collect(dims2))"))
+    return dims1, dims2
+end
+
+function _splist_dim_map(splist::Vector)
+    dims = Dict{Any, Int}()
+    for (dim, qlabels) in splist
+        if haskey(dims, qlabels)
+            throw(ArgumentError("duplicate qlabel sector encountered in space list: $qlabels"))
+        end
+        dims[qlabels] = dim
+    end
+    return dims
+end
+
+function _sum_splists_many(splists)
+    isempty(splists) && throw(ArgumentError("cannot sum an empty collection of space lists"))
+
+    dims = Dict{Any, Int}()
+    seen = Set{Any}()
+    result = copy(first(splists))
+    empty!(result)
+
+    for splist in splists
+        for (dim, qlabels) in splist
+            dims[qlabels] = get(dims, qlabels, 0) + dim
+            if qlabels ∉ seen
+                push!(result, (0, qlabels))
+                push!(seen, qlabels)
+            end
+        end
+    end
+
+    for i in eachindex(result)
+        _, qlabels = result[i]
+        result[i] = (dims[qlabels], qlabels)
+    end
+
+    return result
+end
+
+_copy_spaces_tuple(spaces::NTuple{QD, Vector}) where {QD} = ntuple(l -> copy(spaces[l]), QD)
+_qspace_eltype(::QSpace{T}) where {T} = T
+
+function _oplus_row_qlabel(r::row{T, QD, N}, leg::Int) where {T, QD, N}
+    return Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:N)
+end
+
+function _pad_row_for_oplus(r::row{T, QD, N, RD},
+                            dims_set::Set{Int},
+                            start_dim_maps,
+                            result_dim_maps) where {T, QD, N, RD}
+    old_sizes = size(r.RMT.data)
+    new_phys_sizes = collect(old_sizes[1:QD])
+    starts = ones(Int, QD)
+
+    for leg in 1:QD
+        leg ∈ dims_set || continue
+        qlabels = _oplus_row_qlabel(r, leg)
+        total_dim = result_dim_maps[leg][qlabels]
+
+        new_phys_sizes[leg] = total_dim
+        starts[leg] = get(start_dim_maps[leg], qlabels, 1)
+    end
+
+    new_sizes = Tuple(vcat(new_phys_sizes, collect(old_sizes[QD+1:end])))
+    new_data = zeros(T, new_sizes)
+    fill_inds = ntuple(axis -> begin
+        if axis <= QD && axis ∈ dims_set
+            start = starts[axis]
+            stop = start + old_sizes[axis] - 1
+            start:stop
+        else
+            Colon()
+        end
+    end, RD)
+    new_data[fill_inds...] = r.RMT.data
+
+    return row(deepcopy(r.cgrs), QTensor(new_data))
+end
+
+function _oplus_pad_qspace(q::QSpace{T, QD, N, RD},
+                           result_spaces,
+                           dims_tuple,
+                           start_dim_maps,
+                           result_dim_maps) where {T, QD, N, RD}
+    dims_set = Set(dims_tuple)
+    new_rows = row{T, QD, N, RD}[]
+    for r in q.rows
+        push!(new_rows, _pad_row_for_oplus(r, dims_set, start_dim_maps, result_dim_maps))
+    end
+    return QSpace(q.symm, new_rows, q.inds, _copy_spaces_tuple(result_spaces))
+end
+
+function _zero_qspace_with_spaces(symm::NTuple{N, Any},
+                                  inds::NTuple{QD, QIndex},
+                                  spaces::NTuple{QD, Vector};
+                                  T::Type=Float64) where {N, QD}
+    rows = Vector{row{T, QD, N, QD + N}}()
+    return QSpace(symm, rows, inds, _copy_spaces_tuple(spaces))
+end
+
+function _accumulate_oplus_starts(qs, dims_tuple, QD::Int)
+    dims_set = Set(dims_tuple)
+    running = [Dict{Any, Int}() for _ in 1:QD]
+    starts = Vector{Vector{Dict{Any, Int}}}(undef, length(qs))
+
+    for (qi, q) in enumerate(qs)
+        starts[qi] = [Dict{Any, Int}() for _ in 1:QD]
+        for leg in 1:QD
+            leg ∈ dims_set || continue
+            for (dim, qlabels) in q.spaces[leg]
+                start = get(running[leg], qlabels, 1)
+                starts[qi][leg][qlabels] = start
+                running[leg][qlabels] = start + dim
+            end
+        end
+    end
+
+    return starts
+end
+
+function _validate_oplus_common(qs)
+    isempty(qs) && throw(ArgumentError("oplus requires at least one QSpace"))
+    first(qs) isa QSpace || throw(ArgumentError("oplus entry 1 is not a QSpace"))
+
+    ref = first(qs)
+    for (i, q) in enumerate(qs)
+        q isa QSpace || throw(ArgumentError("oplus entry $i is not a QSpace"))
+        q.symm == ref.symm || throw(ArgumentError(
+            "QSpace entry $i has a different symmetry tuple"))
+        length(q.inds) == length(ref.inds) || throw(ArgumentError(
+            "QSpace entry $i has rank $(length(q.inds)), expected $(length(ref.inds))"))
+        q.inds == ref.inds || throw(ArgumentError(
+            "QSpace entry $i has different indices"))
+    end
+
+    return ref
+end
+
+function _build_vector_oplus_spaces(qs, dims_tuple)
+    ref = _validate_oplus_common(qs)
+    QD = length(ref.inds)
+    dims_set = Set(dims_tuple)
+
+    return ntuple(leg -> begin
+        if leg ∈ dims_set
+            _sum_splists_many([q.spaces[leg] for q in qs])
+        else
+            target = ref.spaces[leg]
+            for i in 2:length(qs)
+                qs[i].spaces[leg] == target || throw(ArgumentError(
+                    "space lists must match on non-oplus leg $leg"))
+            end
+            copy(target)
+        end
+    end, QD)
+end
+
+function _materialize_vector_oplus(qs, dims_tuple)
+    ref = _validate_oplus_common(qs)
+    result_spaces = _build_vector_oplus_spaces(qs, dims_tuple)
+    QD = length(ref.inds)
+    result_dim_maps = ntuple(leg -> _splist_dim_map(result_spaces[leg]), QD)
+    start_maps = _accumulate_oplus_starts(qs, dims_tuple, QD)
+    T = promote_type((_qspace_eltype(q) for q in qs)...)
+
+    acc = _zero_qspace_with_spaces(ref.symm, ref.inds, result_spaces; T=T)
+    for (q, qstarts) in zip(qs, start_maps)
+        padded = _oplus_pad_qspace(q, result_spaces, dims_tuple, qstarts, result_dim_maps)
+        acc = acc + padded
+    end
+    return acc
+end
+
+function _oplus_matrix_entry(mat, i::Int, j::Int)
+    if applicable(isassigned, mat, i, j) && !isassigned(mat, i, j)
+        return nothing
+    end
+
+    val = mat[i, j]
+    if val === nothing || val === missing
+        return nothing
+    end
+    val isa QSpace || throw(ArgumentError(
+        "matrix oplus entry ($i, $j) is neither a QSpace nor an undefined entry"))
+    return val
+end
+
+function _infer_zero_matrix_spaces(row_sources, col_sources, i::Int, j::Int, QD::Int)
+    return ntuple(leg -> begin
+        have_row = haskey(row_sources[i], leg)
+        have_col = haskey(col_sources[j], leg)
+        if have_row && have_col
+            row_sources[i][leg] == col_sources[j][leg] || throw(ArgumentError(
+                "cannot infer zero QSpace at ($i, $j): inconsistent spaces on leg $leg"))
+            copy(row_sources[i][leg])
+        elseif have_row
+            copy(row_sources[i][leg])
+        elseif have_col
+            copy(col_sources[j][leg])
+        else
+            throw(ArgumentError(
+                "cannot infer zero QSpace at ($i, $j): missing space information on leg $leg"))
+        end
+    end, QD)
+end
+
+"""
+    oplus(qs::AbstractVector, dimensions)
+
+Direct sum of a vector of `QSpace` objects along one or more physical legs.
+"""
+function oplus(qs::AbstractVector, dimensions)
+    isempty(qs) && throw(ArgumentError("oplus requires at least one QSpace"))
+    any(q -> q === nothing || q === missing, qs) && throw(ArgumentError(
+        "vector oplus requires every entry to be well defined"))
+
+    ref = _validate_oplus_common(collect(qs))
+    dims_tuple = _normalize_oplus_dims(dimensions, length(ref.inds))
+    return _materialize_vector_oplus(collect(qs), dims_tuple)
+end
+
+function oplus(q1::QSpace, q2::QSpace, dimensions)
+    return oplus(QSpace[q1, q2], dimensions)
+end
+
+function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
+    size(mat, 1) > 0 && size(mat, 2) > 0 || throw(ArgumentError(
+        "matrix oplus requires a non-empty matrix"))
+
+    defined_positions = Tuple{Int, Int}[]
+    defined_qs = QSpace[]
+    for j in axes(mat, 2), i in axes(mat, 1)
+        q = _oplus_matrix_entry(mat, i, j)
+        q === nothing && continue
+        push!(defined_positions, (i, j))
+        push!(defined_qs, q)
+    end
+    isempty(defined_qs) && throw(ArgumentError(
+        "matrix oplus requires at least one defined QSpace to infer spaces"))
+
+    ref = _validate_oplus_common(defined_qs)
+    row_dims, col_dims = _normalize_oplus_matrix_dims(dimensions, length(ref.inds))
+    row_dims_set = Set(row_dims)
+    col_dims_set = Set(col_dims)
+
+    row_sources = [Dict{Int, Any}() for _ in axes(mat, 1)]
+    col_sources = [Dict{Int, Any}() for _ in axes(mat, 2)]
+
+    for ((i, j), q) in zip(defined_positions, defined_qs)
+        for leg in 1:length(ref.inds)
+            if leg ∉ col_dims_set
+                if haskey(row_sources[i], leg)
+                    row_sources[i][leg] == q.spaces[leg] || throw(ArgumentError(
+                        "row $i has incompatible spaces on leg $leg"))
+                else
+                    row_sources[i][leg] = copy(q.spaces[leg])
+                end
+            end
+            if leg ∉ row_dims_set
+                if haskey(col_sources[j], leg)
+                    col_sources[j][leg] == q.spaces[leg] || throw(ArgumentError(
+                        "column $j has incompatible spaces on leg $leg"))
+                else
+                    col_sources[j][leg] = copy(q.spaces[leg])
+                end
+            end
+        end
+    end
+
+    T = promote_type((_qspace_eltype(q) for q in defined_qs)...)
+    filled = Matrix{QSpace}(undef, size(mat, 1), size(mat, 2))
+    for j in axes(mat, 2), i in axes(mat, 1)
+        q = _oplus_matrix_entry(mat, i, j)
+        if q === nothing
+            spaces = _infer_zero_matrix_spaces(row_sources, col_sources, i, j, length(ref.inds))
+            filled[i, j] = _zero_qspace_with_spaces(ref.symm, ref.inds, spaces; T=T)
+        else
+            filled[i, j] = q
+        end
+    end
+
+    return filled, row_dims, col_dims
+end
+
+"""
+    complete_oplus_matrix(mat::AbstractMatrix, dimensions)
+
+Validate a matrix input for `oplus`, infer zero `QSpace` objects for undefined
+entries, and return the completed `Matrix{QSpace}`.
+"""
+function complete_oplus_matrix(mat::AbstractMatrix, dimensions)
+    filled, _, _ = _complete_oplus_matrix(mat, dimensions)
+    return filled
+end
+
+function oplus(mat::AbstractMatrix, dimensions)
+    filled, row_dims, col_dims = _complete_oplus_matrix(mat, dimensions)
+
+    col_aggregates = Vector{QSpace}(undef, size(filled, 2))
+    for j in axes(filled, 2)
+        col_aggregates[j] = _materialize_vector_oplus(vec(filled[:, j]), row_dims)
+    end
+
+    return _materialize_vector_oplus(col_aggregates, col_dims)
+end
 
 
 
@@ -1512,6 +1837,171 @@ function empty_qspace(q::QSpace; T::Type=Float64)
     return empty_qspace(q.symm, q.inds; T=T)
 end
 
+function _expand_singleton_kw(values, count::Int, name::AbstractString)
+    if values isa AbstractString || values isa Char || values isa Integer
+        return fill(values, count)
+    end
+    collected = collect(values)
+    length(collected) == count || throw(ArgumentError(
+        "$name must have length $count, got $(length(collected))"))
+    return collected
+end
+
+function _singleton_insert_spec(q::QSpace{T, QD}, legs;
+                                itags="", plevs=0, locks=0, dirs='+') where {T, QD}
+    positions = legs isa Integer ? [Int(legs)] : Int[i for i in legs]
+    isempty(positions) && throw(ArgumentError("at least one insertion leg must be specified"))
+
+    count = length(positions)
+    itags_vec = _expand_singleton_kw(itags, count, "itags")
+    plevs_vec = _expand_singleton_kw(plevs, count, "plevs")
+    locks_vec = _expand_singleton_kw(locks, count, "locks")
+    dirs_vec  = _expand_singleton_kw(dirs,  count, "dirs")
+
+    perm = sortperm(positions)
+    positions = positions[perm]
+    itags_vec = itags_vec[perm]
+    plevs_vec = plevs_vec[perm]
+    locks_vec = locks_vec[perm]
+    dirs_vec  = dirs_vec[perm]
+
+    final_qd = QD + count
+    all(p -> 1 <= p <= final_qd, positions) || throw(ArgumentError(
+        "singleton insertion legs must lie in 1:$final_qd, got $positions"))
+    length(unique(positions)) == count || throw(ArgumentError(
+        "singleton insertion legs must be unique, got $positions"))
+
+    for dir in dirs_vec
+        dir in ('+', '-') || throw(ArgumentError(
+            "added leg directions must be '+' or '-', got '$dir'"))
+    end
+
+    return positions, itags_vec, plevs_vec, locks_vec, dirs_vec
+end
+
+function _insert_singleton_cgr(cgr::CGR{QD, NZ},
+                               positions,
+                               dirs,
+                               trivial_qlabel::NTuple{NZ, Int}) where {QD, NZ}
+    old_m, _ = cgr.legdir
+    new_qd = QD + length(positions)
+
+    incoming = Vector{Tuple{NTuple{NZ, Int}, Int}}()
+    outgoing = Vector{Tuple{NTuple{NZ, Int}, Int}}()
+
+    old_leg = 1
+    insert_idx = 1
+    for new_leg in 1:new_qd
+        if insert_idx <= length(positions) && positions[insert_idx] == new_leg
+            if dirs[insert_idx] == '+'
+                push!(incoming, (trivial_qlabel, new_leg))
+            else
+                push!(outgoing, (trivial_qlabel, new_leg))
+            end
+            insert_idx += 1
+            continue
+        end
+
+        stored_pos = cgr.cgp[old_leg]
+        target = stored_pos <= old_m ? incoming : outgoing
+        push!(target, (cgr.qlabels[stored_pos], new_leg))
+        old_leg += 1
+    end
+
+    sort!(incoming; by=first, alg=MergeSort)
+    sort!(outgoing; by=first, alg=MergeSort)
+
+    m_new = length(incoming)
+    new_cgp = zeros(Int, new_qd)
+    for (stored_pos, (_, phys_leg)) in enumerate(incoming)
+        new_cgp[phys_leg] = stored_pos
+    end
+    for (offset, (_, phys_leg)) in enumerate(outgoing)
+        new_cgp[phys_leg] = m_new + offset
+    end
+
+    new_qlabels = (Tuple(first.(incoming))..., Tuple(first.(outgoing))...)
+    new_wmat = QTensor(copy(cgr.wmat.data))
+    return CGR(cgr.symm, new_qlabels, new_wmat, Tuple(new_cgp),
+               (m_new, length(outgoing)))
+end
+
+function _insert_singleton_rmt(rmt::QTensor{T, RD},
+                               positions,
+                               qd::Int,
+                               n_symm::Int) where {T, RD}
+    old_phys = size(rmt.data)[1:qd]
+    om_dims = size(rmt.data)[qd+1:qd+n_symm]
+
+    new_phys = Int[]
+    sizehint!(new_phys, qd + length(positions))
+
+    old_leg = 1
+    insert_idx = 1
+    for new_leg in 1:(qd + length(positions))
+        if insert_idx <= length(positions) && positions[insert_idx] == new_leg
+            push!(new_phys, 1)
+            insert_idx += 1
+        else
+            push!(new_phys, old_phys[old_leg])
+            old_leg += 1
+        end
+    end
+
+    new_data = copy(reshape(rmt.data, Tuple(vcat(new_phys, collect(om_dims)))))
+    return QTensor(new_data)
+end
+
+"""
+    addSingleton(q::QSpace, legs; itags="", plevs=0, locks=0, dirs='+')
+
+Insert one or more singleton trivial legs into `q`.
+
+`legs` may be a single integer or any iterable of integers. Each value is the
+position of an added leg in the output tensor, whose rank is `ndims(q) +
+length(legs)`. The original legs keep their relative order.
+
+`itags`, `plevs`, `locks`, and `dirs` may each be either a scalar applied to
+every added leg or an iterable with one value per inserted leg.
+"""
+function addSingleton(q::QSpace{T, QD, N, RD}, legs;
+                      itags="", plevs=0, locks=0, dirs='+') where {T, QD, N, RD}
+    positions, itags_vec, plevs_vec, locks_vec, dirs_vec =
+        _singleton_insert_spec(q, legs; itags=itags, plevs=plevs, locks=locks, dirs=dirs)
+
+    new_qd = QD + length(positions)
+    new_rd = RD + length(positions)
+    trivial_qlabels = ntuple(n -> Tuple(0 for _ in 1:nzops(q.symm[n])), N)
+
+    new_inds = Vector{QIndex}(undef, new_qd)
+    new_spaces = Vector{Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}}(undef, new_qd)
+    singleton_space = [(1, trivial_qlabels)]
+
+    old_leg = 1
+    insert_idx = 1
+    for new_leg in 1:new_qd
+        if insert_idx <= length(positions) && positions[insert_idx] == new_leg
+            new_inds[new_leg] = QIndex(String(itags_vec[insert_idx]), dirs_vec[insert_idx],
+                                       plevs_vec[insert_idx], locks_vec[insert_idx])
+            new_spaces[new_leg] = copy(singleton_space)
+            insert_idx += 1
+        else
+            new_inds[new_leg] = q.inds[old_leg]
+            new_spaces[new_leg] = q.spaces[old_leg]
+            old_leg += 1
+        end
+    end
+
+    new_rows = row{T, new_qd, N, new_rd}[]
+    for r in q.rows
+        new_cgrs = ntuple(n -> _insert_singleton_cgr(r.cgrs[n], positions, dirs_vec, trivial_qlabels[n]), N)
+        new_rmt = _insert_singleton_rmt(r.RMT, positions, QD, N)
+        push!(new_rows, row(new_cgrs, new_rmt))
+    end
+
+    return QSpace(q.symm, new_rows, Tuple(new_inds), Tuple(new_spaces))
+end
+
 """
     getvac(q::QSpace, itags::NTuple{2, String}=("", "")) -> QSpace
 
@@ -1540,10 +2030,21 @@ function getvac(q::QSpace{T, QD, N, RD},
     return QSpace(q.symm, rows, inds, spaces)
 end
 
+function ⊗(q1::QSpace{T1, QD1, N, RD1},
+           q2::QSpace{T2, QD2, N, RD2}) where {T1, T2, QD1, QD2, N, RD1, RD2}
+    @assert q1.symm == q2.symm "QSpace objects must share the same symmetry tuple"
+
+    q1_ext = addSingleton(q1, QD1 + 1; dirs='-')
+    q2_ext = addSingleton(q2, 1; dirs='+')
+    return contract(q1_ext, (QD1 + 1,), q2_ext, (1,))
+end
+
+LinearAlgebra.kron(q1::QSpace, q2::QSpace) = q1 ⊗ q2
+
 include("getLocalSpace.jl")
 include("getIdentity.jl")
 include("contract.jl")
-include("get1jpair.jl")
+include("get1jtensor.jl")
 include("svd.jl")
 include("eig.jl")
 include("permute.jl")

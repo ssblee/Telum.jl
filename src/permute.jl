@@ -1,4 +1,4 @@
-# ─── permuteQS ───────────────────────────────────────────────────────────
+# ─── permutedims ─────────────────────────────────────────────────────────
 #
 # Permute the legs of a QSpace object.
 #
@@ -112,7 +112,7 @@ function _permute_row(r::row{T, QD, N, RD}, perm::NTuple{QD, Int}, symm) where {
 end
 
 """
-    permuteQS(q::QSpace, perm)
+    permutedims(q::QSpace, perm)
 
 Permute the legs of a QSpace object.
 
@@ -124,7 +124,7 @@ Permute the legs of a QSpace object.
 # Returns
 New QSpace with permuted legs.
 """
-function permuteQS(q::QSpace{T, QD, N, RD}, perm) where {T, QD, N, RD}
+function Base.permutedims(q::QSpace{T, QD, N, RD}, perm) where {T, QD, N, RD}
     perm = Tuple(perm)
     @assert length(perm) == QD "permutation length $(length(perm)) != QSpace rank $QD"
     @assert sort(collect(perm)) == collect(1:QD) "perm must be a valid permutation of 1:$QD"
