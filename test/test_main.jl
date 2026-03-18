@@ -1,4 +1,4 @@
-﻿@testset "re-exported LurCGT symmetries" begin
+@testset "re-exported LurCGT symmetries" begin
     @test :Z in names(QSpaces)
     @test :U1 in names(QSpaces)
     @test :SU in names(QSpaces)
@@ -47,18 +47,18 @@ end
 
 
 @testset "spaces of eigen" begin
-    test_spaces_eigQS(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_spaces_eigQS(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_spaces_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_spaces_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
 @testset "missing spaces of eigen" begin
-    test_missing_spaces_eigQS(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_missing_spaces_eigQS(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_missing_spaces_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_missing_spaces_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
 @testset "truncate missing zero spaces of eigen" begin
-    test_truncate_missing_zero_spaces_eigQS(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_truncate_missing_zero_spaces_eigQS(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_truncate_missing_zero_spaces_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_truncate_missing_zero_spaces_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
 
@@ -87,23 +87,23 @@ end
 end
 
 @testset "eig of QSpace" begin
-    test_eigQS(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_eigQS(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
 @testset "eig truncation of QSpace" begin
-    test_truncate_eigQS(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_truncate_eigQS(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_discard_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_discard_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
 @testset "eig full discard of QSpace" begin
-    test_eigQS_full_discard(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_eigQS_full_discard(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_eigen_full_discard(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_eigen_full_discard(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
-@testset "eig discard tags of QSpace" begin
-    test_discard_eigQS_tags(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_discard_eigQS_tags(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "eig discard itag of QSpace" begin
+    test_discard_eigen_itag(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_discard_eigen_itag(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
 function permtest()
@@ -290,6 +290,16 @@ end
     test_1jpair(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
+@testset "Keyword get1jtensor and legflip" begin
+    test_get1jtensor_and_legflip_keywords(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_get1jtensor_and_legflip_keywords(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
+@testset "contract verify_legs checks green" begin
+    test_contract_verify_legs_checks_green(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_contract_verify_legs_checks_green(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
 @testset "contraction of QSpace test" begin
     test_FAcont(FermionSOptions(U1, SU{2}, nothing, 1))
     test_FAcont(FermionSOptions(U1, SU{2}, SU{3}, 3))
@@ -305,16 +315,16 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 # Helper: build a 3-leg test QSpace with known QIndex properties.
 #
-#   leg 1: dir='+', itags="site1", plev=0, lock=0
-#   leg 2: dir='-', itags="site2", plev=0, lock=0
-#   leg 3: dir='-', itags="op",    plev=0, lock=0
+#   leg 1: dir='+', itag="site1", plev=0, lock=0
+#   leg 2: dir='-', itag="site2", plev=0, lock=0
+#   leg 3: dir='-', itag="op",    plev=0, lock=0
 #
 # Built from a real operator QSpace so the internal row data is valid.
 # ─────────────────────────────────────────────────────────────────────────────
 function _make_test_qspace()
     option = FermionSOptions(U1, SU{2}, SU{3}, 3)
     q0 = getLocalSpace(option)
-    # q0.F is a 3-leg QSpace: dirs=('+','-','-'), all plev=0, all lock=0.
+    # q0.F is a 3-leg QSpace: dir=('+','-','-'), all plev=0, all lock=0.
     # QSpace(q, tags) creates a copy with new tags (only the itags field changes).
     return QSpace(q0.F, ("site1", "site2", "op"))
 end
@@ -322,17 +332,17 @@ end
 @testset "QIndex modifier functions" begin
     q = _make_test_qspace()
     # Fixture legs:
-    #   leg 1: dir='+', itags="site1", plev=0, lock=0
-    #   leg 2: dir='-', itags="site2", plev=0, lock=0
-    #   leg 3: dir='-', itags="op",    plev=0, lock=0
+    #   leg 1: dir='+', itag="site1", plev=0, lock=0
+    #   leg 2: dir='-', itag="site2", plev=0, lock=0
+    #   leg 3: dir='-', itag="op",    plev=0, lock=0
 
     # ── findlegs ──────────────────────────────────────────────────────────────
     @testset "findlegs" begin
         @test findlegs(q; dir='+')       == [1]
         @test findlegs(q; dir='-')       == [2, 3]
-        @test findlegs(q; itags="site1") == [1]
-        @test findlegs(q; itags="site2") == [2]
-        @test findlegs(q; itags="op")    == [3]
+        @test findlegs(q; itag="site1") == [1]
+        @test findlegs(q; itag="site2") == [2]
+        @test findlegs(q; itag="op")    == [3]
         @test findlegs(q; plev=0)        == [1, 2, 3]
         @test findlegs(q; lock=0)        == [1, 2, 3]
         # with non-zero plev/lock set by a modifier
@@ -345,22 +355,33 @@ end
         # rev (complement selection)
         @test findlegs(q; dir='+',      rev=true) == [2, 3]
         @test findlegs(q; dir='-',      rev=true) == [1]
-        @test findlegs(q; itags="site1", rev=true) == [2, 3]
+        @test findlegs(q; itag="site1", rev=true) == [2, 3]
         @test findlegs(q; plev=0,        rev=true) == []
         # multi-criteria (AND logic)
-        @test findlegs(q; dir='-', itags="op")           == [3]
-        @test findlegs(q; dir='-', itags="op", rev=true) == [1, 2]
+        @test findlegs(q; dir='-', itag="op")           == [3]
+        @test findlegs(q; dir='-', itag="op", rev=true) == [1, 2]
     end
 
     # ── findleg ───────────────────────────────────────────────────────────────
     @testset "findleg" begin
         @test findleg(q; dir='+')             == 1
         @test findleg(q; dir='-')             == 2   # first match
-        @test findleg(q; itags="op")          == 3
+        @test findleg(q; itag="op")          == 3
         @test findleg(q; plev=0)              == 1   # first of all legs
         @test findleg(q; dir='+', rev=true)   == 2   # first non-'+' leg
         @test findleg(q; plev=0, rev=true)   === nothing  # no leg with plev≠0
-        @test findleg(q; itags="nope")        === nothing
+        @test findleg(q; itag="nope")        === nothing
+    end
+
+    @testset "Itag predicate equality" begin
+        q_unsorted = QSpace(q, ("beta,alpha", "site2", "op"))
+
+        @test q_unsorted.inds[1].itags isa Itag
+        @test q_unsorted.inds[1].itags == "alpha,beta"
+        @test q_unsorted.inds[1].itags == "beta,alpha"
+        @test "beta,alpha" == q_unsorted.inds[1].itags
+        @test findleg(q_unsorted, idx -> idx.itags == "beta,alpha") == 1
+        @test findlegs(q_unsorted, idx -> idx.itags == "beta,alpha") == [1]
     end
 
     # ── lock (leg / LegList forms) ────────────────────────────────────────────
@@ -394,7 +415,7 @@ end
         @test q2.inds[2].lock == 0
         @test q2.inds[3].lock == 0
 
-        q2 = lock(q; inc=3, itags="op")
+        q2 = lock(q; inc=3, itag="op")
         @test q2.inds[3].lock == 3
         @test q2.inds[1].lock == 0
 
@@ -423,7 +444,7 @@ end
         @test q2.inds[2].lock == 0
 
         # criteria form
-        q2 = lockp(q; itags="site2")
+        q2 = lockp(q; itag="site2")
         @test q2.inds[2].lock == -1
         @test q2.inds[1].lock == 0
 
@@ -567,141 +588,141 @@ end
         @test q2.inds[3].plev == 0
     end
 
-    # ── addtags ───────────────────────────────────────────────────────────────
-    @testset "addtags" begin
+    # ── additag ───────────────────────────────────────────────────────────────
+    @testset "additag" begin
         # criteria form: all legs (tags sorted alphabetically)
-        q2 = addtags(q, "new")
+        q2 = additag(q, "new")
         @test q2.inds[1].itags == "new,site1"   # site1 + new → sorted: new,site1
         @test q2.inds[2].itags == "new,site2"   # site2 + new → sorted: new,site2
         @test q2.inds[3].itags == "new,op"      # op    + new → sorted: new,op
 
         # single leg
-        q2 = addtags(q, 1, "u1")
+        q2 = additag(q, 1, "u1")
         @test q2.inds[1].itags == "site1,u1"
         @test q2.inds[2].itags == "site2"   # unchanged
 
         # LegList: vector
-        q2 = addtags(q, [2, 3], "phys")
+        q2 = additag(q, [2, 3], "phys")
         @test q2.inds[2].itags == "phys,site2"
         @test q2.inds[3].itags == "op,phys"
         @test q2.inds[1].itags == "site1"
 
         # LegList: tuple
-        q2 = addtags(q, (1, 3), "x")
+        q2 = additag(q, (1, 3), "x")
         @test q2.inds[1].itags == "site1,x"
         @test q2.inds[3].itags == "op,x"
         @test q2.inds[2].itags == "site2"
 
         # criteria with selector: leg 1 only
-        q2 = addtags(q, "u1"; dir='+')
+        q2 = additag(q, "u1"; dir='+')
         @test q2.inds[1].itags == "site1,u1"
         @test q2.inds[2].itags == "site2"   # unchanged
 
         # rev: legs 2, 3
-        q2 = addtags(q, "u1"; dir='+', rev=true)
+        q2 = additag(q, "u1"; dir='+', rev=true)
         @test q2.inds[1].itags == "site1"
         @test q2.inds[2].itags == "site2,u1"
         @test q2.inds[3].itags == "op,u1"
     end
 
-    # ── removetags ────────────────────────────────────────────────────────────
-    @testset "removetags" begin
+    # ── removeitag ────────────────────────────────────────────────────────────
+    @testset "removeitag" begin
         # criteria form: only leg 1 has "site1"
-        q2 = removetags(q, "site1")
+        q2 = removeitag(q, "site1")
         @test q2.inds[1].itags == ""       # "site1" removed → empty
         @test q2.inds[2].itags == "site2"  # unchanged (no "site1")
         @test q2.inds[3].itags == "op"     # unchanged
 
         # single leg
-        q2 = removetags(q, 2, "site2")
+        q2 = removeitag(q, 2, "site2")
         @test q2.inds[2].itags == ""
         @test q2.inds[1].itags == "site1"
 
         # LegList: vector
-        q_extra = addtags(q, "extra")
-        q2 = removetags(q_extra, [1, 3], "extra")
+        q_extra = additag(q, "extra")
+        q2 = removeitag(q_extra, [1, 3], "extra")
         @test q2.inds[1].itags == "site1"
         @test q2.inds[3].itags == "op"
         @test q2.inds[2].itags == "extra,site2"   # unchanged
 
         # LegList: tuple
-        q2 = removetags(q_extra, (2, 3), "extra")
+        q2 = removeitag(q_extra, (2, 3), "extra")
         @test q2.inds[2].itags == "site2"
         @test q2.inds[3].itags == "op"
         @test q2.inds[1].itags == "extra,site1"   # unchanged
 
         # criteria with selector: leg 1
-        q2 = removetags(q_extra, "extra"; dir='+')
+        q2 = removeitag(q_extra, "extra"; dir='+')
         @test q2.inds[1].itags == "site1"
         @test q2.inds[2].itags == "extra,site2"   # unchanged
 
         # rev: legs 2, 3
-        q2 = removetags(q_extra, "extra"; dir='+', rev=true)
+        q2 = removeitag(q_extra, "extra"; dir='+', rev=true)
         @test q2.inds[1].itags == "extra,site1"
         @test q2.inds[2].itags == "site2"
         @test q2.inds[3].itags == "op"
     end
 
-    # ── replacetags ───────────────────────────────────────────────────────────
-    @testset "replacetags" begin
+    # ── replaceitag ───────────────────────────────────────────────────────────
+    @testset "replaceitag" begin
         # criteria form (all legs): removes "site1", adds "link" to EVERY selected leg,
         # regardless of whether "site1" was present.
-        q2 = replacetags(q, "site1", "link")
+        q2 = replaceitag(q, "site1", "link")
         @test q2.inds[1].itags == "link"          # "site1" removed, "link" added
         @test q2.inds[2].itags == "link,site2"    # "site1" absent; "link" added to "site2"
         @test q2.inds[3].itags == "link,op"       # "site1" absent; "link" added to "op"
 
         # single leg: clean targeted replacement
-        q2 = replacetags(q, 1, "site1", "link")
+        q2 = replaceitag(q, 1, "site1", "link")
         @test q2.inds[1].itags == "link"
         @test q2.inds[2].itags == "site2"   # unchanged
 
         # LegList: vector
-        q2 = replacetags(q, [1, 2], "site1", "link")
+        q2 = replaceitag(q, [1, 2], "site1", "link")
         @test q2.inds[1].itags == "link"
         @test q2.inds[2].itags == "link,site2"   # "site1" absent; "link" added
         @test q2.inds[3].itags == "op"            # unchanged
 
-        # use itags selector to restrict to legs that actually carry the old tag
-        q2 = replacetags(q, "site1", "link"; itags="site1")
+        # use the itag selector to restrict to legs that actually carry the old tag
+        q2 = replaceitag(q, "site1", "link"; itag="site1")
         @test q2.inds[1].itags == "link"
         @test q2.inds[2].itags == "site2"   # skipped (no "site1")
         @test q2.inds[3].itags == "op"      # skipped
 
         # rev: applies only to leg 1 (not dir='-' → leg 1 only)
-        q2 = replacetags(q, "site1", "link"; dir='-', rev=true)
+        q2 = replaceitag(q, "site1", "link"; dir='-', rev=true)
         @test q2.inds[1].itags == "link"    # "site1" removed, "link" added
         @test q2.inds[2].itags == "site2"   # excluded by rev
         @test q2.inds[3].itags == "op"      # excluded by rev
     end
 
-    # ── settags ───────────────────────────────────────────────────────────────
-    @testset "settags" begin
+    # ── setitag ───────────────────────────────────────────────────────────────
+    @testset "setitag" begin
         # single leg
-        q2 = settags(q, 3, "phys")
+        q2 = setitag(q, 3, "phys")
         @test q2.inds[3].itags == "phys"
         @test q2.inds[1].itags == "site1"
 
         # LegList: vector (legs 1,2 differ in dir → unique QIndex)
-        q2 = settags(q, [1, 2], "lur")
+        q2 = setitag(q, [1, 2], "lur")
         @test q2.inds[1].itags == "lur"
         @test q2.inds[2].itags == "lur"
         @test q2.inds[3].itags == "op"
 
         # LegList: tuple (legs 1,3 differ in dir → unique QIndex)
-        q2 = settags(q, (1, 3), "x")
+        q2 = setitag(q, (1, 3), "x")
         @test q2.inds[1].itags == "x"
         @test q2.inds[3].itags == "x"
         @test q2.inds[2].itags == "site2"
 
         # criteria: only leg 1 (dir='+')
-        q2 = settags(q, "phys"; dir='+')
+        q2 = setitag(q, "phys"; dir='+')
         @test q2.inds[1].itags == "phys"
         @test q2.inds[2].itags == "site2"
         @test q2.inds[3].itags == "op"
 
         # rev: only leg 1 (not dir='-' means not legs 2,3)
-        q2 = settags(q, "phys"; dir='-', rev=true)
+        q2 = setitag(q, "phys"; dir='-', rev=true)
         @test q2.inds[1].itags == "phys"
         @test q2.inds[2].itags == "site2"
         @test q2.inds[3].itags == "op"
@@ -724,7 +745,7 @@ end
             @test q2.inds[i].itags == q.inds[i].itags
         end
 
-        q2 = addtags(q, 1, "extra")
+        q2 = additag(q, 1, "extra")
         for i in 2:3
             @test q2.inds[i].itags == q.inds[i].itags
         end
@@ -797,10 +818,10 @@ end
         @test lockp(q, 2).inds[2].lock   == -1
 
         # tag operations
-        @test addtags(q, "x").inds[1].itags          == "a,x"
-        @test removetags(q, "a").inds[1].itags        == ""
-        @test settags(q, "new"; dir='+').inds[1].itags == "new"
-        @test replacetags(q, "a", "z").inds[1].itags  == "z"
+        @test additag(q, "x").inds[1].itags           == "a,x"
+        @test removeitag(q, "a").inds[1].itags        == ""
+        @test setitag(q, "new"; dir='+').inds[1].itags == "new"
+        @test replaceitag(q, "a", "z").inds[1].itags  == "z"
 
         # findlegs / findleg
         @test findlegs(q; dir='+') == [1]
@@ -811,6 +832,21 @@ end
         # scalar multiplication of empty QSpace produces empty QSpace
         q_scaled = 3.0 * q
         @test length(q_scaled.rows) == 0
+    end
+
+    @testset "zero preserves metadata on QSpace" begin
+        option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+        q0 = getLocalSpace(option)
+        q = QSpace(q0.F, ("site1", "site2", "op"))
+        qz = zero(q)
+
+        @test qz isa QSpace
+        @test isempty(qz.rows)
+        @test qz.symm == q.symm
+        @test qz.inds == q.inds
+        @test qz.spaces == q.spaces
+        @test qz.spaces !== q.spaces
+        @test all(qz.spaces[leg] !== q.spaces[leg] for leg in eachindex(q.spaces))
     end
 
     # ── show does not error ───────────────────────────────────────────────────
@@ -826,6 +862,142 @@ end
     end
 end
 
+@testset "zero_qlabels" begin
+    q_empty = empty_qspace((SU{2}, SU{3}), (QIndex('+'), QIndex('-')))
+    @test zero_qlabels(q_empty) == ((0,), (0, 0))
+    @test zero_qlabels(q_empty.symm) == ((0,), (0, 0))
+
+    option = FermionSOptions(U1, SU{2}, nothing, 1)
+    q0 = getLocalSpace(option)
+    @test zero_qlabels(q0.I) == ((0,), (0,))
+end
+
+@testset "getsub sector slicing" begin
+    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    q0 = getLocalSpace(option)
+    candidate = nothing
+    for base in values(q0)
+        for legcand in 1:length(base.spaces)
+            qcand = oplus([base, 2.0 * base, 3.0 * base], legcand)
+            reorder_idx = findfirst(i -> qcand.spaces[legcand][i][2] >= 3, eachindex(qcand.spaces[legcand]))
+            isnothing(reorder_idx) && continue
+
+            full_idx = findfirst(i -> i != reorder_idx, eachindex(qcand.spaces[legcand]))
+            isnothing(full_idx) && continue
+
+            candidate = (
+                q = qcand,
+                leg = legcand,
+                sector_reorder = qcand.spaces[legcand][reorder_idx][1],
+                dim_reorder = qcand.spaces[legcand][reorder_idx][2],
+                sector_full = qcand.spaces[legcand][full_idx][1],
+                dim_full = qcand.spaces[legcand][full_idx][2],
+            )
+            break
+        end
+        !isnothing(candidate) && break
+    end
+
+    @test !isnothing(candidate)
+
+    q = candidate.q
+    leg = candidate.leg
+    sector_reorder = candidate.sector_reorder
+    dim_reorder = candidate.dim_reorder
+    sector_full = candidate.sector_full
+    dim_full = candidate.dim_full
+
+    row_sector(qs::QSpace, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(qs.symm))
+    rows_for_sector(qs::QSpace, sector) = [r for r in qs.rows if row_sector(qs, r) == sector]
+    original_sectors = Set(first.(q.spaces[leg]))
+    bad_sector = ntuple(n -> ntuple(_ -> 999, length(sector_full[n])), length(q.symm))
+
+    @test bad_sector ∉ original_sectors
+
+    selector_pairs = [sector_full => :, sector_reorder => [dim_reorder, 1]]
+    q_pairs = QSpaces.getsub(q, leg, selector_pairs)
+    q_tuples = QSpaces.getsub(q, leg, [(sector_full, :), (sector_reorder, [dim_reorder, 1])])
+
+    expected_spaces_leg = [
+        (sector, sector == sector_full ? dim_full : 2)
+        for (sector, _) in q.spaces[leg]
+        if sector == sector_full || sector == sector_reorder
+    ]
+
+    @test q_pairs.spaces[leg] == expected_spaces_leg
+    for other_leg in 1:length(q.spaces)
+        other_leg == leg && continue
+        @test q_pairs.spaces[other_leg] == q.spaces[other_leg]
+    end
+    @test Set(row_sector(q_pairs, r) for r in q_pairs.rows) == Set([sector_full, sector_reorder])
+
+    full_rows = rows_for_sector(q_pairs, sector_full)
+    orig_full_rows = rows_for_sector(q, sector_full)
+    @test length(full_rows) == length(orig_full_rows)
+    for (full_row, orig_full_row) in zip(full_rows, orig_full_rows)
+        @test full_row.RMT.data == orig_full_row.RMT.data
+    end
+
+    reorder_rows = rows_for_sector(q_pairs, sector_reorder)
+    orig_reorder_rows = rows_for_sector(q, sector_reorder)
+    @test length(reorder_rows) == length(orig_reorder_rows)
+    reorder_inds = [dim_reorder, 1]
+    for (reorder_row, orig_reorder_row) in zip(reorder_rows, orig_reorder_rows)
+        reorder_selector = ntuple(d -> d == leg ? reorder_inds : Colon(), ndims(orig_reorder_row.RMT.data))
+        @test reorder_row.RMT.data == orig_reorder_row.RMT.data[reorder_selector...]
+    end
+
+    @test q_tuples.spaces == q_pairs.spaces
+    @test length(q_tuples.rows) == length(q_pairs.rows)
+    for sector in (sector_full, sector_reorder)
+        tuple_rows = rows_for_sector(q_tuples, sector)
+        pair_rows = rows_for_sector(q_pairs, sector)
+        @test length(tuple_rows) == length(pair_rows)
+        for (tuple_row, pair_row) in zip(tuple_rows, pair_rows)
+            @test tuple_row.RMT.data == pair_row.RMT.data
+        end
+    end
+
+    q_single = QSpaces.getsub(q, leg, [sector_reorder => 2])
+    single_rows = rows_for_sector(q_single, sector_reorder)
+    @test q_single.spaces[leg] == [(sector_reorder, 1)]
+    for other_leg in 1:length(q.spaces)
+        other_leg == leg && continue
+        @test q_single.spaces[other_leg] == q.spaces[other_leg]
+    end
+    @test length(single_rows) == length(orig_reorder_rows)
+    for (single_row, orig_reorder_row) in zip(single_rows, orig_reorder_rows)
+        single_selector = ntuple(d -> d == leg ? [2] : Colon(), ndims(orig_reorder_row.RMT.data))
+        @test single_row.RMT.data == orig_reorder_row.RMT.data[single_selector...]
+    end
+
+    q_range = QSpaces.getsub(q, leg, [sector_reorder => 1:2])
+    @test q_range.spaces[leg] == [(sector_reorder, 2)]
+    range_rows = rows_for_sector(q_range, sector_reorder)
+    @test length(range_rows) == length(orig_reorder_rows)
+    for (range_row, orig_reorder_row) in zip(range_rows, orig_reorder_rows)
+        range_selector = ntuple(d -> d == leg ? [1, 2] : Colon(), ndims(orig_reorder_row.RMT.data))
+        @test range_row.RMT.data == orig_reorder_row.RMT.data[range_selector...]
+    end
+
+    q_empty = QSpaces.getsub(q, leg, Any[])
+    @test isempty(q_empty.rows)
+    @test isempty(q_empty.spaces[leg])
+    for other_leg in 1:length(q.spaces)
+        other_leg == leg && continue
+        @test q_empty.spaces[other_leg] == q.spaces[other_leg]
+    end
+
+    @test_throws ArgumentError QSpaces.getsub(q, 0, selector_pairs)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [bad_sector => :])
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [bad_sector => 1])
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => [1, 1]])
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => Int[]])
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => (dim_reorder + 1)])
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => :, sector_reorder => 1])
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => :, (sector_full, :)])
+end
+
 @testset "getvac" begin
     @testset "single trivial sector with default tags" begin
         option = FermionSOptions(U1, SU{2}, nothing, 1)
@@ -838,9 +1010,9 @@ end
         @test length(vac.spaces[1]) == 1
         @test length(vac.spaces[2]) == 1
 
-        trivial = ntuple(n -> Tuple(0 for _ in 1:nzops(vac.symm[n])), length(vac.symm))
-        @test vac.spaces[1][1] == (1, trivial)
-        @test vac.spaces[2][1] == (1, trivial)
+        trivial = zero_qlabels(vac)
+        @test vac.spaces[1][1] == (trivial, 1)
+        @test vac.spaces[2][1] == (trivial, 1)
 
         r = vac.rows[1]
         @test size(r.RMT.data) == ntuple(_ -> 1, length(vac.symm) + 2)
@@ -868,6 +1040,7 @@ end
     option = FermionSOptions(U1, SU{2}, nothing, 1)
     q0 = getLocalSpace(option, ("ain", "aout", "op"))
     q = q0.F
+    q_rank2 = QSpace(q0.I, ("lin", "lout"))
 
     q_default = addSingleton(q, 2)
     @test q_default.inds[1] == q.inds[1]
@@ -875,27 +1048,99 @@ end
     @test q_default.inds[3] == q.inds[2]
     @test q_default.inds[4] == q.inds[3]
 
-    trivial = ntuple(n -> Tuple(0 for _ in 1:nzops(q.symm[n])), length(q.symm))
-    @test q_default.spaces[2] == [(1, trivial)]
+    trivial = zero_qlabels(q)
+    @test q_default.spaces[2] == [(trivial, 1)]
 
     q_added = addSingleton(q, (1, 4);
-                           itags=("left_aux", "right_aux"),
-                           plevs=(2, 3),
-                           locks=(0, 1),
-                           dirs=('-', '+'))
+                           itag=("left_aux", "right_aux"),
+                           plev=(2, 3),
+                           lock=(0, 1),
+                           dir=('-', '+'))
 
     @test q_added.inds[1] == QIndex("left_aux", '-', 2, 0)
     @test q_added.inds[2] == q.inds[1]
     @test q_added.inds[3] == q.inds[2]
     @test q_added.inds[4] == QIndex("right_aux", '+', 3, 1)
     @test q_added.inds[5] == q.inds[3]
-    @test q_added.spaces[1] == [(1, trivial)]
-    @test q_added.spaces[4] == [(1, trivial)]
+    @test q_added.spaces[1] == [(trivial, 1)]
+    @test q_added.spaces[4] == [(trivial, 1)]
 
     arr_ref = _dense_addSingleton_ref(Array(to_sparse_array(q)), (1, 4))
     arr_added = Array(to_sparse_array(q_added))
     @test size(arr_added) == size(arr_ref)
     @test norm(arr_added - arr_ref) < 1e-10
+
+    q_rank2_added = addSingleton(q_rank2, 2)
+    arr_rank2_ref = _dense_addSingleton_ref(Array(to_sparse_array(q_rank2)), 2)
+    arr_rank2_added = Array(to_sparse_array(q_rank2_added))
+    @test size(arr_rank2_added) == size(arr_rank2_ref)
+    @test norm(arr_rank2_added - arr_rank2_ref) < 1e-10
+    @test all(all(cgr.wmat[1] == 1.0 for cgr in r.cgrs) for r in q_rank2_added.rows)
+end
+
+@testset "deleteSingleton" begin
+    option = FermionSOptions(U1, SU{2}, nothing, 1)
+    q0 = getLocalSpace(option, ("ain", "aout", "op"))
+    q = q0.F
+    q_rank2 = QSpace(q0.I, ("lin", "lout"))
+
+    q_one = addSingleton(q, 2; itag="aux", plev=3, dir='-')
+    q_two = addSingleton(q, (1, 4);
+                         itag=("left_aux", "right_aux"),
+                         plev=(2, 5),
+                         dir=('-', '+'))
+    q_rank2_added = addSingleton(q_rank2, 2; itag="mid_aux", dir='+')
+
+    q_deleted_all = deleteSingleton(q_two)
+    @test q_deleted_all.inds == q.inds
+    @test q_deleted_all.spaces == q.spaces
+    @test Array(to_sparse_array(q_deleted_all)) == Array(to_sparse_array(q))
+
+    q_deleted_leg = deleteSingleton(q_one, 2)
+    @test q_deleted_leg.inds == q.inds
+    @test q_deleted_leg.spaces == q.spaces
+    @test Array(to_sparse_array(q_deleted_leg)) == Array(to_sparse_array(q))
+
+    q_deleted_legs = deleteSingleton(q_two, (1, 4))
+    @test q_deleted_legs.inds == q.inds
+    @test q_deleted_legs.spaces == q.spaces
+    @test Array(to_sparse_array(q_deleted_legs)) == Array(to_sparse_array(q))
+
+    q_deleted_kw_tag = deleteSingleton(q_two; itag="left_aux")
+    @test length(q_deleted_kw_tag.inds) == 4
+    @test q_deleted_kw_tag.inds[1] == q.inds[1]
+    @test q_deleted_kw_tag.inds[2] == q.inds[2]
+    @test q_deleted_kw_tag.inds[3] == QIndex("right_aux", '+', 5, 0)
+    @test q_deleted_kw_tag.inds[4] == q.inds[3]
+    @test Array(to_sparse_array(q_deleted_kw_tag)) == Array(to_sparse_array(addSingleton(q, 3; itag="right_aux", plev=5, dir='+')))
+
+    q_deleted_kw_dir = deleteSingleton(q_two; dir='-')
+    @test length(q_deleted_kw_dir.inds) == 4
+    @test q_deleted_kw_dir.inds[1] == q.inds[1]
+    @test q_deleted_kw_dir.inds[2] == q.inds[2]
+    @test q_deleted_kw_dir.inds[3] == QIndex("right_aux", '+', 5, 0)
+    @test q_deleted_kw_dir.inds[4] == q.inds[3]
+
+    q_deleted_kw_plev = deleteSingleton(q_two; plev=5)
+    @test length(q_deleted_kw_plev.inds) == 4
+    @test q_deleted_kw_plev.inds[1] == QIndex("left_aux", '-', 2, 0)
+    @test q_deleted_kw_plev.inds[2] == q.inds[1]
+    @test q_deleted_kw_plev.inds[3] == q.inds[2]
+    @test q_deleted_kw_plev.inds[4] == q.inds[3]
+
+    q_rank2_roundtrip = deleteSingleton(q_rank2_added)
+    @test q_rank2_roundtrip.inds == q_rank2.inds
+    @test q_rank2_roundtrip.spaces == q_rank2.spaces
+    @test Array(to_sparse_array(q_rank2_roundtrip)) == Array(to_sparse_array(q_rank2))
+
+    @test_throws ArgumentError deleteSingleton(q, 1)
+    @test_throws ArgumentError deleteSingleton(q_two, (1, 2))
+    @test_throws ArgumentError deleteSingleton(q_two, Int[])
+    @test_throws ArgumentError deleteSingleton(q_two, (1, 1))
+    @test_throws ArgumentError deleteSingleton(q_two, 0)
+
+    @test_logs (:warn, r"no singleton legs found") deleteSingleton(q)
+    @test_logs (:warn, r"no singleton legs matched") deleteSingleton(q_two; itag="ain")
 end
 
 @testset "QSpace tensor product" begin
@@ -932,7 +1177,7 @@ function _make_test_qspace_rank4()
     qi1 = QSpace(q0.I, ("b1a", "b1b"))
     qi2 = QSpace(q0.I, ("b2a", "b2b"))
     qi3 = QSpace(q0.I, ("b3a", "b3b"))
-    a4  = getIdentity((qi1, 2), (qi2, 2), (qi3, 2); itags="fused")
+    a4  = getIdentity((qi1, 2), (qi2, 2), (qi3, 2); itag="fused")
     return QSpace(a4, ("l1", "l2", "l3", "fused"))
 end
 
@@ -942,7 +1187,7 @@ end
     q0 = getLocalSpace(option)
     q = QSpace(q0.I, ("left", "right"))
 
-    idq = getIdentity((q, 2); itags=q.inds[2].itags)
+    idq = getIdentity((q, 2); itag=q.inds[2].itags)
     idq = QSpace(idq, q.inds)
 
     @test norm((q + 2.5) - (q + 2.5 * idq)) < 1e-10
@@ -953,7 +1198,7 @@ end
     q_bad_rank = _make_test_qspace_rank4()
     @test_throws AssertionError q_bad_rank + 1.0
 
-    q_bad_dirs = getIdentity((q, 1), (q, 2); itags="fused")
+    q_bad_dirs = getIdentity((q, 1), (q, 2); itag="fused")
     @test_throws AssertionError q_bad_dirs + 1.0
 end
 
@@ -983,12 +1228,32 @@ end
     @testset "findlegs on rank-4" begin
         @test findlegs(q4; dir='+')       == [1, 2, 3]
         @test findlegs(q4; dir='-')        == [4]
-        @test findlegs(q4; itags="l1")     == [1]
-        @test findlegs(q4; itags="fused")  == [4]
+        @test findlegs(q4; itag="l1")     == [1]
+        @test findlegs(q4; itag="fused")  == [4]
         @test findleg(q4; dir='+')         == 1
         @test findleg(q4; dir='-')         == 4
-        @test findleg(q4; itags="fused")   == 4
+        @test findleg(q4; itag="fused")   == 4
         @test findlegs(q4; dir='+', rev=true) == [4]
+    end
+
+    @testset "svd keyword leg selection" begin
+        U_ref, S_ref, Vd_ref = svd(q4, (1, 2, 3), "kwL", "kwR")
+        U_kw, S_kw, Vd_kw = svd(q4, "kwL", "kwR"; dir='+')
+
+        @test U_kw.inds == U_ref.inds
+        @test S_kw.inds == S_ref.inds
+        @test Vd_kw.inds == Vd_ref.inds
+
+        @test U_kw.spaces == U_ref.spaces
+        @test S_kw.spaces == S_ref.spaces
+        @test Vd_kw.spaces == Vd_ref.spaces
+
+        @test norm(U_kw - U_ref) < 1e-12
+        @test norm(S_kw - S_ref) < 1e-12
+        @test norm(Vd_kw - Vd_ref) < 1e-12
+
+        @test_throws ArgumentError svd(q4; itag="missing")
+        @test_throws ArgumentError svd(q4; lock=0)
     end
 
     # ── prime on rank-4 ───────────────────────────────────────────────────────
@@ -1023,14 +1288,14 @@ end
 
     # ── tag ops on rank-4 ─────────────────────────────────────────────────────
     @testset "tag ops on rank-4" begin
-        q_a = addtags(q4, "phys"; dir='+')
+        q_a = additag(q4, "phys"; dir='+')
         @test all(occursin("phys", q_a.inds[i].itags) for i in 1:3)
         @test !occursin("phys", q_a.inds[4].itags)
 
-        q_r = removetags(q_a, "phys"; dir='+')
+        q_r = removeitag(q_a, "phys"; dir='+')
         @test all(q_r.inds[i].itags == q4.inds[i].itags for i in 1:4)
 
-        q_s = settags(q4, "new"; dir='-')
+        q_s = setitag(q4, "new"; dir='-')
         @test q_s.inds[4].itags == "new"
         @test q_s.inds[1].itags == "l1"  # unchanged
     end
@@ -1075,5 +1340,7 @@ end
         @test occursin("4D QSpace", out)
     end
 end
+
+
 
 

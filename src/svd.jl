@@ -44,20 +44,39 @@ _svd_sector_qlabels(r, N::Int) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n
 
 _svd_dual_sector(symm, sector) = Tuple(get_dualq(symm[n], sector[n]) for n in 1:length(symm))
 
+function _normalize_svd_left_legs(left_legs, rank::Int)
+    legs = collect(Int, left_legs)
+    isempty(legs) && throw(ArgumentError("svd requires at least one left leg"))
+    length(legs) < rank || throw(ArgumentError("svd requires at most $(rank - 1) left legs for rank-$rank input"))
+    all(1 .<= legs .<= rank) || throw(ArgumentError("svd left_legs must lie between 1 and $rank"))
+    length(unique(legs)) == length(legs) || throw(ArgumentError("svd left_legs must not contain duplicates"))
+    return legs
+end
+
+function _select_svd_left_legs(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+                               lock=nothing, rev::Bool=false)
+    if isnothing(dir) && isnothing(itag) && isnothing(plev) && isnothing(lock)
+        throw(ArgumentError("keyword-based svd requires at least one of dir, itag, plev, or lock"))
+    end
+
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    rank = length(q.inds)
+    1 <= length(legs) <= rank - 1 || throw(ArgumentError("keyword-based svd selected legs $legs, but the number of selected legs must be between 1 and $(rank - 1)"))
+    return legs
+end
+
 function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
                            left_legs,
-                           left_tag ::String = "svdL",
-                           right_tag::String = "svdR";
+                           left_tag ::AbstractString = "svdL",
+                           right_tag::AbstractString = "svdR";
                            cutoff   ::Float64 = 1e-12,
                            Nkeep    ::Union{Nothing, Int} = nothing,
 ) where {T, QD, N, RD}
 
     symm = q.symm
-    left_legs  = collect(Int, left_legs)
+    left_legs  = _normalize_svd_left_legs(left_legs, QD)
     right_legs = [l for l in 1:QD if l ∉ left_legs]
     NL, NR = length(left_legs), length(right_legs)
-    @assert NL > 0 "left_legs must not be empty"
-    @assert NR > 0 "right_legs must not be empty"
     @assert isnothing(Nkeep) || Nkeep >= 0 "Nkeep must be non-negative"
 
     # ── Step 1: stamp unique internal tags on every leg (lock=1) ─────────────
@@ -71,12 +90,12 @@ function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
     left_cur  = sort(left_legs)
     right_cur = sort(right_legs)
 
-    # getIdentity((q, leg_idx)...; itags=tag) returns legs directly contractable
+    # getIdentity((q, leg_idx)...; itag=tag) returns legs directly contractable
     # with the selected legs of q, plus one fused output leg.
     # We pass legs in sorted order so that their ordering is consistent with the
     # free1 ordering produced by the upcoming contractions (which also sorts by index).
-    aL = getIdentity(((q_work, l) for l in left_cur)...;  itags=left_tag)
-    aR = getIdentity(((q_work, l) for l in right_cur)...; itags=right_tag)
+    aL = getIdentity(((q_work, l) for l in left_cur)...;  itag=left_tag)
+    aR = getIdentity(((q_work, l) for l in right_cur)...; itag=right_tag)
 
     # ── Step 3: contract q_work → rank-2 bipartition M ───────────────────────
     # Contract q_work over its left-side legs with aL's first NL legs.
@@ -105,10 +124,10 @@ function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
     left_space_dims = Dict{NTuple{N, Tuple{Vararg{Int}}}, Int}()
     right_space_dims = Dict{NTuple{N, Tuple{Vararg{Int}}}, Int}()
 
-    for (dim, sector) in M.spaces[1]
+    for (sector, dim) in M.spaces[1]
         left_space_dims[sector] = dim
     end
-    for (dim, sector) in M.spaces[2]
+    for (sector, dim) in M.spaces[2]
         right_space_dims[sector] = dim
     end
 
@@ -146,7 +165,7 @@ function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
         end
 
         present_sectors = Set(values(row_sector_map))
-        for (dimL, sector) in M.spaces[1]
+        for (sector, dimL) in M.spaces[1]
             sector in present_sectors && continue
             dimR = get(right_space_dims, _svd_dual_sector(symm, sector), 0)
             for j in 1:min(dimL, dimR)
@@ -260,15 +279,15 @@ function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
     end
 
     bond_splist = eltype(M.spaces[1])[]
-    for (_, qlabels) in M.spaces[1]
+    for (qlabels, _) in M.spaces[1]
         count = get(selected_counts, qlabels, 0)
         count == 0 && continue
-        push!(bond_splist, (count, qlabels))
+        push!(bond_splist, (qlabels, count))
     end
     dual_bond_splist = eltype(M.spaces[2])[
-        (count, _svd_dual_sector(symm, qlabels)) for (count, qlabels) in bond_splist
+        (_svd_dual_sector(symm, qlabels), count) for (qlabels, count) in bond_splist
     ]
-    sort!(dual_bond_splist; by = x -> x[2])
+    sort!(dual_bond_splist; by = x -> x[1])
 
     inds_U  = (QIndex(left_tag,  '-'), QIndex(left_tag,  '+'))
     inds_S  = (QIndex(left_tag,  '-'), QIndex(right_tag, '-'))
@@ -345,4 +364,19 @@ function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
     Vd = QSpace(symm, Vd_final.rows, vd_inds_final, Vd_final.spaces)
     
     return U, S, Vd
+end
+
+function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
+                           left_tag::AbstractString="svdL",
+                           right_tag::AbstractString="svdR";
+                           dir=nothing,
+                           itag=nothing,
+                           plev=nothing,
+                           lock=nothing,
+                           rev::Bool=false,
+                           cutoff::Float64=1e-12,
+                           Nkeep::Union{Nothing, Int}=nothing,
+) where {T, QD, N, RD}
+    left_legs = _select_svd_left_legs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return svd(q, left_legs, left_tag, right_tag; cutoff=cutoff, Nkeep=Nkeep)
 end

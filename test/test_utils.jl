@@ -99,7 +99,7 @@ function get_offset(symm::Tuple, splist::Vector)
     leg_offset = Dict{Any, UnitRange{Int}}()
     sector_size = Dict{Any, Int}()
     
-    for (RMTd, qlabels) in splist
+    for (qlabels, RMTd) in splist
         irep_dim = prod(
             isabelian(symm[n]) ? 1 :
             dimension(getNsave_irep(symm[n], BigInt, qlabels[n]))
@@ -329,7 +329,7 @@ end
 function test_getIdentity_direct_contract(option::LocalSpaceOptions)
     q = getLocalSpace(option)
     qi = QSpace(q.I, ("lur", "lur"))
-    a = getIdentity((qi, 1); itags="fused")
+    a = getIdentity((qi, 1); itag="fused")
 
     @test a.inds[1] == QIndex(qi.inds[1].itags, '-', qi.inds[1].plev, qi.inds[1].lock, qi.inds[1].green)
     @test a.spaces[1] == qi.spaces[1]
@@ -381,6 +381,75 @@ function test_1jpair(option::LocalSpaceOptions)
     println(norm(arr1 - arr2))
     @test norm(arr1 - arr2) < 1e-10
 
+end
+
+function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
+    q0 = getLocalSpace(option, ("site1", "site2", "op"))
+    q = q0.F
+
+    function test_same_qspace_structure(q1::QSpace, q2::QSpace)
+        @test q1.inds == q2.inds
+        @test q1.spaces == q2.spaces
+        @test length(q1.rows) == length(q2.rows)
+        for (row1, row2) in zip(q1.rows, q2.rows)
+            @test row1.RMT.data == row2.RMT.data
+            @test length(row1.cgrs) == length(row2.cgrs)
+            for n in eachindex(row1.cgrs)
+                @test row1.cgrs[n].qlabels == row2.cgrs[n].qlabels
+                @test row1.cgrs[n].wmat.data == row2.cgrs[n].wmat.data
+                @test row1.cgrs[n].cgp == row2.cgrs[n].cgp
+                @test row1.cgrs[n].legdir == row2.cgrs[n].legdir
+            end
+        end
+    end
+
+    j_explicit = get1jtensor(q, 2)
+    j_kw = get1jtensor(q; itag="site2")
+    test_same_qspace_structure(j_kw, j_explicit)
+
+    @test_throws ArgumentError get1jtensor(q; plev=0)
+    @test_throws ArgumentError get1jtensor(q; itag="missing")
+
+    flipped_explicit = legflip(q, 2)
+    flipped_kw = legflip(q; itag="site2")
+    test_same_qspace_structure(flipped_kw, flipped_explicit)
+
+    @test flipped_explicit.inds[1] == q.inds[1]
+    @test flipped_explicit.inds[2] == change_dir(QSpaces.change_green(q.inds[2]))
+    @test flipped_explicit.inds[3] == q.inds[3]
+
+    roundtrip = legflip(flipped_explicit, 2)
+    @test roundtrip.inds == q.inds
+    @test roundtrip.spaces == q.spaces
+
+    flipped_multi_tuple = legflip(q, (2, 3))
+    flipped_multi_vector = legflip(q, [2, 3])
+    flipped_multi_kw = legflip(q; dir='-')
+
+    test_same_qspace_structure(flipped_multi_vector, flipped_multi_tuple)
+    test_same_qspace_structure(flipped_multi_kw, flipped_multi_tuple)
+
+    @test flipped_multi_tuple.inds[1] == q.inds[1]
+    @test flipped_multi_tuple.inds[2] == change_dir(QSpaces.change_green(q.inds[2]))
+    @test flipped_multi_tuple.inds[3] == change_dir(QSpaces.change_green(q.inds[3]))
+
+    roundtrip_multi = legflip(flipped_multi_tuple, (2, 3))
+    @test roundtrip_multi.inds == q.inds
+    @test roundtrip_multi.spaces == q.spaces
+
+    @test_throws ArgumentError legflip(q, Int[])
+    @test_throws ArgumentError legflip(q, (2, 2))
+    @test_throws ArgumentError legflip(q; itag="missing")
+end
+
+function test_contract_verify_legs_checks_green(option::LocalSpaceOptions)
+    q0 = getLocalSpace(option, ("site1", "site2", "op"))
+    q = q0.F
+    j = get1jtensor(q, 2)
+
+    @test contract(q, (2,), j, (1,); reduce_lock=false) isa QSpace
+    @test_throws AssertionError contract(q, (2,), j, (2,); reduce_lock=false)
+    @test contract(q, (2,), j, (2,); reduce_lock=false, verify_legs=false) isa QSpace
 end
 
 # ─── test_conj ───────────────────────────────────────────────────────────────
@@ -577,7 +646,7 @@ function test_norm(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
     qi1 = QSpace(q.I, ("lur1", "lur1"))
     qi2 = QSpace(q.I, ("lur2", "lur2"))
-    a   = getIdentity((qi1, 2), (qi2, 2); itags="lurlur")
+    a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
     qf  = QSpace(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a   # rank-4: legs (lur1_in, lur2_in, lur2_out, op)
 
@@ -608,7 +677,7 @@ function test_norm(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     end
 end
 
-# ─── test_eigQS ──────────────────────────────────────────────────────────────
+# ─── test_eigen ──────────────────────────────────────────────────────────────
 # Build a non-trivial Hermitian test input by copying the structure of q.I and
 # replacing each block's RMT with a random real symmetric matrix of the same
 # size.  This avoids testing only the trivial identity (eigenvalues all 1) and
@@ -621,7 +690,7 @@ end
 #   (d) eig_list order  : sorted ascending by eigenvalue
 #   (e) eig_list space  : each entry carries its sector and in-sector index
 # ─────────────────────────────────────────────────────────────────────────────
-function test_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
+function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     q = getLocalSpace(option, ("lur", "lur", "op"))
 
     # Copy q.I (keeps CGRs/inds/spaces intact) then overwrite each RMT block
@@ -643,7 +712,7 @@ function test_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     D = result.D
     V = result.V
     eig_list = result.eig_list
-    println("test_eigQS: $(length(eig_list)) eigenvalues, $(length(D.rows)) D-rows, $(length(V.rows)) V-rows")
+    println("test_eigen: $(length(eig_list)) eigenvalues, $(length(D.rows)) D-rows, $(length(V.rows)) V-rows")
 
     # ── (a) Reconstruction: V * D * V' ≈ A ──────────────────────────────────
     rec      = lock(V, 1) * (D * V')
@@ -686,7 +755,7 @@ function test_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     end
 end
 
-# ─── test_spaces_eigQS ───────────────────────────────────────────────────────
+# ─── test_spaces_eigen ───────────────────────────────────────────────────────
 # Verify that spaces of D and V returned by eigen are consistent:
 #
 #   (a) Input assertion: q.I has equal spaces on both legs
@@ -695,7 +764,7 @@ end
 #   (d) D and V share the same bond space: D.spaces[1] == V.spaces[2]
 #   (e) Bond qlabels of D (and V) are a subset of input qlabels
 # ─────────────────────────────────────────────────────────────────────────────
-function test_spaces_eigQS(option::LocalSpaceOptions)
+function test_spaces_eigen(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
     rng = Random.MersenneTwister(0)
@@ -713,7 +782,7 @@ function test_spaces_eigQS(option::LocalSpaceOptions)
     D = result.D
     V = result.V
 
-    println("test_spaces_eigQS: D.spaces=$(length(D.spaces[1])) sectors, V.spaces=$(length(V.spaces[1])) sectors")
+    println("test_spaces_eigen: D.spaces=$(length(D.spaces[1])) sectors, V.spaces=$(length(V.spaces[1])) sectors")
 
     # (b) D legs share the same space
     @test D.spaces[1] == D.spaces[2]
@@ -725,16 +794,16 @@ function test_spaces_eigQS(option::LocalSpaceOptions)
     @test D.spaces[1] == V.spaces[2]
 
     # (e) Bond qlabels ⊆ input qlabels
-    input_qls = Set(ql for (_, ql) in q.I.spaces[1])
-    bond_qls  = Set(ql for (_, ql) in D.spaces[1])
+    input_qls = Set(ql for (ql, _) in q.I.spaces[1])
+    bond_qls  = Set(ql for (ql, _) in D.spaces[1])
     @test issubset(bond_qls, input_qls)
 end
 
-# ─── test_missing_spaces_eigQS ───────────────────────────────────────────────
+# ─── test_missing_spaces_eigen ───────────────────────────────────────────────
 # Verify that sectors present only in the space list are treated as zero blocks:
 # zero eigenvalues appear in eig_list and identity rows are inserted in V.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_missing_spaces_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
+function test_missing_spaces_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     @test !isempty(q.I.rows)
 
@@ -748,6 +817,7 @@ function test_missing_spaces_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-
     result = eigen(A; hermitian = true)
     D = result.D
     V = result.V
+    expected_cgp = (D.inds[1].dir, D.inds[2].dir) == ('+', '-') ? (1, 2) : (2, 1)
 
     zero_entries = [entry for entry in result.eig_list if entry[3] == removed_sector]
     @test length(zero_entries) == removed_dim
@@ -756,19 +826,25 @@ function test_missing_spaces_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-
     v_row = only([r for r in V.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(V.symm)) == removed_sector])
     v_mat = reshape(v_row.RMT.data, size(v_row.RMT.data, 1), size(v_row.RMT.data, 2))
     @test v_mat ≈ Matrix(I, removed_dim, removed_dim)
+    @test all(cgr.cgp == expected_cgp for cgr in v_row.cgrs)
 
-    @test any(ql == removed_sector for (_, ql) in D.spaces[1])
+    d_rows = [r for r in D.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(D.symm)) == removed_sector]
+    for d_row in d_rows
+        @test all(cgr.cgp == expected_cgp for cgr in d_row.cgrs)
+    end
+
+    @test any(ql == removed_sector for (ql, _) in D.spaces[1])
 
     VtV = V' * lock(V, 2)
     arr_VtV = Array(to_sparse_array(VtV))
     @test norm(arr_VtV - Matrix(I, size(arr_VtV, 1), size(arr_VtV, 2))) < tol
 end
 
-# ─── test_truncate_missing_zero_spaces_eigQS ────────────────────────────────
+# ─── test_truncate_missing_zero_spaces_eigen ────────────────────────────────
 # Verify that truncation preserves sectors selected only through zero
 # eigenvalues, even when the corresponding D rows are absent.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_truncate_missing_zero_spaces_eigQS(option::LocalSpaceOptions)
+function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     @test !isempty(q.I.rows)
 
@@ -780,7 +856,8 @@ function test_truncate_missing_zero_spaces_eigQS(option::LocalSpaceOptions)
     A = QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
 
     result = eigen(A; hermitian = true)
-    kept, discarded = discard_eigQS(result, removed_dim, "eigK", "eigD"; hermitian = true)
+    kept, discarded = discard_eigen(result, removed_dim, "eigK", "eigD"; hermitian = true)
+    expected_cgp = (result.D.inds[1].dir, result.D.inds[2].dir) == ('+', '-') ? (1, 2) : (2, 1)
     eig_tag = result.D.inds[1].itags
     v_orig_leg = only(findall(i -> result.V.inds[i].itags != eig_tag, 1:2))
     v_eig_leg = only(findall(i -> result.V.inds[i].itags == eig_tag, 1:2))
@@ -790,20 +867,24 @@ function test_truncate_missing_zero_spaces_eigQS(option::LocalSpaceOptions)
     @test all(iszero(entry[1]) for entry in kept.eig_list)
 
     @test isempty(kept.D.rows)
-    @test kept.D.spaces[1] == [(removed_dim, removed_sector)]
-    @test kept.D.spaces[2] == [(removed_dim, removed_sector)]
+    @test kept.D.spaces[1] == [(removed_sector, removed_dim)]
+    @test kept.D.spaces[2] == [(removed_sector, removed_dim)]
 
     @test kept.V.spaces[v_orig_leg] == result.V.spaces[v_orig_leg]
     @test discarded.V.spaces[v_orig_leg] == result.V.spaces[v_orig_leg]
-    @test kept.V.spaces[v_eig_leg] == [(removed_dim, removed_sector)]
-    @test all(ql != removed_sector for (_, ql) in discarded.V.spaces[v_eig_leg])
+    @test kept.V.spaces[v_eig_leg] == [(removed_sector, removed_dim)]
+    @test all(ql != removed_sector for (ql, _) in discarded.V.spaces[v_eig_leg])
+    kept_v_rows = [r for r in kept.V.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(kept.V.symm)) == removed_sector]
+    for r in kept_v_rows
+        @test all(cgr.cgp == expected_cgp for cgr in r.cgrs)
+    end
 
-    @test any(ql == removed_sector for (_, ql) in kept.V.spaces[1])
-    @test any(ql == removed_sector for (_, ql) in kept.V.spaces[2])
-    @test all(ql != removed_sector for (_, ql) in discarded.D.spaces[1])
+    @test any(ql == removed_sector for (ql, _) in kept.V.spaces[1])
+    @test any(ql == removed_sector for (ql, _) in kept.V.spaces[2])
+    @test all(ql != removed_sector for (ql, _) in discarded.D.spaces[1])
 
-    result_full = eigQS_full(A)
-    kept_full, discarded_full = discard_eigQS(result_full, removed_dim, "eigKf", "eigDf"; hermitian = false)
+    result_full = eigen_full(A)
+    kept_full, discarded_full = discard_eigen(result_full, removed_dim, "eigKf", "eigDf"; hermitian = false)
     eig_tag_full = result_full.D.inds[1].itags
     v_full_orig_leg = only(findall(i -> result_full.V.inds[i].itags != eig_tag_full, 1:2))
     v_full_eig_leg = only(findall(i -> result_full.V.inds[i].itags == eig_tag_full, 1:2))
@@ -812,20 +893,20 @@ function test_truncate_missing_zero_spaces_eigQS(option::LocalSpaceOptions)
 
     @test kept_full.V.spaces[v_full_orig_leg] == result_full.V.spaces[v_full_orig_leg]
     @test discarded_full.V.spaces[v_full_orig_leg] == result_full.V.spaces[v_full_orig_leg]
-    @test kept_full.V.spaces[v_full_eig_leg] == [(removed_dim, removed_sector)]
-    @test all(ql != removed_sector for (_, ql) in discarded_full.V.spaces[v_full_eig_leg])
+    @test kept_full.V.spaces[v_full_eig_leg] == [(removed_sector, removed_dim)]
+    @test all(ql != removed_sector for (ql, _) in discarded_full.V.spaces[v_full_eig_leg])
 
     @test kept_full.V_inv.spaces[vinv_orig_leg] == result_full.V_inv.spaces[vinv_orig_leg]
     @test discarded_full.V_inv.spaces[vinv_orig_leg] == result_full.V_inv.spaces[vinv_orig_leg]
-    @test kept_full.V_inv.spaces[vinv_eig_leg] == [(removed_dim, removed_sector)]
-    @test all(ql != removed_sector for (_, ql) in discarded_full.V_inv.spaces[vinv_eig_leg])
+    @test kept_full.V_inv.spaces[vinv_eig_leg] == [(removed_sector, removed_dim)]
+    @test all(ql != removed_sector for (ql, _) in discarded_full.V_inv.spaces[vinv_eig_leg])
 end
 
-# ─── test_truncate_eigQS ─────────────────────────────────────────────────────
+# ─── test_discard_eigen ─────────────────────────────────────────────────────
 # Verify that eigenvalue truncation keeps the Nkeep smallest eigenvalues and
 # splits the eigendecomposition consistently into kept and discarded parts.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_truncate_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
+function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
 
@@ -843,7 +924,7 @@ function test_truncate_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     V = result.V
     eig_list = result.eig_list
     Nkeep = min(3, length(eig_list))
-    kept, discarded = discard_eigQS(result, Nkeep, "eigK", "eigD"; hermitian = true)
+    kept, discarded = discard_eigen(result, Nkeep, "eigK", "eigD"; hermitian = true)
     Vkeep = kept.V
     Dkeep = kept.D
     eig_keep = kept.eig_list
@@ -888,10 +969,10 @@ function test_truncate_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     @test n_keep_cols == length(eig_keep)
     @test n_disc_cols == length(eig_discard)
 
-    keep_qls = Set(ql for (_, ql) in Dkeep.spaces[1])
-    discard_qls = Set(ql for (_, ql) in Ddiscard.spaces[1])
-    @test issubset(keep_qls, Set(ql for (_, ql) in D.spaces[1]))
-    @test issubset(discard_qls, Set(ql for (_, ql) in D.spaces[1]))
+    keep_qls = Set(ql for (ql, _) in Dkeep.spaces[1])
+    discard_qls = Set(ql for (ql, _) in Ddiscard.spaces[1])
+    @test issubset(keep_qls, Set(ql for (ql, _) in D.spaces[1]))
+    @test issubset(discard_qls, Set(ql for (ql, _) in D.spaces[1]))
 
     if !isempty(Dkeep.rows)
         rec_keep = lock(Vkeep, 1) * (Dkeep * Vkeep')
@@ -921,11 +1002,11 @@ function test_truncate_eigQS(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     @test norm(arr_A - arr_total) / max(norm(arr_A), 1.0) < tol
 end
 
-# ─── test_eigQS_full_discard ─────────────────────────────────────────────────
+# ─── test_eigen_full_discard ─────────────────────────────────────────────────
 # Verify that the result struct and discard path also work for the full
 # non-Hermitian eigendecomposition, including V_inv slicing.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_eigQS_full_discard(option::LocalSpaceOptions)
+function test_eigen_full_discard(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
     rng = Random.MersenneTwister(7)
@@ -937,11 +1018,11 @@ function test_eigQS_full_discard(option::LocalSpaceOptions)
         r.RMT.data .= reshape(ComplexF64.(M), sz)
     end
 
-    result = eigQS_full(A)
+    result = eigen_full(A)
     @test !isnothing(result.V_inv)
 
     Nkeep = min(2, length(result.eig_list))
-    kept, discarded = discard_eigQS(result, Nkeep, "eigK", "eigD"; hermitian = false)
+    kept, discarded = discard_eigen(result, Nkeep, "eigK", "eigD"; hermitian = false)
 
     @test !isnothing(kept.V_inv)
     @test !isnothing(discarded.V_inv)
@@ -959,11 +1040,11 @@ function test_eigQS_full_discard(option::LocalSpaceOptions)
     @test n_disc_vinv_rows == length(discarded.eig_list)
 end
 
-# ─── test_discard_eigQS_tags ─────────────────────────────────────────────────
-# Verify that discard_eigQS retags the bond legs of D, V, and V_inv for kept
+# ─── test_discard_eigen_itag ───────────────────────────────────────────────────
+# Verify that discard_eigen retags the bond legs of D, V, and V_inv for kept
 # and discarded eigenspaces independently.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_discard_eigQS_tags(option::LocalSpaceOptions)
+function test_discard_eigen_itag(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
     rng = Random.MersenneTwister(17)
@@ -975,10 +1056,10 @@ function test_discard_eigQS_tags(option::LocalSpaceOptions)
         r.RMT.data .= reshape(ComplexF64.(M), sz)
     end
 
-    result = eigQS_full(A, "origEig")
+    result = eigen_full(A, "origEig")
     kept_tag = "keptEig"
     discarded_tag = "discardedEig"
-    kept, discarded = discard_eigQS(
+    kept, discarded = discard_eigen(
         result,
         min(2, length(result.eig_list)),
         kept_tag,
@@ -1025,19 +1106,19 @@ function test_spaces_svdQS(option::LocalSpaceOptions)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
     qi1 = QSpace(q.I, ("lur1", "lur1"))
     qi2 = QSpace(q.I, ("lur2", "lur2"))
-    a   = getIdentity((qi1, 2), (qi2, 2); itags="lurlur")
+    a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
     qf  = QSpace(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a   # rank-4: legs (lur1_in, lur2_in, lur2_out, op)
 
     # qlabel set from a splist
-    qls(sp) = Set(ql for (_, ql) in sp)
+    qls(sp) = Set(ql for (ql, _) in sp)
     symm = q.I.symm; N = length(symm)
 
     # Compute the dual of a splist: apply get_dualq per-symmetry to every qlabel tuple.
     function dual_sp(sp)
         ET = eltype(sp)
-        sort!(ET[(d, Tuple(get_dualq(symm[n], ql[n]) for n in 1:N))
-                 for (d, ql) in sp]; by = x -> x[2])
+        sort!(ET[(Tuple(get_dualq(symm[n], ql[n]) for n in 1:N), d)
+                 for (ql, d) in sp]; by = x -> x[1])
     end
 
     # ── No-truncation case ──────────────────────────────────────────────────
@@ -1165,16 +1246,16 @@ function test_truncate_svdQS(option::LocalSpaceOptions)
     )
 
     missing_u_sector = only([
-        ql for (dim, ql) in U.spaces[2]
+        ql for (ql, dim) in U.spaces[2]
         if dim == removed_dim && ql ∉ s_left_row_sectors
     ])
     missing_vd_sector = only([
-        ql for (dim, ql) in Vd.spaces[1]
+        ql for (ql, dim) in Vd.spaces[1]
         if dim == removed_dim && ql ∉ s_right_row_sectors
     ])
 
-    @test missing_u_sector in Set(ql for (_, ql) in S.spaces[1])
-    @test missing_vd_sector in Set(ql for (_, ql) in S.spaces[2])
+    @test missing_u_sector in Set(ql for (ql, _) in S.spaces[1])
+    @test missing_vd_sector in Set(ql for (ql, _) in S.spaces[2])
 
     u_row = only([r for r in U.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[end]] for n in 1:length(U.symm)) == missing_u_sector])
     u_mat = reshape(u_row.RMT.data, size(u_row.RMT.data, 1), size(u_row.RMT.data, 2))
@@ -1256,8 +1337,8 @@ function test_contract_requires_matching_spaces_in_star(option::LocalSpaceOption
         (QIndex("ct", '-', 0, 0),
          QIndex("",   '+', 0, 0)))
 
-    first_dim, first_sector = first(B.spaces[1])
-    bad_leg1 = vcat([(first_dim + 1, first_sector)], B.spaces[1][2:end])
+    first_sector, first_dim = first(B.spaces[1])
+    bad_leg1 = vcat([(first_sector, first_dim + 1)], B.spaces[1][2:end])
     B_bad = QSpace(B.symm, B.rows, B.inds, (bad_leg1, B.spaces[2]))
 
     @test_throws AssertionError A * B_bad
@@ -1354,6 +1435,8 @@ function test_contract_v2(option::LocalSpaceOptions; tol::Float64 = 1e-10)
 
     println("test_contract_v2 passed (all cases).")
 end
+
+
 
 
 

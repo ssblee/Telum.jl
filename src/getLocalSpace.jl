@@ -89,25 +89,25 @@ end
 
 # Convert mult_ind from decompose_space to spaces format for QSpace
 # mult_ind: Dict{qlabels => Vector{(start_idx, end_idx)}}
-# returns: Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}} - list of (RMT_dim, qlabels)
+# returns: Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}} - list of (qlabels, RMT_dim)
 # Sorted by qlabels for consistency
 function _mult_ind_to_splist(symm::NTuple{N, Any}, 
     mult_ind::Dict{NTuple{N, Tuple{Vararg{Int}}}, Vector{Tuple{Int, Int}}}) where N
     
-    splist = Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}()
+    splist = Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}()
     for (qlabels, ranges) in mult_ind
         # RMT dimension = outer multiplicity (number of ranges) 
         # Each range represents one copy of the irrep, so outer_mult = length(ranges)
         rmt_dim = length(ranges)
-        push!(splist, (rmt_dim, qlabels))
+        push!(splist, (qlabels, rmt_dim))
     end
-    # Sort by qlabels (second element of each tuple)
-    sort!(splist; by = x -> x[2])
+    # Sort by qlabels (first element of each tuple)
+    sort!(splist; by = x -> x[1])
     return splist
 end
 
-function getLocalSpace(opts::LocalSpaceOptions, 
-    tags::NTuple{3, String}=("", "", ""))
+function getLocalSpace(opts::LocalSpaceOptions,
+    tags::Tuple{Vararg{AbstractString, 3}}=("", "", ""))
     # Step 1 – symmetry operators that define the local Hilbert space structure
     symm, weights, lowering_ops, mwirops = getSymmetryInfo(opts)
 

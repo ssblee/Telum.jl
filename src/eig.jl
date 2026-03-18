@@ -7,7 +7,7 @@
 #   eig_tag    : itag for the new eigenvector bond leg (default "eig")
 #   hermitian  : if true (default), treat each RMT block as Hermitian
 #
-# Returns `EigQSResult(V, D, nothing, eig_list)` where:
+# Returns `EigenResult(V, D, nothing, eig_list)` where:
 #   D        : diagonal QSpace with eigenvalues, legs (eig_tag '-', eig_tag '+')
 #   V        : eigenvector QSpace, legs (original outgoing leg, eig_tag '+')
 #   eig_list : Vector{Tuple{eigenval_type, Int, sector_qlabels, sector_index}}
@@ -25,25 +25,26 @@ _eig_sector_qlabels(r, N) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1
 _eig_sort_value(ev::Real, hermitian::Bool) = hermitian ? real(ev) : abs(ev)
 _eig_sort_value(ev::Complex, hermitian::Bool) = hermitian ? real(ev) : abs(ev)
 
-struct EigQSResult{TV, TD, TVI, TL}
+struct EigenResult{TV, TD, TVI, TL}
     V::TV
     D::TD
     V_inv::TVI
     eig_list::TL
 end
 
-function EigQSResult(V::QSpace, D::QSpace, V_inv, eig_list)
-    return EigQSResult{typeof(V), typeof(D), typeof(V_inv), typeof(eig_list)}(
+function EigenResult(V::QSpace, D::QSpace, V_inv, eig_list)
+    return EigenResult{typeof(V), typeof(D), typeof(V_inv), typeof(eig_list)}(
         V, D, V_inv, eig_list)
 end
 
 function _eig_identity_cgrs(symm::NTuple{N, Any},
-                            sector_qlabels::NTuple{N, Tuple{Vararg{Int}}}) where {N}
+                            sector_qlabels::NTuple{N, Tuple{Vararg{Int}}},
+                            cgp::NTuple{2, Int}) where {N}
     return ntuple(N) do n
         ql = sector_qlabels[n]
         dim_n = dimension(symm[n], ql)
         wmat_n = QTensor([sqrt(Float64(dim_n));;])
-        CGR(symm[n], (ql, ql), wmat_n, (2, 1), (1, 1))
+        CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
     end
 end
 
@@ -54,8 +55,9 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
                                       rows_V,
                                       rows_Vinv,
                                       eig_list,
+                                      cgp::NTuple{2, Int},
                                       ::Type{T_out}) where {N, T_out}
-    for (dim, sector_qlabels) in spaces
+    for (sector_qlabels, dim) in spaces
         sector_qlabels ∈ covered && continue
 
         cgt_dim = prod(dimension(symm[n], sector_qlabels[n]) for n in 1:N)
@@ -63,7 +65,7 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
             push!(eig_list, (zero(T_out), cgt_dim, sector_qlabels, j))
         end
 
-        cgrs = _eig_identity_cgrs(symm, sector_qlabels)
+        cgrs = _eig_identity_cgrs(symm, sector_qlabels, cgp)
         rmt_eye = QTensor(reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...))
 
         push!(rows_V, row(cgrs, rmt_eye))
@@ -94,9 +96,9 @@ function _renumber_eig_entries(eig_entries)
     return out
 end
 
-_retag_qindex(idx::QIndex, tag::String) = QIndex(tag, idx.dir, idx.plev, idx.lock, idx.green)
+_retag_qindex(idx::QIndex, tag::AbstractString) = QIndex(tag, idx.dir, idx.plev, idx.lock, idx.green)
 
-function _retag_eig_result(result::EigQSResult, eig_tag::String)
+function _retag_eigen_result(result::EigenResult, eig_tag::AbstractString)
     d_inds = (_retag_qindex(result.D.inds[1], eig_tag), _retag_qindex(result.D.inds[2], eig_tag))
     D = QSpace(result.D, d_inds)
 
@@ -110,7 +112,7 @@ function _retag_eig_result(result::EigQSResult, eig_tag::String)
         QSpace(result.V_inv, vinv_inds)
     end
 
-    return EigQSResult(V, D, V_inv, result.eig_list)
+    return EigenResult(V, D, V_inv, result.eig_list)
 end
 
 function _select_eig_rows(template::QSpace{T, 2, N, RD},
@@ -150,9 +152,9 @@ function _select_eig_rows(template::QSpace{T, 2, N, RD},
 
     function build_selected_space(base_space, dim_fn)
         selected = eltype(base_space)[]
-        for (dim, sector) in base_space
+        for (sector, dim) in base_space
             haskey(sector_counts, sector) || continue
-            push!(selected, (dim_fn(dim, sector_counts[sector]), sector))
+            push!(selected, (sector, dim_fn(dim, sector_counts[sector])))
         end
         return selected
     end
@@ -179,8 +181,8 @@ function _select_eig_rows(template::QSpace{T, 2, N, RD},
     return QSpace(template.symm, rows_out, template.inds, spaces_out)
 end
 
-function _split_eig_result(result::EigQSResult, Nkeep::Integer;
-                           hermitian::Bool = isnothing(result.V_inv))
+function _split_eigen_result(result::EigenResult, Nkeep::Integer;
+                             hermitian::Bool = isnothing(result.V_inv))
     @assert Nkeep >= 0 "Nkeep must be non-negative"
 
     eig_entries = copy(result.eig_list)
@@ -209,13 +211,13 @@ function _split_eig_result(result::EigQSResult, Nkeep::Integer;
     Vinv_keep = isnothing(result.V_inv) ? nothing : _select_eig_rows(result.V_inv, kept_picks; mode=:rows)
     Vinv_discard = isnothing(result.V_inv) ? nothing : _select_eig_rows(result.V_inv, discarded_picks; mode=:rows)
 
-    kept = EigQSResult(Vkeep, Dkeep, Vinv_keep, _renumber_eig_entries(kept_entries))
-    discarded = EigQSResult(Vdiscard, Ddiscard, Vinv_discard, _renumber_eig_entries(discarded_entries))
+    kept = EigenResult(Vkeep, Dkeep, Vinv_keep, _renumber_eig_entries(kept_entries))
+    discarded = EigenResult(Vdiscard, Ddiscard, Vinv_discard, _renumber_eig_entries(discarded_entries))
     return kept, discarded
 end
 
 function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
-                             eig_tag::String = "eig";
+                             eig_tag::AbstractString = "eig";
                              hermitian::Bool = true) where {T, N, RD}
 
     symm = q.symm
@@ -288,7 +290,7 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
     end
 
     covered = Set(_eig_sector_qlabels(r, N) for r in q.rows)
-    _append_missing_eig_sectors!(symm, q.spaces[1], covered, rows_D, rows_V, nothing, eig_list, T_out)
+    _append_missing_eig_sectors!(symm, q.spaces[1], covered, rows_D, rows_V, nothing, eig_list, cgp, T_out)
 
     # Sort eig_list ascending (real part for Hermitian, absolute value otherwise)
     sort!(eig_list; by = x -> _eig_sort_value(x[1], hermitian))
@@ -308,14 +310,14 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
     D = QSpace(symm, rows_D, inds_D, spaces_D)
     V = QSpace(symm, rows_V, inds_V, spaces_V)
 
-    return EigQSResult(V, D, nothing, eig_list)
+    return EigenResult(V, D, nothing, eig_list)
 end
 
-# ─── eigQS_full ───────────────────────────────────────────────────────────────
+# ─── eigen_full ───────────────────────────────────────────────────────────────
 #
 # Non-Hermitian eigendecomposition that also returns V_inv.
 #
-# Returns `EigQSResult(V, D, Vinv, eig_list)` where:
+# Returns `EigenResult(V, D, Vinv, eig_list)` where:
 #   D        : diagonal QSpace of eigenvalues (complex), legs (eig_tag '-', eig_tag '+')
 #   V        : right-eigenvector QSpace, legs (original outgoing leg, eig_tag '+')
 #   Vinv     : inverse of V, legs (eig_tag '-', original incoming leg)
@@ -325,15 +327,15 @@ end
 #
 # Satisfies A = V * D * Vinv row-by-row.
 # ────────────────────────────────────────────────────────────────────────────
-function eigQS_full(q::QSpace{T, 2, N, RD},
-                    eig_tag::String = "eig") where {T, N, RD}
+function eigen_full(q::QSpace{T, 2, N, RD},
+                    eig_tag::AbstractString = "eig") where {T, N, RD}
 
     symm = q.symm
 
-    @assert length(q.inds) == 2 "eigQS_full requires a rank-2 QSpace"
+    @assert length(q.inds) == 2 "eigen_full requires a rank-2 QSpace"
     dirs = (q.inds[1].dir, q.inds[2].dir)
-    @assert (dirs == ('+', '-') || dirs == ('-', '+')) "eigQS_full requires one incoming ('+') and one outgoing ('-') leg"
-    @assert q.spaces[1] == q.spaces[2] "eigQS_full: both legs of input QSpace must have the same space list (same sectors and dimensions)"
+    @assert (dirs == ('+', '-') || dirs == ('-', '+')) "eigen_full requires one incoming ('+') and one outgoing ('-') leg"
+    @assert q.spaces[1] == q.spaces[2] "eigen_full: both legs of input QSpace must have the same space list (same sectors and dimensions)"
     cgp = dirs == ('+', '-') ? (1, 2) : (2, 1)
 
     in_leg  = dirs[1] == '+' ? 1 : 2
@@ -348,7 +350,7 @@ function eigQS_full(q::QSpace{T, 2, N, RD},
     for r in q.rows
         rmt = r.RMT.data
         sL, sR = size(rmt, 1), size(rmt, 2)
-        @assert sL == sR "eigQS_full: RMT must be square"
+        @assert sL == sR "eigen_full: RMT must be square"
 
         mat = reshape(rmt, sL, sR)
 
@@ -401,7 +403,7 @@ function eigQS_full(q::QSpace{T, 2, N, RD},
     end
 
     covered = Set(_eig_sector_qlabels(r, N) for r in q.rows)
-    _append_missing_eig_sectors!(symm, q.spaces[1], covered, rows_D, rows_V, rows_Vinv, eig_list, T_out)
+    _append_missing_eig_sectors!(symm, q.spaces[1], covered, rows_D, rows_V, rows_Vinv, eig_list, cgp, T_out)
 
     # Sort by ascending |eigenvalue|
     sort!(eig_list; by = x -> _eig_sort_value(x[1], false))
@@ -428,27 +430,21 @@ function eigQS_full(q::QSpace{T, 2, N, RD},
     V    = QSpace(symm, rows_V,    inds_V,    spaces_V)
     Vinv = QSpace(symm, rows_Vinv, inds_Vinv, spaces_Vinv)
 
-    return EigQSResult(V, D, Vinv, eig_list)
+    return EigenResult(V, D, Vinv, eig_list)
 end
 
 """
-    discard_eigQS(result::EigQSResult, Nkeep, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))
+    discard_eigen(result::EigenResult, Nkeep, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))
 
 Keep the `Nkeep` smallest eigenvalues, ignoring degeneracy, and return two
-`EigQSResult` objects: the kept part and the discarded part.
+`EigenResult` objects: the kept part and the discarded part.
 """
-function discard_eigQS(result::EigQSResult,
+function discard_eigen(result::EigenResult,
                        Nkeep::Integer,
-                       kept_tag::String = "eigK",
-                       discarded_tag::String = "eigD";
+                       kept_tag::AbstractString = "eigK",
+                       discarded_tag::AbstractString = "eigD";
                        hermitian::Bool = isnothing(result.V_inv))
-    kept, discarded = _split_eig_result(result, Nkeep; hermitian=hermitian)
-    return _retag_eig_result(kept, kept_tag), _retag_eig_result(discarded, discarded_tag)
+    kept, discarded = _split_eigen_result(result, Nkeep; hermitian=hermitian)
+    return _retag_eigen_result(kept, kept_tag), _retag_eigen_result(discarded, discarded_tag)
 end
 
-truncate_eigQS(result::EigQSResult,
-               Nkeep::Integer,
-               kept_tag::String = "eigK",
-               discarded_tag::String = "eigD";
-               hermitian::Bool = isnothing(result.V_inv)) =
-    discard_eigQS(result, Nkeep, kept_tag, discarded_tag; hermitian=hermitian)

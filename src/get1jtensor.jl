@@ -1,13 +1,50 @@
 get1jtensor(q::QSpace{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
 get1jtensor(leginfo(q, leg))
 
+function _resolve_unique_leg(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+                             lock=nothing, rev::Bool=false,
+                             opname::AbstractString="operation")
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    length(legs) == 1 && return only(legs)
+    isempty(legs) && throw(ArgumentError("$opname requires a uniquely specified leg, but no legs matched"))
+    throw(ArgumentError("$opname requires a uniquely specified leg, but matched legs $legs"))
+end
+
+function _resolve_matching_legs(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+                                lock=nothing, rev::Bool=false,
+                                opname::AbstractString="operation")
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    isempty(legs) && throw(ArgumentError("$opname requires at least one matching leg, but no legs matched"))
+    return legs
+end
+
+function _normalize_legflip_legs(q::QSpace{T, QD}, legs) where {T, QD}
+    positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
+    isempty(positions) && throw(ArgumentError("legflip requires at least one leg"))
+
+    for leg in positions
+        1 <= leg <= QD || throw(BoundsError(q, leg))
+    end
+
+    length(unique(positions)) == length(positions) || throw(ArgumentError(
+        "legflip legs must be unique, got $positions"))
+    return positions
+end
+
+function get1jtensor(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+                     lock=nothing, rev::Bool=false)
+    leg = _resolve_unique_leg(q; dir=dir, itag=itag, plev=plev, lock=lock,
+                              rev=rev, opname="get1jtensor")
+    return get1jtensor(q, leg)
+end
+
 function get1jtensor(leginfo::leginfo{N}) where N
     rows1 = row{Float64, 2, N, 2+N}[]
 
     symm, ind = leginfo.symm, leginfo.ind
-    inds1 = (change_dir(ind), change_dir(green(ind)))
+    inds1 = (change_dir(ind), change_dir(change_green(ind)))
     dir1 = inds1[1].dir
-    for (RMTd, qlabels) in leginfo.splist
+    for (qlabels, RMTd) in leginfo.splist
         RMT1 = QTensor(reshape(Matrix{Float64}(I, RMTd, RMTd), RMTd, RMTd, (1 for _=1:N)...))
         dual_qlabels = Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N)
 
@@ -29,10 +66,34 @@ function get1jtensor(leginfo::leginfo{N}) where N
 
     # leg 1 = original space, leg 2 = dual space
     ET = eltype(leginfo.splist)
-    dual_splist = sort!(ET[(RMTd, Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N)) 
-                           for (RMTd, qlabels) in leginfo.splist], by=x->x[2])
+    dual_splist = sort!(ET[(Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N), RMTd) 
+                           for (qlabels, RMTd) in leginfo.splist], by=x->x[1])
     spaces1 = (leginfo.splist, dual_splist)
 
     q1 = QSpace(symm, rows1, inds1, spaces1)
     return q1
+end
+
+function legflip(q::QSpace{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
+    1 <= leg <= QD || throw(BoundsError(q, leg))
+    j = get1jtensor(q, leg)
+    q_flip = contract(q, (leg,), j, (1,); reduce_lock=false)
+    perm = (ntuple(i -> i, leg - 1)..., QD, ntuple(i -> leg - 1 + i, QD - leg)...)
+    return permutedims(q_flip, perm)
+end
+
+function legflip(q::QSpace{T, QD, N, RD}, legs::LegList) where {T, QD, N, RD}
+    positions = _normalize_legflip_legs(q, legs)
+    q_flip = q
+    for leg in positions
+        q_flip = legflip(q_flip, leg)
+    end
+    return q_flip
+end
+
+function legflip(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+                 lock=nothing, rev::Bool=false)
+    legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
+                                  rev=rev, opname="legflip")
+    return legflip(q, legs)
 end

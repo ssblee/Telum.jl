@@ -240,7 +240,7 @@ function NRG_test()
 
     H0 = U/2*lock(n0, 1) * (n0 - q0.I) + epsd * n0 
     v = getvac(q0.I, ("K,vac", "K,vac"))
-    A0 = permutedims(getIdentity((v, 2), (H0, 2); itags="K,0"), (1, 3, 2))
+    A0 = permutedims(getIdentity((v, 2), (H0, 2); itag="K,0"), (1, 3, 2))
 
     H0 = A0' * lock(A0 * H0, 2)
 
@@ -284,23 +284,23 @@ function NRG_IterDiag(H0::QSpace{T, 2, N},
             AK[itN] = A0
             # Do not update AD since there is no discarded states
             e = eigen(H0)
-            ek, ed = discard_eigQS(e, Nkeep, "K,$si", "D,$si")
+            ek, ed = discard_eigen(e, Nkeep, "K,$si", "D,$si")
             push!(EK, ek.eig_list)
             push!(ED, ed.eig_list)
 
         else
             l = findleg(Hprev; dir='-')
-            Anow = getIdentity((Hprev, l), (Z, 2); itags="L,$si")
+            Anow = getIdentity((Hprev, l), (Z, 2); itag="L,$si")
             
-            Hnow = lock(Anow'; itags="L") * (Hprev * Anow)
+            Hnow = lock(Anow'; itag="L") * (Hprev * Anow)
             Hnow = Hnow * (EScale[itN-1] / EScale[itN])
 
             Fnow = F' * lock(Z, 2)
-            Hhop = lock(Anow'; itags="L") * (Fprev * Anow * Fnow)
+            Hhop = lock(Anow'; itag="L") * (Fprev * Anow * Fnow)
             Hhop = Hhop * (ff[itN-1] / EScale[itN])
             Hhop = Hhop + Hhop'
 
-            Hon = lock(Anow'; itags="L") * (n0 * Anow)
+            Hon = lock(Anow'; itag="L") * (n0 * Anow)
             Hon = (gg[itN-1] / EScale[itN]) * Hon
 
             Hnow = Hnow + Hhop + Hon
@@ -311,7 +311,7 @@ function NRG_IterDiag(H0::QSpace{T, 2, N},
             e0 = e.eig_list[1][1] # Ground state energy
             E0[itN] = e0
 
-            ek, ed = discard_eigQS(e, Nkeep, "K,$si", "D,$si")
+            ek, ed = discard_eigen(e, Nkeep, "K,$si", "D,$si")
 
             # Shift energies to make the lowest energy value be 0
             Hprev = ek.D - e0
@@ -323,7 +323,7 @@ function NRG_IterDiag(H0::QSpace{T, 2, N},
 
         if itN < Nsite
             ak = AK[itN]
-            Fprev = ak' * lock(F * ak; itags="K,$si")
+            Fprev = ak' * lock(F * ak; itag="K,$si")
         end
     end
 
@@ -448,3 +448,4 @@ plot_NRG_EK(result::Tuple; kwargs...) = plot_NRG_EK(result[1]; kwargs...)
 
 EK, AK, ED, AD, E0 = NRG_test()
 plot_NRG_EK(EK; ymax=3.0, linewidth=1.5, show_legend=true)
+

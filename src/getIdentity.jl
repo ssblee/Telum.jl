@@ -1,9 +1,9 @@
 # N: the number of symmetries
-# splist: A list of (dim of RMT, symmetry sector qlabels)
+# splist: A list of (symmetry sector qlabels, RMT dim)
 struct leginfo{N}
     symm::NTuple{N, Any} # symmetry tuple (same for all legs)
     ind::QIndex # Corresponding QIndex object
-    splist::Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}
+    splist::Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}
 end
 
 # Use precomputed spaces from QSpace
@@ -13,10 +13,10 @@ end
 
 # Variadic entry point: accepts multiple (QSpace, Int) pairs as positional arguments
 # Keyword arguments control the fused output leg's QIndex properties
-function getIdentity(legs::Vararg{Tuple{QSpace, Int}}; 
-                     itags::String="", plev::Int=0, lock::Int=0)
+function getIdentity(legs::Vararg{Tuple{QSpace, Int}};
+                     itag::AbstractString="", plev::Int=0, lock::Int=0)
     leginfos = Tuple(leginfo(q, i) for (q, i) in legs)
-    return getIdentity(leginfos; itags=itags, plev=plev, lock=lock)
+    return getIdentity(leginfos; itag=itag, plev=plev, lock=lock)
 end
     
 # For abelian symmetries: unique outcome is the sum of all qlabels; OM is always 1
@@ -42,8 +42,8 @@ function combine_qlabels(::Type{S},
     ]
 end
 
-function getIdentity(leginfos::NTuple{D, leginfo{N}}; 
-                     itags::String="", plev::Int=0, lock::Int=0) where {D, N}
+function getIdentity(leginfos::NTuple{D, leginfo{N}};
+                     itag::AbstractString="", plev::Int=0, lock::Int=0) where {D, N}
 
     for i in 1:D-1 @assert leginfos[i].symm == leginfos[i+1].symm end
     symm = leginfos[1].symm
@@ -53,9 +53,9 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
     leginfos_adj = Tuple(
         if leginfos[d].ind.dir == '+'
             ET = eltype(leginfos[d].splist)
-            new_splist = ET[(dim, Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N))
-                            for (dim, qlabels) in leginfos[d].splist]
-            sort!(new_splist; by = x -> x[2])
+            new_splist = ET[(Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N), dim)
+                            for (qlabels, dim) in leginfos[d].splist]
+            sort!(new_splist; by = x -> x[1])
             leginfo{N}(leginfos[d].symm, leginfos[d].ind, new_splist)
         else
             leginfos[d]
@@ -72,9 +72,9 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
 
     for i in CartesianIndices(nrows)
         I = i.I
-        RMT_dims = Tuple(leginfos_adj[d].splist[I[d]][1] for d in 1:D)
+        RMT_dims = Tuple(leginfos_adj[d].splist[I[d]][2] for d in 1:D)
         RMT_dim = prod(RMT_dims)
-        qlabels = Tuple(leginfos_adj[d].splist[I[d]][2] for d in 1:D)
+        qlabels = Tuple(leginfos_adj[d].splist[I[d]][1] for d in 1:D)
 
         # For each symmetry n, fuse the D qlabels to get all valid (qlabel, om) pairs
         outcomes_per_symm = Tuple(
@@ -123,7 +123,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
             prod_oms  = prod(oms)
 
             # Dimensions of RMTs of input legs at this sector
-            rmts_dims = Tuple(leginfos_adj[d].splist[orig_ind[d]][1] for d in 1:D)
+            rmts_dims = Tuple(leginfos_adj[d].splist[orig_ind[d]][2] for d in 1:D)
 
             # Build RMT: zeros everywhere, identity blocks at [:,...,:, sti:edi]
             # The block is laid out as prod_oms copies of a RMT_dim×RMT_dim identity.
@@ -139,7 +139,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
             # Build one CGR per symmetry
             cgrs_list = CGR{D+1}[]
             for n in 1:N
-                input_qls    = Tuple(leginfos_adj[d].splist[orig_ind[d]][2][n] for d in 1:D)
+                input_qls    = Tuple(leginfos_adj[d].splist[orig_ind[d]][1][n] for d in 1:D)
                 perm         = sortperm(collect(input_qls))
                 inv_perm     = invperm(perm)
                 cgr_qlabels  = (input_qls[perm]..., fused_qlabels[n])
@@ -156,20 +156,20 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
     # Assemble an internal QSpace whose selected legs are ready for fusion.
     # For originally-incoming legs we expose the dualized leg with green=true so
     # we can contract a 1j tensor and recover a directly-contractable external leg.
-    fused_ind = QIndex(itags, '-', plev, lock)
+    fused_ind = QIndex(itag, '-', plev, lock)
     inds = (ntuple(d -> begin
-        idx = leginfos[d].ind.dir == '+' ? green(leginfos[d].ind) : leginfos[d].ind
+        idx = leginfos[d].ind.dir == '+' ? change_green(leginfos[d].ind) : leginfos[d].ind
         to_incoming(idx)
     end, D)..., fused_ind)
     
     # Build spaces tuple: first D legs use the adjusted spaces, last leg from merged_info
     # Fused leg space: for each fused_qlabel, RMT dim = total dimension (last edi)
-    fused_splist = Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}()
+    fused_splist = Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}()
     for (fused_qlabels, entries) in merged_info
         space_dim = entries[end][end]  # last edi = total RMT dimension for this sector
-        push!(fused_splist, (space_dim, fused_qlabels))
+        push!(fused_splist, (fused_qlabels, space_dim))
     end
-    sort!(fused_splist; by = x -> x[2])  # sort by qlabels for consistency
+    sort!(fused_splist; by = x -> x[1])  # sort by qlabels for consistency
     
     spaces = (ntuple(d -> leginfos_adj[d].splist, D)..., fused_splist)
 

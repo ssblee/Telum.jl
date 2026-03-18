@@ -338,7 +338,7 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
 
     @assert q1.symm == q2.symm "QSpace objects must share the same symmetry tuple"
     
-    # Verify contracted legs have opposite arrow directions, matching itags, and same space info
+    # Verify contracted legs have opposite arrow directions, matching itags/green, and same space info
     if verify_legs
         for i in 1:CN
             idx1 = q1.inds[legs1[i]]
@@ -346,7 +346,9 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
             @assert idx1.dir != idx2.dir "Contracted legs must have opposite arrow directions: " *
                 "q1 leg $(legs1[i]) has dir='$(idx1.dir)', q2 leg $(legs2[i]) has dir='$(idx2.dir)'"
             @assert idx1.itags == idx2.itags "Contracted legs must have matching itags: " *
-                "q1 leg $(legs1[i]) has itags='$(idx1.itags)', q2 leg $(legs2[i]) has itags='$(idx2.itags)'"
+                "q1 leg $(legs1[i]) has itag='$(idx1.itags)', q2 leg $(legs2[i]) has itag='$(idx2.itags)'"
+            @assert idx1.green == idx2.green "Contracted legs must have matching green flags: " *
+                "q1 leg $(legs1[i]) has green=$(idx1.green), q2 leg $(legs2[i]) has green=$(idx2.green)"
             @assert q1.spaces[legs1[i]] == q2.spaces[legs2[i]] "Contracted legs must have matching space info: " *
                 "q1 leg $(legs1[i]) spaces != q2 leg $(legs2[i]) spaces"
         end
@@ -550,7 +552,9 @@ function contract_v2(q1::QSpace{T1, QD1, N, RD1},
             @assert idx1.dir != idx2.dir "Contracted legs must have opposite arrow directions: " *
                 "q1 leg $(legs1[i]) has dir='$(idx1.dir)', q2 leg $(legs2[i]) has dir='$(idx2.dir)'"
             @assert idx1.itags == idx2.itags "Contracted legs must have matching itags: " *
-                "q1 leg $(legs1[i]) has itags='$(idx1.itags)', q2 leg $(legs2[i]) has itags='$(idx2.itags)'"
+                "q1 leg $(legs1[i]) has itag='$(idx1.itags)', q2 leg $(legs2[i]) has itag='$(idx2.itags)'"
+            @assert idx1.green == idx2.green "Contracted legs must have matching green flags: " *
+                "q1 leg $(legs1[i]) has green=$(idx1.green), q2 leg $(legs2[i]) has green=$(idx2.green)"
             @assert q1.spaces[legs1[i]] == q2.spaces[legs2[i]] "Contracted legs must have matching space info: " *
                 "q1 leg $(legs1[i]) spaces != q2 leg $(legs2[i]) spaces"
         end

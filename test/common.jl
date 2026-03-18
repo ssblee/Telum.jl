@@ -82,18 +82,18 @@ function _sum_splist_many_ref(splists)
     seen = Set{Any}()
 
     for splist in splists
-        for (dim, qlabels) in splist
+        for (qlabels, dim) in splist
             dims[qlabels] = get(dims, qlabels, 0) + dim
             if qlabels ∉ seen
-                push!(result, (0, qlabels))
+                push!(result, (qlabels, 0))
                 push!(seen, qlabels)
             end
         end
     end
 
     for i in eachindex(result)
-        _, qlabels = result[i]
-        result[i] = (dims[qlabels], qlabels)
+        qlabels, _ = result[i]
+        result[i] = (qlabels, dims[qlabels])
     end
 
     return result
@@ -126,7 +126,7 @@ function _dense_vector_start_maps(qs, dims)
         for leg in 1:QD
             leg ∈ dims_set || continue
             leg_offsets, _ = get_offset(q.symm, q.spaces[leg])
-            for (_, qlabels) in q.spaces[leg]
+            for (qlabels, _) in q.spaces[leg]
                 start = get(running[leg], qlabels, 1)
                 starts[qi][leg][qlabels] = start
                 running[leg][qlabels] = start + length(leg_offsets[qlabels])
@@ -196,7 +196,7 @@ function _matrix_axis_start_maps(sources, dims, QD::Int, symm::Tuple)
         for leg in dims
             startmap = Dict{Any, Int}()
             leg_offsets, _ = get_offset(symm, sources[idx][leg])
-            for (_, qlabels) in sources[idx][leg]
+            for (qlabels, _) in sources[idx][leg]
                 start = get(running[leg], qlabels, 1)
                 startmap[qlabels] = start
                 running[leg][qlabels] = start + length(leg_offsets[qlabels])

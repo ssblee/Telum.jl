@@ -4,50 +4,87 @@ include("QTensor.jl")
 include("utils.jl")
 include("localspaces/localspaces.jl")
 
-# ─── Tag string helpers ───────────────────────────────────────────────────────
+# ─── Tag helpers ──────────────────────────────────────────────────────────────
 #
-# Tags are stored as a single comma-separated String sorted alphabetically,
-# e.g. "bond,site,u1" (ITensor convention). Empty string means no tags.
-# Individual tags contain no commas or whitespace.
+# Tags are stored internally as an Itag wrapper around a canonical
+# comma-separated String sorted alphabetically, e.g. "bond,site,u1"
+# (ITensor convention). Empty string means no tags. Individual tags contain no
+# commas or whitespace.
 #
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Split tag string into sorted vector of non-empty individual tags.
-_parse_tags(tags::String) = sort!(filter!(!isempty, strip.(split(tags, ','))))
+_itag_text(tags::AbstractString) = String(tags)
+
+# Split tag text into sorted vector of non-empty individual tags.
+_parse_itag(tags::AbstractString) = sort!(filter!(!isempty, strip.(split(_itag_text(tags), ','))))
 
 # Canonical form: sorted, comma-joined, no spaces.
-_normalize_tags(tags::String) = join(_parse_tags(tags), ',')
+_normalize_itag_text(tags::AbstractString) = join(_parse_itag(tags), ',')
+
+struct Itag <: AbstractString
+    value::String
+
+    Itag(tags::AbstractString) = new(_normalize_itag_text(tags))
+end
+
+Itag(tags::Itag) = tags
+_itag_text(tags::Itag) = tags.value
+_normalize_itag(tags::AbstractString) = Itag(tags)
+
+Base.String(tags::Itag) = tags.value
+Base.convert(::Type{String}, tags::Itag) = tags.value
+Base.ncodeunits(tags::Itag) = ncodeunits(tags.value)
+Base.codeunit(::Type{Itag}) = codeunit(String)
+Base.codeunit(tags::Itag, i::Int) = codeunit(tags.value, i)
+Base.isvalid(tags::Itag, i::Int) = isvalid(tags.value, i)
+Base.iterate(tags::Itag) = iterate(tags.value)
+Base.iterate(tags::Itag, i::Int) = iterate(tags.value, i)
+Base.length(tags::Itag) = length(tags.value)
+Base.lastindex(tags::Itag) = lastindex(tags.value)
+Base.thisind(tags::Itag, i::Int) = thisind(tags.value, i)
+Base.nextind(tags::Itag, i::Int) = nextind(tags.value, i)
+Base.nextind(tags::Itag, i::Int, n::Int) = nextind(tags.value, i, n)
+Base.prevind(tags::Itag, i::Int) = prevind(tags.value, i)
+Base.prevind(tags::Itag, i::Int, n::Int) = prevind(tags.value, i, n)
+Base.show(io::IO, tags::Itag) = print(io, tags.value)
+Base.isempty(tags::Itag) = isempty(tags.value)
+Base.hash(tags::Itag, h::UInt) = hash(tags.value, h)
+Base.:(==)(a::Itag, b::Itag) = a.value == b.value
+Base.:(==)(a::Itag, b::AbstractString) = a.value == _normalize_itag_text(b)
+Base.:(==)(a::AbstractString, b::Itag) = _normalize_itag_text(a) == b.value
+Base.isequal(a::Itag, b::Itag) = (a == b)
+Base.isequal(a::Itag, b::AbstractString) = (a == b)
+Base.isequal(a::AbstractString, b::Itag) = (a == b)
 
 # True iff all comma-separated tags in `query` are present in `base`.
-function _has_tags(base::String, query::String)
-    bset = Set(_parse_tags(base))
-    return all(t -> t ∈ bset, _parse_tags(query))
+function _has_itag(base::AbstractString, query::AbstractString)
+    bset = Set(_parse_itag(base))
+    return all(t -> t ∈ bset, _parse_itag(query))
 end
 
 # Add tags from `newtags` to `base`; result is sorted and deduplicated.
-_add_tags(base::String, newtags::String) =
-    join(sort!(unique!(vcat(_parse_tags(base), _parse_tags(newtags)))), ',')
+_add_itag(base::AbstractString, newtags::AbstractString) =
+    Itag(join(sort!(unique!(vcat(_parse_itag(base), _parse_itag(newtags)))), ','))
 
 # Remove every tag listed in `rmtags` from `base`.
-function _remove_tags(base::String, rmtags::String)
-    rm = Set(_parse_tags(rmtags))
-    return join(filter(t -> t ∉ rm, _parse_tags(base)), ',')
+function _remove_itag(base::AbstractString, rmtags::AbstractString)
+    rm = Set(_parse_itag(rmtags))
+    return Itag(join(filter(t -> t ∉ rm, _parse_itag(base)), ','))
 end
 
 # Remove tags listed in `old` and add tags listed in `new` to `base`.
 # (Applied regardless of whether `old` tags are present — use the
-#  `itags` selector to restrict which legs are affected.)
-function _replace_tags(base::String, old::String, new_tags::String)
-    rm = Set(_parse_tags(old))
-    remaining = filter(t -> t ∉ rm, _parse_tags(base))
-    append!(remaining, _parse_tags(new_tags))
-    return join(sort!(unique!(remaining)), ',')
+#  `itag` selector to restrict which legs are affected.)
+function _replace_itag(base::AbstractString, old::AbstractString, new_tags::AbstractString)
+    rm = Set(_parse_itag(old))
+    remaining = filter(t -> t ∉ rm, _parse_itag(base))
+    append!(remaining, _parse_itag(new_tags))
+    return Itag(join(sort!(unique!(remaining)), ','))
 end
-
 
 struct QIndex
     # Tags associated with the leg, similar to ITensor
-    itags::String
+    itags::Itag
     # Direction of the leg, '+' for incoming, '-' for outgoing
     dir::Char
     # Prime level similar to ITensor
@@ -58,7 +95,7 @@ struct QIndex
     # If true, print the tag in green when displaying a QSpace.
     green::Bool
 
-    QIndex(itags::String, dir::Char, plev::Int=0, lock::Int=0, green::Bool=false) = new(_normalize_tags(itags), dir, plev, lock, green)
+    QIndex(itags::AbstractString, dir::Char, plev::Int=0, lock::Int=0, green::Bool=false) = new(_normalize_itag(itags), dir, plev, lock, green)
 end
 
 QIndex(dir::Char, plev::Int=0, lock::Int=0) = QIndex("", dir, plev, lock)
@@ -73,6 +110,7 @@ to_incoming(idx::QIndex) = QIndex(idx.itags, '+', idx.plev, idx.lock, idx.green)
 to_outgoing(idx::QIndex) = QIndex(idx.itags, '-', idx.plev, idx.lock, idx.green)
 change_dir(idx::QIndex)  = QIndex(idx.itags, idx.dir == '+' ? '-' : '+', idx.plev, idx.lock, idx.green)
 green(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, true)
+change_green(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, !idx.green)
 
 struct CGR{QD, NZ}
     symm::Any   # symmetry type, e.g. SU{2}, U1
@@ -323,19 +361,19 @@ function _check_unique_inds(inds::NTuple{QD, QIndex}) where QD
     end
 end
 
-# Compute the spaces tuple from rows: for each leg, a vector of (dim, qlabels) pairs.
+# Compute the spaces tuple from rows: for each leg, a vector of (qlabels, dim) pairs.
 # This is the same information that leginfo extracts, but computed for all legs at once.
 function _compute_spaces(rows::Vector{row{T, QD, N, RD}}) where {T, QD, N, RD}
     # For each leg, track seen qlabels to avoid duplicates
     spsets = ntuple(_ -> Set{NTuple{N, Tuple{Vararg{Int}}}}(), QD)
-    splists = ntuple(_ -> Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}(), QD)
+    splists = ntuple(_ -> Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}(), QD)
     
     for r in rows
         for leg in 1:QD
             qlabel_leg = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:N)
             if qlabel_leg ∉ spsets[leg]
                 dim = size(r.RMT.data, leg)
-                push!(splists[leg], (dim, qlabel_leg))
+                push!(splists[leg], (qlabel_leg, dim))
                 push!(spsets[leg], qlabel_leg)
             end
         end
@@ -352,18 +390,19 @@ struct QSpace{T, QD, N, RD}
     # Data rows for QSpace object
     rows::Vector{row{T, QD, N, RD}}
     inds::NTuple{QD, QIndex}
-    # Space list for each leg: vector of (RMT_dim, qlabels) pairs
+    # Space list for each leg: vector of (qlabels, RMT_dim) pairs
     # Similar to leginfo.splist but precomputed for all legs
-    spaces::NTuple{QD, Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}}
+    spaces::NTuple{QD, Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}}
 
     # Constructor with explicit spaces (for efficiency when spaces are already known)
     function QSpace(symm::NTuple{N, Any}, 
         rows::Vector{row{T, QD, N, RD}}, 
         inds::NTuple{QD, QIndex},
-        spaces::NTuple{QD, Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}}) where {T, QD, N, RD}
+        spaces::NTuple{QD, Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}}) where {T, QD, N, RD}
 
         q = new{T, QD, N, RD}(symm, rows, inds, spaces)
         normalize_qspace!(q)
+        _orient_wmats!(q)
         _drop_small_rows!(q)
         sort_rows!(q)
         for r in q.rows, cgr in r.cgrs
@@ -379,6 +418,20 @@ end
 # For QD == 2 the effective norm² per row is dim_r * ‖RMT_r‖² (see normalize_qspace!);
 # for all other ranks it is simply ‖RMT_r‖².
 const QSPACE_ROW_CUTOFF = 1e-14
+
+Base.ndims(q::QSpace{T, QD}) where {T, QD} = QD
+
+function _orient_wmats!(q::QSpace{T, QD, N}) where {T, QD, N}
+    for r in q.rows
+        for cgr in r.cgrs
+            first_entry = cgr.wmat[1]
+            if first_entry < 0
+                cgr.wmat[:] .*= -1
+                r.RMT[:] .*= -one(T)
+            end
+        end
+    end
+end
 
 function _drop_small_rows!(q::QSpace{T, QD, N}; cutoff::Float64 = QSPACE_ROW_CUTOFF) where {T, QD, N}
     rows = q.rows
@@ -400,8 +453,9 @@ function _drop_small_rows!(q::QSpace{T, QD, N}; cutoff::Float64 = QSPACE_ROW_CUT
 end
 
 # Construct a QSpace with the same rows but with itags replaced.
-# itags: NTuple{QD, String} — one tag per leg; all other QIndex fields are preserved.
-function QSpace(q::QSpace{T, QD, N, RD}, itags::NTuple{QD, String}) where {T, QD, N, RD}
+# itags: Tuple{Vararg{AbstractString, QD}} — one tag per leg; all other QIndex
+# fields are preserved.
+function QSpace(q::QSpace{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) where {T, QD, N, RD}
     new_inds = ntuple(l -> QIndex(itags[l], q.inds[l].dir, q.inds[l].plev,
                                   q.inds[l].lock, q.inds[l].green), QD)
     # spaces remain the same since rows didn't change
@@ -420,9 +474,11 @@ Base.getindex(q::QSpace, i::Int) = q.rows[i]
 
 # For 0-dimensional QSpace (scalar), q[] returns the unique RMT element.
 function Base.getindex(q::QSpace{T, 0, N, N}) where {T, N}
-    @assert length(q.rows) == 1 "0D QSpace must have exactly one row"
-    @assert length(q.rows[1].RMT.data) == 1 "0D QSpace RMT must be a scalar"
-    return only(q.rows[1].RMT.data)
+    @assert length(q.rows) <= 1 "0D QSpace must have zero or one row"
+    if length(q.rows) == 1 
+        @assert length(q.rows[1].RMT.data) == 1 "0D QSpace RMT must be a scalar"
+        return only(q.rows[1].RMT.data)
+    else return zero(T) end
 end
 
 # ─── Leg selection utilities ─────────────────────────────────────────────────
@@ -459,23 +515,23 @@ function findleg(q::QSpace{T, QD}, pred::Function) where {T, QD}
 end
 
 # Internal: check if a QIndex matches all specified criteria
-function _matches_criteria(idx::QIndex; dir=nothing, itags=nothing, plev=nothing, lock=nothing)
-    (!isnothing(dir)   && idx.dir != dir)                        && return false
-    (!isnothing(itags) && !_has_tags(idx.itags, itags))          && return false
-    (!isnothing(plev)  && idx.plev != plev)                      && return false
-    (!isnothing(lock)  && idx.lock != lock)                      && return false
+function _matches_criteria(idx::QIndex; dir=nothing, itag=nothing, plev=nothing, lock=nothing)
+    (!isnothing(dir)  && idx.dir != dir)               && return false
+    (!isnothing(itag) && !_has_itag(idx.itags, itag))  && return false
+    (!isnothing(plev) && idx.plev != plev)             && return false
+    (!isnothing(lock) && idx.lock != lock)             && return false
     return true
 end
 
 """
-    findlegs(q::QSpace; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+    findlegs(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
 
 Find all leg indices matching the specified criteria. Unspecified criteria match any value.
 If `rev=true`, the selection is reversed: legs that do *not* match are returned.
 
 # Arguments
 - `dir`: Match direction ('+' for incoming, '-' for outgoing)
-- `itags`: Match if this string is a substring of the leg's itags
+- `itag`: Match if this string is a substring of the leg's itags
 - `plev`: Match exact prime level
 - `lock`: Match exact lock level
 - `rev`: If `true`, return legs that do *not* satisfy the criteria (default `false`)
@@ -483,18 +539,18 @@ If `rev=true`, the selection is reversed: legs that do *not* match are returned.
 # Examples
 ```julia
 findlegs(q; dir='-')                    # all outgoing legs
-findlegs(q; itags="site")               # legs with "site" in their tag
+findlegs(q; itag="site")                # legs with "site" in their tag
 findlegs(q; dir='+', plev=0)            # incoming, unprimed legs
 findlegs(q; lock=0)                     # non-locked legs
 findlegs(q; dir='-', rev=true)          # all legs that are NOT outgoing
 ```
 """
-function findlegs(q::QSpace{T, QD}; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
-    return [i for i in 1:QD if _matches_criteria(q.inds[i]; dir=dir, itags=itags, plev=plev, lock=lock) ⊻ rev]
+function findlegs(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+    return [i for i in 1:QD if _matches_criteria(q.inds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev]
 end
 
 """
-    findleg(q::QSpace; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+    findleg(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
 
 Find the first leg index matching the specified criteria.
 Returns `nothing` if no leg matches.
@@ -502,15 +558,15 @@ If `rev=true`, returns the first leg that does *not* match the criteria.
 
 # Examples
 ```julia
-findleg(q; itags="bond")          # first leg with "bond" in tag
+findleg(q; itag="bond")           # first leg with "bond" in tag
 findleg(q; dir='+')               # first incoming leg
 findleg(q; lock=0)                # first non-locked leg
 findleg(q; dir='+', rev=true)     # first leg that is NOT incoming
 ```
 """
-function findleg(q::QSpace{T, QD}; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function findleg(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     for i in 1:QD
-        _matches_criteria(q.inds[i]; dir=dir, itags=itags, plev=plev, lock=lock) ⊻ rev && return i
+        _matches_criteria(q.inds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev && return i
     end
     return nothing
 end
@@ -573,7 +629,7 @@ function Base.lock(q::QSpace, pred::Function; inc::Int=1)
 end
 
 """
-    lock(q::QSpace; inc::Int=1, dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev=false)
+    lock(q::QSpace; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false)
 
 Increase lock level of legs matching criteria by `inc`.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -581,13 +637,13 @@ Use `rev=true` to act on legs that do *not* match the criteria.
 # Examples
 ```julia
 lock(q; dir='-')                  # lock all outgoing legs by 1
-lock(q; inc=2, itags="bond")      # lock legs with "bond" in tag by 2
+lock(q; inc=2, itag="bond")       # lock legs with "bond" in tag by 2
 lock(q; lock=0)                   # lock all currently-unlocked legs by 1
 lock(q; dir='-', rev=true)        # lock all legs that are NOT outgoing
 ```
 """
-function Base.lock(q::QSpace; inc::Int=1, dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false)
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
+function Base.lock(q::QSpace; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
 end
 
@@ -621,20 +677,20 @@ function lockp(q::QSpace, pred::Function)
 end
 
 """
-    lockp(q::QSpace; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev=false)
+    lockp(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false)
 
 Permanently lock legs matching criteria.
 Use `rev=true` to act on legs that do *not* match the criteria.
 
 # Examples
 ```julia
-lockp(q; itags="phys")         # permanently lock physical legs
+lockp(q; itag="phys")          # permanently lock physical legs
 lockp(q; lock=0)               # permanently lock all currently-unlocked legs
-lockp(q; itags="phys", rev=true)  # permanently lock all legs except "phys"
+lockp(q; itag="phys", rev=true)   # permanently lock all legs except "phys"
 ```
 """
-function lockp(q::QSpace; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false)
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
+function lockp(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_lock(q, legs, _ -> -1)
 end
 
@@ -668,7 +724,7 @@ function Base.unlock(q::QSpace, pred::Function)
 end
 
 """
-    unlock(q::QSpace; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev=false)
+    unlock(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false)
 
 Unlock legs matching criteria.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -680,8 +736,8 @@ unlock(q; lock=1)              # unlock all legs currently at lock=1
 unlock(q; dir='-', rev=true)   # unlock all legs that are NOT outgoing
 ```
 """
-function Base.unlock(q::QSpace; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false)
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
+function Base.unlock(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_lock(q, legs, _ -> 0)
 end
 
@@ -701,7 +757,7 @@ end
 #   noprime(q, legs)               – set plev of specified legs to 0
 #   noprime(q, pred)               – set plev of legs matching predicate to 0
 #
-# Keyword selectors for criteria forms (all optional): dir, itags, plev, lock
+# Keyword selectors for criteria forms (all optional): dir, itag, plev, lock
 # ─────────────────────────────────────────────────────────────────────────────
 
 # legs can be any iterable of integers
@@ -715,7 +771,7 @@ function _modify_plev(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where 
 end
 
 """
-    prime(q::QSpace; inc::Int=1, dir, itags, plev, lock, rev=false)
+    prime(q::QSpace; inc::Int=1, dir, itag, plev, lock, rev=false)
 
 Increase the prime level of matching legs by `inc` (default 1).
 Prime level is clamped to 0 from below.
@@ -728,13 +784,13 @@ prime(q)                        # all legs: plev += 1
 prime(q; inc=2)                 # all legs: plev += 2
 prime(q; inc=-1)                # all legs: plev -= 1, clamped to 0
 prime(q; dir='+')               # incoming legs only
-prime(q; itags="site")          # legs whose tag contains "site"
+prime(q; itag="site")           # legs whose tag contains "site"
 prime(q; plev=0)                # only currently unprimed legs
 prime(q; dir='+', rev=true)     # all legs that are NOT incoming
 ```
 """
-function prime(q::QSpace{T, QD}; inc::Int=1, dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
+function prime(q::QSpace{T, QD}; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_plev(q, legs, p -> max(0, p + inc))
 end
 
@@ -790,7 +846,7 @@ function prime(q::QSpace{T, QD}, pred::Function; inc::Int=1) where {T, QD}
 end
 
 """
-    setprime(q::QSpace, n::Int; dir, itags, plev, lock, rev=false)
+    setprime(q::QSpace, n::Int; dir, itag, plev, lock, rev=false)
 
 Set the prime level of matching legs to `n`. `n` must be non-negative.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -799,13 +855,13 @@ Use `rev=true` to act on legs that do *not* match the criteria.
 ```julia
 setprime(q, 2)                  # set all legs to plev=2
 setprime(q, 1; dir='-')         # set outgoing legs to plev=1
-setprime(q, 0; itags="bond")    # same as noprime(q; itags="bond")
+setprime(q, 0; itag="bond")     # same as noprime(q; itag="bond")
 setprime(q, 0; dir='-', rev=true)  # clear prime on all non-outgoing legs
 ```
 """
-function setprime(q::QSpace{T, QD}, n::Int; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function setprime(q::QSpace{T, QD}, n::Int; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     n >= 0 || throw(ArgumentError("prime level must be non-negative, got $n"))
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_plev(q, legs, _ -> n)
 end
 
@@ -827,7 +883,7 @@ function setprime(q::QSpace{T, QD}, legs, n::Int) where {T, QD}
 end
 
 """
-    noprime(q::QSpace; dir, itags, plev, lock, rev=false)
+    noprime(q::QSpace; dir, itag, plev, lock, rev=false)
 
 Set the prime level of matching legs to 0.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -840,8 +896,8 @@ noprime(q; plev=1)              # clear all legs currently at plev=1
 noprime(q; dir='+', rev=true)   # clear prime on all non-incoming legs
 ```
 """
-function noprime(q::QSpace{T, QD}; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
+function noprime(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_plev(q, legs, _ -> 0)
 end
 
@@ -879,15 +935,15 @@ end
 # ITensor-style tag manipulation on QSpace legs.
 # Tags are stored as sorted, comma-separated strings (e.g. "bond,site").
 #
-#   addtags(q, newtags; kw...)     – add tag(s) to matching legs
-#   removetags(q, tags; kw...)     – remove tag(s) from matching legs
-#   replacetags(q, old, new; kw…)  – swap tag(s) old → new on matching legs
-#   settags(q, tags; kw...)        – replace entire tag string of matching legs
+#   additag(q, newtags; kw...)     – add tag(s) to matching legs
+#   removeitag(q, tags; kw...)     – remove tag(s) from matching legs
+#   replaceitag(q, old, new; kw…)  – swap tag(s) old → new on matching legs
+#   setitag(q, tags; kw...)        – replace entire tag string of matching legs
 #
-# Keyword selectors (all optional): dir, itags, plev, lock
+# Keyword selectors (all optional): dir, itag, plev, lock
 # ─────────────────────────────────────────────────────────────────────────────
 
-function _modify_itags(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
+function _modify_itag(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
     new_inds = collect(q.inds)
     for i in legs
         idx = new_inds[i]
@@ -897,7 +953,7 @@ function _modify_itags(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where
 end
 
 """
-    addtags(q::QSpace, newtags; dir, itags, plev, lock, rev=false)
+    additag(q::QSpace, newtags; dir, itag, plev, lock, rev=false)
 
 Add one or more tags to matching legs. `newtags` may be a comma-separated
 string of tags (e.g. `"bond,u1"`). The result is always sorted.
@@ -905,173 +961,173 @@ Use `rev=true` to act on legs that do *not* match the criteria.
 
 # Examples
 ```julia
-addtags(q, "site")              # add "site" to all legs
-addtags(q, "phys"; dir='+')     # add "phys" to incoming legs only
-addtags(q, "u1"; itags="bond")  # add "u1" to legs that already have "bond"
-addtags(q, "aux"; dir='+', rev=true)  # add "aux" to all non-incoming legs
+additag(q, "site")              # add "site" to all legs
+additag(q, "phys"; dir='+')     # add "phys" to incoming legs only
+additag(q, "u1"; itag="bond")   # add "u1" to legs that already have "bond"
+additag(q, "aux"; dir='+', rev=true)  # add "aux" to all non-incoming legs
 ```
 """
-function addtags(q::QSpace{T, QD}, newtags::String; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
-    return _modify_itags(q, legs, base -> _add_tags(base, newtags))
+function additag(q::QSpace{T, QD}, newtags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _add_itag(base, newtags))
 end
 
-"""    addtags(q::QSpace, leg::Integer, newtags)
+"""    additag(q::QSpace, leg::Integer, newtags)
 
 Add tags to a single specified leg.
 """
-function addtags(q::QSpace{T, QD}, leg::Integer, newtags::String) where {T, QD}
-    return _modify_itags(q, (leg,), base -> _add_tags(base, newtags))
+function additag(q::QSpace{T, QD}, leg::Integer, newtags::AbstractString) where {T, QD}
+    return _modify_itag(q, (leg,), base -> _add_itag(base, newtags))
 end
 
-"""    addtags(q::QSpace, legs::LegList, newtags)
+"""    additag(q::QSpace, legs::LegList, newtags)
 
 Add tags to the specified legs. `legs` can be any vector, range, or tuple.
 """
-function addtags(q::QSpace{T, QD}, legs::LegList, newtags::String) where {T, QD}
-    return _modify_itags(q, legs, base -> _add_tags(base, newtags))
+function additag(q::QSpace{T, QD}, legs::LegList, newtags::AbstractString) where {T, QD}
+    return _modify_itag(q, legs, base -> _add_itag(base, newtags))
 end
 
-"""    addtags(q::QSpace, pred::Function, newtags)
+"""    additag(q::QSpace, pred::Function, newtags)
 
 Add tags to legs satisfying predicate.
 """
-function addtags(q::QSpace{T, QD}, pred::Function, newtags::String) where {T, QD}
-    return _modify_itags(q, findlegs(q, pred), base -> _add_tags(base, newtags))
+function additag(q::QSpace{T, QD}, pred::Function, newtags::AbstractString) where {T, QD}
+    return _modify_itag(q, findlegs(q, pred), base -> _add_itag(base, newtags))
 end
 
 """
-    removetags(q::QSpace, tags; dir, itags, plev, lock, rev=false)
+    removeitag(q::QSpace, tags; dir, itag, plev, lock, rev=false)
 
 Remove one or more tags from matching legs.
 Use `rev=true` to act on legs that do *not* match the criteria.
 
 # Examples
 ```julia
-removetags(q, "site")             # remove "site" from all legs
-removetags(q, "phys"; dir='-')    # remove "phys" from outgoing legs
-removetags(q, "aux"; dir='-', rev=true)  # remove "aux" from all non-outgoing legs
+removeitag(q, "site")             # remove "site" from all legs
+removeitag(q, "phys"; dir='-')    # remove "phys" from outgoing legs
+removeitag(q, "aux"; dir='-', rev=true)  # remove "aux" from all non-outgoing legs
 ```
 """
-function removetags(q::QSpace{T, QD}, tags::String; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
-    return _modify_itags(q, legs, base -> _remove_tags(base, tags))
+function removeitag(q::QSpace{T, QD}, tags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _remove_itag(base, tags))
 end
 
-"""    removetags(q::QSpace, leg::Integer, tags)
+"""    removeitag(q::QSpace, leg::Integer, tags)
 
 Remove tags from a single specified leg.
 """
-function removetags(q::QSpace{T, QD}, leg::Integer, tags::String) where {T, QD}
-    return _modify_itags(q, (leg,), base -> _remove_tags(base, tags))
+function removeitag(q::QSpace{T, QD}, leg::Integer, tags::AbstractString) where {T, QD}
+    return _modify_itag(q, (leg,), base -> _remove_itag(base, tags))
 end
 
-"""    removetags(q::QSpace, legs::LegList, tags)
+"""    removeitag(q::QSpace, legs::LegList, tags)
 
 Remove tags from the specified legs. `legs` can be any vector, range, or tuple.
 """
-function removetags(q::QSpace{T, QD}, legs::LegList, tags::String) where {T, QD}
-    return _modify_itags(q, legs, base -> _remove_tags(base, tags))
+function removeitag(q::QSpace{T, QD}, legs::LegList, tags::AbstractString) where {T, QD}
+    return _modify_itag(q, legs, base -> _remove_itag(base, tags))
 end
 
-"""    removetags(q::QSpace, pred::Function, tags)
+"""    removeitag(q::QSpace, pred::Function, tags)
 
 Remove tags from legs satisfying predicate.
 """
-function removetags(q::QSpace{T, QD}, pred::Function, tags::String) where {T, QD}
-    return _modify_itags(q, findlegs(q, pred), base -> _remove_tags(base, tags))
+function removeitag(q::QSpace{T, QD}, pred::Function, tags::AbstractString) where {T, QD}
+    return _modify_itag(q, findlegs(q, pred), base -> _remove_itag(base, tags))
 end
 
-# TODO: Define the behavior of replacetags function more precisely,
+# TODO: Define the behavior of replaceitag function more precisely,
 # then implement and test
 """
-    replacetags(q::QSpace, old, new; dir, itags, plev, lock, rev=false)
+    replaceitag(q::QSpace, old, new; dir, itag, plev, lock, rev=false)
 
 On matching legs, remove the tag(s) in `old` and add the tag(s) in `new`.
 Use `rev=true` to act on legs that do *not* match the criteria.
 
 # Examples
 ```julia
-replacetags(q, "bond", "link")           # rename "bond" → "link" on all legs
-replacetags(q, "a", "b"; dir='+')        # only on incoming legs
-replacetags(q, "phys", "site"; itags="phys")  # only if leg already has "phys"
-replacetags(q, "a", "b"; dir='+', rev=true)  # on all non-incoming legs
+replaceitag(q, "bond", "link")           # rename "bond" → "link" on all legs
+replaceitag(q, "a", "b"; dir='+')        # only on incoming legs
+replaceitag(q, "phys", "site"; itag="phys")   # only if leg already has "phys"
+replaceitag(q, "a", "b"; dir='+', rev=true)  # on all non-incoming legs
 ```
 """
-function replacetags(q::QSpace{T, QD}, old::String, new_tags::String; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
-    return _modify_itags(q, legs, base -> _replace_tags(base, old, new_tags))
+function replaceitag(q::QSpace{T, QD}, old::AbstractString, new_tags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _replace_itag(base, old, new_tags))
 end
 
-"""    replacetags(q::QSpace, leg::Integer, old, new)
+"""    replaceitag(q::QSpace, leg::Integer, old, new)
 
 Replace tags on a single specified leg.
 """
-function replacetags(q::QSpace{T, QD}, leg::Integer, old::String, new_tags::String) where {T, QD}
-    return _modify_itags(q, (leg,), base -> _replace_tags(base, old, new_tags))
+function replaceitag(q::QSpace{T, QD}, leg::Integer, old::AbstractString, new_tags::AbstractString) where {T, QD}
+    return _modify_itag(q, (leg,), base -> _replace_itag(base, old, new_tags))
 end
 
-"""    replacetags(q::QSpace, legs::LegList, old, new)
+"""    replaceitag(q::QSpace, legs::LegList, old, new)
 
 Replace tags on the specified legs. `legs` can be any vector, range, or tuple.
 """
-function replacetags(q::QSpace{T, QD}, legs::LegList, old::String, new_tags::String) where {T, QD}
-    return _modify_itags(q, legs, base -> _replace_tags(base, old, new_tags))
+function replaceitag(q::QSpace{T, QD}, legs::LegList, old::AbstractString, new_tags::AbstractString) where {T, QD}
+    return _modify_itag(q, legs, base -> _replace_itag(base, old, new_tags))
 end
 
-"""    replacetags(q::QSpace, pred::Function, old, new)
+"""    replaceitag(q::QSpace, pred::Function, old, new)
 
 Replace tags on legs satisfying predicate.
 """
-function replacetags(q::QSpace{T, QD}, pred::Function, old::String, new_tags::String) where {T, QD}
-    return _modify_itags(q, findlegs(q, pred), base -> _replace_tags(base, old, new_tags))
+function replaceitag(q::QSpace{T, QD}, pred::Function, old::AbstractString, new_tags::AbstractString) where {T, QD}
+    return _modify_itag(q, findlegs(q, pred), base -> _replace_itag(base, old, new_tags))
 end
 
 """
-    settags(q::QSpace, tags; dir, itags, plev, lock, rev=false)
+    setitag(q::QSpace, tags; dir, itag, plev, lock, rev=false)
 
 Replace the entire tag string of matching legs with `tags`.
 Use `rev=true` to act on legs that do *not* match the criteria.
 
 # Examples
 ```julia
-settags(q, "bond")              # set all legs to tag "bond"
-settags(q, ""; dir='+')         # clear tags on incoming legs
-settags(q, "phys"; itags="site") # rename "site" → "phys" (full replacement)
-settags(q, "aux"; dir='+', rev=true)  # set tag on all non-incoming legs
+setitag(q, "bond")              # set all legs to tag "bond"
+setitag(q, ""; dir='+')         # clear tags on incoming legs
+setitag(q, "phys"; itag="site") # rename "site" → "phys" (full replacement)
+setitag(q, "aux"; dir='+', rev=true)  # set tag on all non-incoming legs
 ```
 """
-function settags(q::QSpace{T, QD}, tags::String; dir=nothing, itags=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
-    legs = findlegs(q; dir=dir, itags=itags, plev=plev, lock=lock, rev=rev)
-    norm = _normalize_tags(tags)
-    return _modify_itags(q, legs, _ -> norm)
+function setitag(q::QSpace{T, QD}, tags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, legs, _ -> norm)
 end
 
-"""    settags(q::QSpace, leg::Integer, tags)
+"""    setitag(q::QSpace, leg::Integer, tags)
 
 Set the entire tag string of a single specified leg.
 """
-function settags(q::QSpace{T, QD}, leg::Integer, tags::String) where {T, QD}
-    norm = _normalize_tags(tags)
-    return _modify_itags(q, (leg,), _ -> norm)
+function setitag(q::QSpace{T, QD}, leg::Integer, tags::AbstractString) where {T, QD}
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, (leg,), _ -> norm)
 end
 
-"""    settags(q::QSpace, legs::LegList, tags)
+"""    setitag(q::QSpace, legs::LegList, tags)
 
 Set the entire tag string of the specified legs. `legs` can be any vector, range, or tuple.
 """
-function settags(q::QSpace{T, QD}, legs::LegList, tags::String) where {T, QD}
-    norm = _normalize_tags(tags)
-    return _modify_itags(q, legs, _ -> norm)
+function setitag(q::QSpace{T, QD}, legs::LegList, tags::AbstractString) where {T, QD}
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, legs, _ -> norm)
 end
 
-"""    settags(q::QSpace, pred::Function, tags)
+"""    setitag(q::QSpace, pred::Function, tags)
 
 Set the entire tag string of legs satisfying predicate.
 """
-function settags(q::QSpace{T, QD}, pred::Function, tags::String) where {T, QD}
-    norm = _normalize_tags(tags)
-    return _modify_itags(q, findlegs(q, pred), _ -> norm)
+function setitag(q::QSpace{T, QD}, pred::Function, tags::AbstractString) where {T, QD}
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, findlegs(q, pred), _ -> norm)
 end
 
 # ─── Pretty-printing for QSpace ──────────────────────────────────────────────
@@ -1238,7 +1294,7 @@ function _identity_on_qspace(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
     out_leg = only(out_legs)
     @assert q.spaces[in_leg] == q.spaces[out_leg] "Scalar add/subtract requires matching incoming and outgoing spaces"
 
-    id_q = getIdentity((q, out_leg); itags=q.inds[out_leg].itags)
+    id_q = getIdentity((q, out_leg); itag=q.inds[out_leg].itags)
     return QSpace(id_q, (q.inds[in_leg], q.inds[out_leg]))
 end
 
@@ -1310,7 +1366,7 @@ function _find_leg_permutation(inds1::NTuple{QD, QIndex}, spaces1,
         end
         isempty(cs) && error(
             "No leg in second QSpace matches leg $i of first QSpace " *
-            "(itags=\"$(inds1[i].itags)\", dir='$(inds1[i].dir)')")
+            "(itag=\"$(inds1[i].itags)\", dir='$(inds1[i].dir)')")
         candidates[i] = cs
     end
     results = Vector{NTuple{QD, Int}}()
@@ -1431,7 +1487,7 @@ end
 
 function _splist_dim_map(splist::Vector)
     dims = Dict{Any, Int}()
-    for (dim, qlabels) in splist
+    for (qlabels, dim) in splist
         if haskey(dims, qlabels)
             throw(ArgumentError("duplicate qlabel sector encountered in space list: $qlabels"))
         end
@@ -1449,18 +1505,18 @@ function _sum_splists_many(splists)
     empty!(result)
 
     for splist in splists
-        for (dim, qlabels) in splist
+        for (qlabels, dim) in splist
             dims[qlabels] = get(dims, qlabels, 0) + dim
             if qlabels ∉ seen
-                push!(result, (0, qlabels))
+                push!(result, (qlabels, 0))
                 push!(seen, qlabels)
             end
         end
     end
 
     for i in eachindex(result)
-        _, qlabels = result[i]
-        result[i] = (dims[qlabels], qlabels)
+        qlabels, _ = result[i]
+        result[i] = (qlabels, dims[qlabels])
     end
 
     return result
@@ -1536,7 +1592,7 @@ function _accumulate_oplus_starts(qs, dims_tuple, QD::Int)
         starts[qi] = [Dict{Any, Int}() for _ in 1:QD]
         for leg in 1:QD
             leg ∈ dims_set || continue
-            for (dim, qlabels) in q.spaces[leg]
+            for (qlabels, dim) in q.spaces[leg]
                 start = get(running[leg], qlabels, 1)
                 starts[qi][leg][qlabels] = start
                 running[leg][qlabels] = start + dim
@@ -1545,6 +1601,14 @@ function _accumulate_oplus_starts(qs, dims_tuple, QD::Int)
     end
 
     return starts
+end
+
+_qindex_match_for_oplus(a::QIndex, b::QIndex) =
+    a.itags == b.itags && a.dir == b.dir && a.plev == b.plev && a.lock == b.lock
+
+function _inds_match_for_oplus(inds1, inds2)
+    length(inds1) == length(inds2) || return false
+    return all(_qindex_match_for_oplus(idx1, idx2) for (idx1, idx2) in zip(inds1, inds2))
 end
 
 function _validate_oplus_common(qs)
@@ -1558,8 +1622,8 @@ function _validate_oplus_common(qs)
             "QSpace entry $i has a different symmetry tuple"))
         length(q.inds) == length(ref.inds) || throw(ArgumentError(
             "QSpace entry $i has rank $(length(q.inds)), expected $(length(ref.inds))"))
-        q.inds == ref.inds || throw(ArgumentError(
-            "QSpace entry $i has different indices"))
+        _inds_match_for_oplus(q.inds, ref.inds) || throw(ArgumentError(
+            "QSpace entry $i has different indices (ignoring green)"))
     end
 
     return ref
@@ -1595,6 +1659,7 @@ function _materialize_vector_oplus(qs, dims_tuple)
     acc = _zero_qspace_with_spaces(ref.symm, ref.inds, result_spaces; T=T)
     for (q, qstarts) in zip(qs, start_maps)
         padded = _oplus_pad_qspace(q, result_spaces, dims_tuple, qstarts, result_dim_maps)
+        padded = q.inds == ref.inds ? padded : QSpace(padded, ref.inds)
         acc = acc + padded
     end
     return acc
@@ -1813,6 +1878,101 @@ Base.adjoint(q::QSpace) = conj(q)
 getsub(q::QSpace, i::Int) = getsub(q, [i])
 getsub(q::QSpace, inds::Vector{Int}) = QSpace(q.symm, q.rows[inds], q.inds, q.spaces)
 
+function _normalize_getsub_indices(raw, dim::Int, sector, leg::Int)
+    inds = if raw isa Integer
+        [Int(raw)]
+    elseif raw isa AbstractRange{<:Integer}
+        Int[i for i in raw]
+    elseif raw isa AbstractVector{<:Integer}
+        Int[i for i in raw]
+    else
+        throw(ArgumentError(
+            "selector for sector $sector on leg $leg must be :, Int, AbstractRange, or AbstractVector{<:Integer}"))
+    end
+
+    isempty(inds) && throw(ArgumentError(
+        "selector for sector $sector on leg $leg must not be empty"))
+    length(unique(inds)) == length(inds) || throw(ArgumentError(
+        "selector for sector $sector on leg $leg contains duplicate indices"))
+    all(1 <= i <= dim for i in inds) || throw(ArgumentError(
+        "selector for sector $sector on leg $leg contains out-of-bounds indices for dimension $dim"))
+    return inds
+end
+
+function _normalize_getsub_selector(q::QSpace{T, QD}, leg::Int, selector::AbstractVector) where {T, QD}
+    1 <= leg <= QD || throw(ArgumentError("leg must lie in 1:$QD, got $leg"))
+
+    dims_by_sector = Dict{Any, Int}(sector => dim for (sector, dim) in q.spaces[leg])
+    isempty(selector) && return Dict{Any, Any}(), dims_by_sector
+
+    pair_form = all(item -> item isa Pair, selector)
+    tuple_form = all(item -> item isa Tuple && length(item) == 2, selector)
+    (pair_form || tuple_form) || throw(ArgumentError(
+        "selector must be a vector of either sector=>pick pairs or (sector, pick) tuples"))
+
+    normalized = Dict{Any, Any}()
+    for item in selector
+        sector, raw = pair_form ? (item.first, item.second) : item
+        haskey(dims_by_sector, sector) || throw(ArgumentError(
+            "selector sector $sector does not exist in q.spaces[$leg]"))
+        haskey(normalized, sector) && throw(ArgumentError(
+            "selector contains duplicate entries for sector $sector on leg $leg"))
+
+        normalized[sector] = raw isa Colon ? Colon() :
+            _normalize_getsub_indices(raw, dims_by_sector[sector], sector, leg)
+    end
+
+    return normalized, dims_by_sector
+end
+
+function _slice_qspace_row_leg(r::row{T, QD, N, RD}, leg::Int, inds::Vector{Int}) where {T, QD, N, RD}
+    selectors = ntuple(d -> d == leg ? inds : Colon(), RD)
+    return row(r.cgrs, QTensor(r.RMT.data[selectors...]))
+end
+
+"""
+    getsub(q::QSpace, leg::Int, selector::AbstractVector) -> QSpace
+
+Return a new `QSpace` containing only rows whose sector on `leg` appears in
+`selector`. Each selector entry must be either `sector => pick` or
+`(sector, pick)`, where `pick` is `:`, an `Int`, an integer range, or a vector
+of integer indices. `:` keeps the full RMT extent for that sector; other values
+slice the selected leg of each matching row's RMT.
+"""
+
+function getsub(q::QSpace{T, QD, N, RD}, leg::Int, selector::AbstractVector) where {T, QD, N, RD}
+    normalized, _ = _normalize_getsub_selector(q, leg, selector)
+
+    rows_out = eltype(q.rows)[]
+    for r in q.rows
+        sector = _oplus_row_qlabel(r, leg)
+        haskey(normalized, sector) || continue
+
+        pick = normalized[sector]
+        if pick isa Colon
+            push!(rows_out, r)
+        else
+            push!(rows_out, _slice_qspace_row_leg(r, leg, pick))
+        end
+    end
+
+    spaces_out = ntuple(l -> begin
+        if l == leg
+            out = eltype(q.spaces[l])[]
+            for (sector, dim) in q.spaces[l]
+                haskey(normalized, sector) || continue
+                pick = normalized[sector]
+                push!(out, (sector, pick isa Colon ? dim : length(pick)))
+            end
+            out
+        else
+            copy(q.spaces[l])
+        end
+    end, QD)
+
+    return QSpace(q.symm, rows_out, q.inds, spaces_out)
+end
+
 """
     empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, QIndex}; T::Type=Float64) where {N, QD}
 
@@ -1829,12 +1989,152 @@ function empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, QIndex};
                       T::Type=Float64) where {N, QD}
     RD = QD + N
     rows   = Vector{row{T, QD, N, RD}}()
-    spaces = ntuple(_ -> Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}(), QD)
+    spaces = ntuple(_ -> Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}(), QD)
     return QSpace(symm, rows, inds, spaces)
 end
 
 function empty_qspace(q::QSpace; T::Type=Float64)
     return empty_qspace(q.symm, q.inds; T=T)
+end
+
+function Base.zero(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
+    rows = Vector{row{T, QD, N, RD}}()
+    return QSpace(q.symm, rows, q.inds, _copy_spaces_tuple(q.spaces))
+end
+
+"""
+    zero_qlabels(symm::NTuple{N, Any}) where {N}
+    zero_qlabels(q::QSpace)
+
+Return the trivial qlabel for each symmetry in `symm` or `q`.
+
+For example, `(SU{2}, SU{3})` returns `((0,), (0, 0))`.
+"""
+function zero_qlabels(symm::NTuple{N, Any}) where {N}
+    return ntuple(n -> Tuple(0 for _ in 1:nzops(symm[n])), N)
+end
+
+zero_qlabels(q::QSpace) = zero_qlabels(q.symm)
+
+function _is_singleton_leg(q::QSpace{T, QD, N}, leg::Int) where {T, QD, N}
+    1 <= leg <= QD || throw(ArgumentError("leg must lie in 1:$QD, got $leg"))
+    return length(q.spaces[leg]) == 1 && only(q.spaces[leg]) == (zero_qlabels(q), 1)
+end
+
+_singleton_legs(q::QSpace{T, QD}) where {T, QD} = [leg for leg in 1:QD if _is_singleton_leg(q, leg)]
+
+function _normalize_delete_singleton_legs(q::QSpace{T, QD}, legs) where {T, QD}
+    positions = legs isa Integer ? [Int(legs)] : Int[i for i in legs]
+    isempty(positions) && throw(ArgumentError("at least one deletion leg must be specified"))
+    all(1 <= leg <= QD for leg in positions) || throw(ArgumentError(
+        "singleton deletion legs must lie in 1:$QD, got $positions"))
+    length(unique(positions)) == length(positions) || throw(ArgumentError(
+        "singleton deletion legs must be unique, got $positions"))
+    sort!(positions)
+    return positions
+end
+
+
+function _delete_singleton_cgr(cgr::CGR{QD, NZ}, positions) where {QD, NZ}
+    old_m, _ = cgr.legdir
+    keep = [leg for leg in 1:QD if leg ∉ positions]
+    new_qd = length(keep)
+
+    incoming = Vector{Tuple{NTuple{NZ, Int}, Int}}()
+    outgoing = Vector{Tuple{NTuple{NZ, Int}, Int}}()
+
+    for (new_leg, old_leg) in enumerate(keep)
+        stored_pos = cgr.cgp[old_leg]
+        target = stored_pos <= old_m ? incoming : outgoing
+        push!(target, (cgr.qlabels[stored_pos], new_leg))
+    end
+
+    sort!(incoming; by=first, alg=MergeSort)
+    sort!(outgoing; by=first, alg=MergeSort)
+
+    m_new = length(incoming)
+    new_cgp = zeros(Int, new_qd)
+    for (stored_pos, (_, phys_leg)) in enumerate(incoming)
+        new_cgp[phys_leg] = stored_pos
+    end
+    for (offset, (_, phys_leg)) in enumerate(outgoing)
+        new_cgp[phys_leg] = m_new + offset
+    end
+
+    new_qlabels = (Tuple(first.(incoming))..., Tuple(first.(outgoing))...)
+    new_wmat = QTensor(copy(cgr.wmat.data))
+    return CGR(cgr.symm, new_qlabels, new_wmat, Tuple(new_cgp),
+               (m_new, length(outgoing)))
+end
+
+function _delete_singleton_rmt(rmt::QTensor{T, RD}, positions, qd::Int, n_symm::Int) where {T, RD}
+    selectors = ntuple(axis -> axis <= qd && axis ∈ positions ? 1 : Colon(), qd + n_symm)
+    return QTensor(copy(rmt.data[selectors...]))
+end
+
+function _delete_singleton_impl(q::QSpace{T, QD, N, RD}, positions) where {T, QD, N, RD}
+    new_qd = QD - length(positions)
+    new_rd = RD - length(positions)
+
+    keep_inds = [q.inds[leg] for leg in 1:QD if leg ∉ positions]
+    keep_spaces = [q.spaces[leg] for leg in 1:QD if leg ∉ positions]
+
+    new_rows = row{T, new_qd, N, new_rd}[]
+    for r in q.rows
+        new_cgrs = ntuple(n -> _delete_singleton_cgr(r.cgrs[n], positions), N)
+        new_rmt = _delete_singleton_rmt(r.RMT, positions, QD, N)
+        push!(new_rows, row(new_cgrs, new_rmt))
+    end
+
+    return QSpace(q.symm, new_rows, Tuple(keep_inds), Tuple(keep_spaces))
+end
+
+"""
+    deleteSingleton(q::QSpace; dir=nothing, itag=nothing, plev=nothing) -> QSpace
+
+Delete singleton legs matching the supplied criteria.
+
+With no keyword arguments, all singleton legs are deleted.
+Only singleton legs are eligible for deletion. If none match, a warning is
+emitted and `q` is returned unchanged.
+"""
+function deleteSingleton(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothing) where {T, QD}
+    singleton_legs = if isnothing(dir) && isnothing(itag) && isnothing(plev)
+        _singleton_legs(q)
+    else
+        candidate_legs = findlegs(q; dir=dir, itag=itag, plev=plev)
+        [leg for leg in candidate_legs if _is_singleton_leg(q, leg)]
+    end
+
+    if isempty(singleton_legs)
+        if isnothing(dir) && isnothing(itag) && isnothing(plev)
+            @warn "deleteSingleton: no singleton legs found"
+        else
+            @warn "deleteSingleton: no singleton legs matched the requested criteria"
+        end
+        return q
+    end
+    return _delete_singleton_impl(q, singleton_legs)
+end
+
+"""
+    deleteSingleton(q::QSpace, leg::Integer) -> QSpace
+    deleteSingleton(q::QSpace, legs::LegList) -> QSpace
+
+Delete the specified singleton legs from `q`.
+
+Every selected leg must be singleton. Otherwise an `ArgumentError` is thrown.
+"""
+function deleteSingleton(q::QSpace, leg::Integer)
+    return deleteSingleton(q, (leg,))
+end
+
+function deleteSingleton(q::QSpace{T, QD}, legs::LegList) where {T, QD}
+    positions = _normalize_delete_singleton_legs(q, legs)
+    bad = [leg for leg in positions if !_is_singleton_leg(q, leg)]
+    isempty(bad) || throw(ArgumentError(
+        "deleteSingleton requires singleton legs, but legs $bad are not singleton"))
+    return _delete_singleton_impl(q, positions)
 end
 
 function _expand_singleton_kw(values, count::Int, name::AbstractString)
@@ -1848,22 +2148,22 @@ function _expand_singleton_kw(values, count::Int, name::AbstractString)
 end
 
 function _singleton_insert_spec(q::QSpace{T, QD}, legs;
-                                itags="", plevs=0, locks=0, dirs='+') where {T, QD}
+                                itag="", plev=0, lock=0, dir='+') where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[i for i in legs]
     isempty(positions) && throw(ArgumentError("at least one insertion leg must be specified"))
 
     count = length(positions)
-    itags_vec = _expand_singleton_kw(itags, count, "itags")
-    plevs_vec = _expand_singleton_kw(plevs, count, "plevs")
-    locks_vec = _expand_singleton_kw(locks, count, "locks")
-    dirs_vec  = _expand_singleton_kw(dirs,  count, "dirs")
+    itag_vec = _expand_singleton_kw(itag, count, "itag")
+    plev_vec = _expand_singleton_kw(plev, count, "plev")
+    lock_vec = _expand_singleton_kw(lock, count, "lock")
+    dir_vec  = _expand_singleton_kw(dir,  count, "dir")
 
     perm = sortperm(positions)
     positions = positions[perm]
-    itags_vec = itags_vec[perm]
-    plevs_vec = plevs_vec[perm]
-    locks_vec = locks_vec[perm]
-    dirs_vec  = dirs_vec[perm]
+    itag_vec = itag_vec[perm]
+    plev_vec = plev_vec[perm]
+    lock_vec = lock_vec[perm]
+    dir_vec  = dir_vec[perm]
 
     final_qd = QD + count
     all(p -> 1 <= p <= final_qd, positions) || throw(ArgumentError(
@@ -1871,12 +2171,12 @@ function _singleton_insert_spec(q::QSpace{T, QD}, legs;
     length(unique(positions)) == count || throw(ArgumentError(
         "singleton insertion legs must be unique, got $positions"))
 
-    for dir in dirs_vec
-        dir in ('+', '-') || throw(ArgumentError(
-            "added leg directions must be '+' or '-', got '$dir'"))
+    for direction in dir_vec
+        direction in ('+', '-') || throw(ArgumentError(
+            "added leg directions must be '+' or '-', got '$direction'"))
     end
 
-    return positions, itags_vec, plevs_vec, locks_vec, dirs_vec
+    return positions, itag_vec, plev_vec, lock_vec, dir_vec
 end
 
 function _insert_singleton_cgr(cgr::CGR{QD, NZ},
@@ -1952,8 +2252,17 @@ function _insert_singleton_rmt(rmt::QTensor{T, RD},
     return QTensor(new_data)
 end
 
+function _convert_rank2_singleton_normalization!(new_cgrs, new_rmt::QTensor, old_cgrs)
+    for n in eachindex(new_cgrs)
+        w_val = old_cgrs[n].wmat[1]
+        new_cgrs[n].wmat[:] .= 1.0
+        new_rmt[:] .*= w_val
+    end
+    return nothing
+end
+
 """
-    addSingleton(q::QSpace, legs; itags="", plevs=0, locks=0, dirs='+')
+    addSingleton(q::QSpace, legs; itag="", plev=0, lock=0, dir='+')
 
 Insert one or more singleton trivial legs into `q`.
 
@@ -1961,28 +2270,28 @@ Insert one or more singleton trivial legs into `q`.
 position of an added leg in the output tensor, whose rank is `ndims(q) +
 length(legs)`. The original legs keep their relative order.
 
-`itags`, `plevs`, `locks`, and `dirs` may each be either a scalar applied to
+`itag`, `plev`, `lock`, and `dir` may each be either a scalar applied to
 every added leg or an iterable with one value per inserted leg.
 """
 function addSingleton(q::QSpace{T, QD, N, RD}, legs;
-                      itags="", plevs=0, locks=0, dirs='+') where {T, QD, N, RD}
-    positions, itags_vec, plevs_vec, locks_vec, dirs_vec =
-        _singleton_insert_spec(q, legs; itags=itags, plevs=plevs, locks=locks, dirs=dirs)
+                      itag="", plev=0, lock=0, dir='+') where {T, QD, N, RD}
+    positions, itag_vec, plev_vec, lock_vec, dir_vec =
+        _singleton_insert_spec(q, legs; itag=itag, plev=plev, lock=lock, dir=dir)
 
     new_qd = QD + length(positions)
     new_rd = RD + length(positions)
-    trivial_qlabels = ntuple(n -> Tuple(0 for _ in 1:nzops(q.symm[n])), N)
+    trivial_qlabels = zero_qlabels(q)
 
     new_inds = Vector{QIndex}(undef, new_qd)
-    new_spaces = Vector{Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}}(undef, new_qd)
-    singleton_space = [(1, trivial_qlabels)]
+    new_spaces = Vector{Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}}(undef, new_qd)
+    singleton_space = [(trivial_qlabels, 1)]
 
     old_leg = 1
     insert_idx = 1
     for new_leg in 1:new_qd
         if insert_idx <= length(positions) && positions[insert_idx] == new_leg
-            new_inds[new_leg] = QIndex(String(itags_vec[insert_idx]), dirs_vec[insert_idx],
-                                       plevs_vec[insert_idx], locks_vec[insert_idx])
+            new_inds[new_leg] = QIndex(String(itag_vec[insert_idx]), dir_vec[insert_idx],
+                                       plev_vec[insert_idx], lock_vec[insert_idx])
             new_spaces[new_leg] = copy(singleton_space)
             insert_idx += 1
         else
@@ -1994,8 +2303,11 @@ function addSingleton(q::QSpace{T, QD, N, RD}, legs;
 
     new_rows = row{T, new_qd, N, new_rd}[]
     for r in q.rows
-        new_cgrs = ntuple(n -> _insert_singleton_cgr(r.cgrs[n], positions, dirs_vec, trivial_qlabels[n]), N)
+        new_cgrs = ntuple(n -> _insert_singleton_cgr(r.cgrs[n], positions, dir_vec, trivial_qlabels[n]), N)
         new_rmt = _insert_singleton_rmt(r.RMT, positions, QD, N)
+        if QD == 2 && new_qd > 2
+            _convert_rank2_singleton_normalization!(new_cgrs, new_rmt, r.cgrs)
+        end
         push!(new_rows, row(new_cgrs, new_rmt))
     end
 
@@ -2003,7 +2315,7 @@ function addSingleton(q::QSpace{T, QD, N, RD}, legs;
 end
 
 """
-    getvac(q::QSpace, itags::NTuple{2, String}=("", "")) -> QSpace
+    getvac(q::QSpace, itags::Tuple{Vararg{AbstractString, 2}}=("", "")) -> QSpace
 
 Build the rank-2 vacuum QSpace associated with `q`.
 
@@ -2012,9 +2324,9 @@ outgoing leg, and contains exactly one trivial sector with RMT dimension 1 on
 each leg. If `itags` is provided, it is used as the tags of the two legs.
 """
 function getvac(q::QSpace{T, QD, N, RD},
-                itags::NTuple{2, String}=("", "")) where {T, QD, N, RD}
-    trivial_qlabels = ntuple(n -> Tuple(0 for _ in 1:nzops(q.symm[n])), N)
-    space_entry = (1, trivial_qlabels)
+                itags::Tuple{Vararg{AbstractString, 2}}=("", "")) where {T, QD, N, RD}
+    trivial_qlabels = zero_qlabels(q)
+    space_entry = (trivial_qlabels, 1)
 
     cgrs = ntuple(n -> begin
         trivial_q = trivial_qlabels[n]
@@ -2024,7 +2336,7 @@ function getvac(q::QSpace{T, QD, N, RD},
     rmt_data = fill(one(T), ntuple(_ -> 1, N + 2))
     rows = row{T, 2, N, N + 2}[row(cgrs, QTensor(rmt_data))]
     inds = (QIndex(itags[1], '+'), QIndex(itags[2], '-'))
-    space_template = Vector{Tuple{Int, NTuple{N, Tuple{Vararg{Int}}}}}([space_entry])
+    space_template = Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}([space_entry])
     spaces = (copy(space_template), copy(space_template))
 
     return QSpace(q.symm, rows, inds, spaces)
@@ -2034,8 +2346,8 @@ function ⊗(q1::QSpace{T1, QD1, N, RD1},
            q2::QSpace{T2, QD2, N, RD2}) where {T1, T2, QD1, QD2, N, RD1, RD2}
     @assert q1.symm == q2.symm "QSpace objects must share the same symmetry tuple"
 
-    q1_ext = addSingleton(q1, QD1 + 1; dirs='-')
-    q2_ext = addSingleton(q2, 1; dirs='+')
+    q1_ext = addSingleton(q1, QD1 + 1; dir='-')
+    q2_ext = addSingleton(q2, 1; dir='+')
     return contract(q1_ext, (QD1 + 1,), q2_ext, (1,))
 end
 
