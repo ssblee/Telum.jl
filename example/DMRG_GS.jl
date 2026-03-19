@@ -38,8 +38,6 @@ function getHrl(MPO, MPS)
 
     li = findleg(MPS[end]; itag="SRight")
     right_id = getIdentity((MPS[end], li); itag="SRight")
-    right_id = legflip(right_id, (1, 2))
-    MPS[end] = legflip(MPS[end], li)
 
     Hlr[end] = addSingleton(right_id, 3; itag="ORight", dir='+')
     for i in 1:N Hlr[i+1] = MPS[i]' * lock(Hlr[i] * MPO[i] * MPS[i]; itag="SB,$i") end
@@ -65,8 +63,7 @@ function DMRG_GS_1site!(MPS::Vector{<:QSpace{T1, 3}},
             target_tag = i == 1 ? "SLeft" : "SB,$(i-1)"
             if i > 1
                 U, S, Vd = svd(M, "temp", target_tag; itag=target_tag)
-                MPS[i] = legflip(Vd; itag=target_tag)
-                MPS[i-1] = legflip((MPS[i-1] * U) * S; itag=target_tag)
+                MPS[i] = Vd; MPS[i-1] = (MPS[i-1] * U) * S
             else MPS[i] = M end
             Hlr[i+1] = (Hlr[i+2] * MPS[i]) * MPO[i] * lock(MPS[i]'; itag=target_tag)
         end
@@ -79,8 +76,7 @@ function DMRG_GS_1site!(MPS::Vector{<:QSpace{T1, 3}},
             target_tag = i == N ? "SRight" : "SB,$i"
             if i < N
                 U, S, Vd = svd(M, target_tag, "temp"; itag=target_tag, rev=true)
-                MPS[i] = legflip(U; itag=target_tag)
-                MPS[i+1] = legflip((MPS[i+1] * Vd) * S; itag=target_tag)
+                MPS[i] = U; MPS[i+1] = (MPS[i+1] * Vd) * S
             else MPS[i] = M end
             Hlr[i+1] = (Hlr[i] * MPS[i]) * MPO[i] * lock(MPS[i]'; itag=target_tag)
         end
@@ -110,8 +106,8 @@ function DMRG_GS_2site!(MPS::Vector{<:QSpace{T1, 3}},
             lids = [findleg(M; itag=t) for t in tags]
             U, S, Vd = svd(M, lids, "SB,$i,left", "SB,$i,right"; Nkeep=Nkeep)
 
-            MPS[i] = removeitag(legflip(U * S; itag="right"), "right")
-            MPS[i+1] = removeitag(legflip(Vd; itag="right"), "right")
+            MPS[i] = removeitag(U * S, "right")
+            MPS[i+1] = removeitag(Vd, "right")
             Hlr[i+2] = (Hlr[i+3] * MPS[i+1]) * MPO[i+1] * lock(MPS[i+1]'; itag="SB,$i")
         end
         println("Energy: $E")
@@ -125,8 +121,8 @@ function DMRG_GS_2site!(MPS::Vector{<:QSpace{T1, 3}},
             lids = [findleg(M; itag=t) for t in tags]
             U, S, Vd = svd(M, lids, "SB,$i,left", "SB,$i,right"; Nkeep=Nkeep)
 
-            MPS[i] = removeitag(legflip(U; itag="left"), "left")
-            MPS[i+1] = removeitag(legflip(S * Vd; itag="left"), "left")
+            MPS[i] = removeitag(U, "left")
+            MPS[i+1] = removeitag(S * Vd, "left")
             Hlr[i+1] = (Hlr[i] * MPS[i]) * MPO[i] * lock(MPS[i]'; itag="SB,$i")
         end
         println("Energy: $E")

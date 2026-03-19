@@ -980,6 +980,33 @@ end
         @test range_row.RMT.data == orig_reorder_row.RMT.data[range_selector...]
     end
 
+    q_negative = QSpaces.getsub(q, leg, [sector_reorder => -1])
+    negative_rows = rows_for_sector(q_negative, sector_reorder)
+    @test q_negative.spaces[leg] == [(sector_reorder, 1)]
+    @test length(negative_rows) == length(orig_reorder_rows)
+    for (negative_row, orig_reorder_row) in zip(negative_rows, orig_reorder_rows)
+        negative_selector = ntuple(d -> d == leg ? [dim_reorder] : Colon(), ndims(orig_reorder_row.RMT.data))
+        @test negative_row.RMT.data == orig_reorder_row.RMT.data[negative_selector...]
+    end
+
+    q_negative_range = QSpaces.getsub(q, leg, [sector_reorder => -2:-1])
+    negative_range_rows = rows_for_sector(q_negative_range, sector_reorder)
+    @test q_negative_range.spaces[leg] == [(sector_reorder, 2)]
+    @test length(negative_range_rows) == length(orig_reorder_rows)
+    for (negative_range_row, orig_reorder_row) in zip(negative_range_rows, orig_reorder_rows)
+        negative_range_selector = ntuple(d -> d == leg ? [dim_reorder - 1, dim_reorder] : Colon(), ndims(orig_reorder_row.RMT.data))
+        @test negative_range_row.RMT.data == orig_reorder_row.RMT.data[negative_range_selector...]
+    end
+
+    q_mixed = QSpaces.getsub(q, leg, [sector_reorder => [-1, 1]])
+    mixed_rows = rows_for_sector(q_mixed, sector_reorder)
+    @test q_mixed.spaces[leg] == [(sector_reorder, 2)]
+    @test length(mixed_rows) == length(orig_reorder_rows)
+    for (mixed_row, orig_reorder_row) in zip(mixed_rows, orig_reorder_rows)
+        mixed_selector = ntuple(d -> d == leg ? [dim_reorder, 1] : Colon(), ndims(orig_reorder_row.RMT.data))
+        @test mixed_row.RMT.data == orig_reorder_row.RMT.data[mixed_selector...]
+    end
+
     q_empty = QSpaces.getsub(q, leg, Any[])
     @test isempty(q_empty.rows)
     @test isempty(q_empty.spaces[leg])
@@ -992,8 +1019,11 @@ end
     @test_throws ArgumentError QSpaces.getsub(q, leg, [bad_sector => :])
     @test_throws ArgumentError QSpaces.getsub(q, leg, [bad_sector => 1])
     @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => [1, 1]])
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => [1, -dim_reorder]])
     @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => Int[]])
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => 0])
     @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => (dim_reorder + 1)])
+    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => -(dim_reorder + 1)])
     @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => :, sector_reorder => 1])
     @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => :, (sector_full, :)])
 end

@@ -1878,6 +1878,12 @@ Base.adjoint(q::QSpace) = conj(q)
 getsub(q::QSpace, i::Int) = getsub(q, [i])
 getsub(q::QSpace, inds::Vector{Int}) = QSpace(q.symm, q.rows[inds], q.inds, q.spaces)
 
+function _normalize_getsub_index(i::Int, dim::Int, sector, leg::Int)
+    i == 0 && throw(ArgumentError(
+        "selector for sector $sector on leg $leg cannot contain 0"))
+    return i < 0 ? dim + i + 1 : i
+end
+
 function _normalize_getsub_indices(raw, dim::Int, sector, leg::Int)
     inds = if raw isa Integer
         [Int(raw)]
@@ -1892,6 +1898,7 @@ function _normalize_getsub_indices(raw, dim::Int, sector, leg::Int)
 
     isempty(inds) && throw(ArgumentError(
         "selector for sector $sector on leg $leg must not be empty"))
+    inds = [_normalize_getsub_index(i, dim, sector, leg) for i in inds]
     length(unique(inds)) == length(inds) || throw(ArgumentError(
         "selector for sector $sector on leg $leg contains duplicate indices"))
     all(1 <= i <= dim for i in inds) || throw(ArgumentError(

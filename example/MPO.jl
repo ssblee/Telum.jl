@@ -7,7 +7,7 @@ function build_MPO(qss::Matrix{<:QSpace}, N::Int)
         tags = ("S,$i", "S,$i", i>1 ? "OB,$(i-1)" : "OLeft", 
         i<N ? "OB,$i" : "ORight")
 
-        if i == 1 MPO[i] = QSpace(getsub(t, 3, [(zq, 2)]), tags)
+        if i == 1 MPO[i] = QSpace(getsub(t, 3, [(zq, -1)]), tags)
         elseif i == N MPO[i] = QSpace(getsub(t, 4, [(zq, 1)]), tags)
         else MPO[i] = QSpace(t, tags) end
     end
@@ -59,5 +59,61 @@ function HubbardMPO(U, μ, t, N)
     qss[4, 2] = -t * f4d
     qss[4, 3] = -t * fc_flip
 
+    return build_MPO(qss, N)
+end
+
+function XYMPO(J, N)
+    option = SpinOptions(U1, 1//2)
+    q = getLocalSpace(option, ("site", "site", "op"))
+
+    i4d = addSingleton(q.I, (3, 4); itag=("left", "right"), dir=('+', '-'))
+
+    sm4d = addSingleton(q.Sm, 3; itag="left", dir='+')
+    sm4d = setitag(sm4d, 4, "right")
+    sp4d = addSingleton(q.Sp, 3; itag="left", dir='+')
+    sp4d = setitag(sp4d, 4, "right")
+
+    smc4d = addSingleton(q.Sm', 4; itag="right", dir='-')
+    smc4d = permutedims(setitag(smc4d, 3, "left"), (2, 1, 3, 4))
+    spc4d = addSingleton(q.Sp', 4; itag="right", dir='-')
+    spc4d = permutedims(setitag(spc4d, 3, "left"), (2, 1, 3, 4))
+
+    qss = Matrix{QSpace{Float64, 4, 1, 5}}(undef, 4, 4)
+
+    qss[1, 1] = qss[4, 4] = i4d
+    qss[2, 1] = spc4d
+    qss[3, 1] = smc4d
+    qss[4, 2] = J * sp4d
+    qss[4, 3] = J * sm4d
+    return build_MPO(qss, N)
+end
+
+function XXZMPO(δ, h, N)
+    option = SpinOptions(U1, 1//2)
+    q = getLocalSpace(option, ("site", "site", "op"))
+
+    i4d = addSingleton(q.I, (3, 4); itag=("left", "right"), dir=('+', '-'))
+
+    sm4d = addSingleton(q.Sm, 3; itag="left", dir='+')
+    sm4d = setitag(sm4d, 4, "right")
+    sz4d = addSingleton(q.Sz, (3, 4); itag=("left", "right"), dir=('+', '-'))
+    sp4d = addSingleton(q.Sp, 3; itag="left", dir='+')
+    sp4d = setitag(sp4d, 4, "right")
+
+    smc4d = addSingleton(q.Sm', 4; itag="right", dir='-')
+    smc4d = permutedims(setitag(smc4d, 3, "left"), (2, 1, 3, 4))
+    spc4d = addSingleton(q.Sp', 4; itag="right", dir='-')
+    spc4d = permutedims(setitag(spc4d, 3, "left"), (2, 1, 3, 4))
+
+    qss = Matrix{QSpace{Float64, 4, 1, 5}}(undef, 5, 5)
+
+    qss[1, 1] = qss[5, 5] = i4d
+    qss[2, 1] = spc4d
+    qss[3, 1] = smc4d
+    qss[4, 1] = sz4d
+    qss[5, 1] = h * sz4d
+    qss[5, 2] = sp4d
+    qss[5, 3] = sm4d
+    qss[5, 4] = δ * sz4d
     return build_MPO(qss, N)
 end

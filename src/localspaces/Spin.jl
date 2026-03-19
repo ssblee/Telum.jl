@@ -14,7 +14,7 @@ function getSymmetryInfo(opts::SpinOptions)
         mwirops[:S] = (sparse([0 1; 0 0]), 1 / sqrt(2))
     elseif opts.symmetry == U1
         mwirops[:Sp] = (sparse([0 1; 0 0]), 1 / sqrt(2))
-        mwirops[:Sz] = (sparse([1 0; 0 -1]), 1.0)
+        mwirops[:Sz] = (sparse([1 0; 0 -1]), 1 / 2)
         mwirops[:Sm] = (sparse([0 0; 1 0]), 1 / sqrt(2))
     end
     mwirops[:I] = (sparse(I, 2, 2), 1.0)
