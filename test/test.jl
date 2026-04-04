@@ -1,3 +1,4 @@
 include("common.jl")
+include("test_row_subset.jl")
 include("test_main.jl")
 include("test_oplus.jl")

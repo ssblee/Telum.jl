@@ -1189,6 +1189,447 @@ function test_spaces_svdQS(option::LocalSpaceOptions)
 
 end
 
+function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e-12)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    ct  = qf * a
+
+    left_legs = (1, 2)
+    split_blocks = QSpaces._get_svd_cgt_split_rows(ct, left_legs; tol)
+    expected_blocks = QSpaces._get_svd_cgt_split_rows(ct, left_legs; tol)
+    QSpaces._share_svd_row_isometries!(expected_blocks, ct.symm; tol=tol)
+    prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    split_blocks_via_svd = prep.blocks_by_symm
+
+    direct_pairs_by_symm = ntuple(_ -> Tuple{Any, Any}[], length(ct.symm))
+    for (ri, r) in enumerate(ct.rows)
+        row_pairs = ntuple(length(ct.symm)) do n
+            left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
+            left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
+
+            pairs = Tuple{Any, Any}[]
+            for block in QSpaces._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
+                reduced = QSpaces._reduce_svd_cgr_block(
+                    block, ri, left_spaces, right_spaces; tol=tol)
+                isnothing(reduced) || push!(pairs, (block, reduced))
+            end
+            pairs
+        end
+        any(isempty, row_pairs) && continue
+        for n in 1:length(ct.symm)
+            append!(direct_pairs_by_symm[n], row_pairs[n])
+        end
+    end
+
+    @test length(split_blocks) == length(ct.symm)
+    @test length(expected_blocks) == length(ct.symm)
+    @test length(split_blocks_via_svd) == length(ct.symm)
+
+    for n in 1:length(ct.symm)
+        raw_blocks = split_blocks[n]
+        shared_blocks = expected_blocks[n]
+        shared_blocks_via_svd = split_blocks_via_svd[n]
+        direct_pairs = direct_pairs_by_symm[n]
+
+        @test length(raw_blocks) == length(direct_pairs)
+        @test length(shared_blocks) == length(direct_pairs)
+        @test length(shared_blocks) == length(shared_blocks_via_svd)
+
+        blockkey(block) = (block.row_index, block.left_spaces, block.right_spaces, block.q)
+        raw_info_map = Dict{Any, Any}()
+        direct_map = Dict{Any, Any}()
+        for (raw_block_info, direct_block) in direct_pairs
+            direct_map[blockkey(direct_block)] = (raw_block_info, direct_block)
+        end
+        for raw_block in raw_blocks
+            key = blockkey(raw_block)
+            @test haskey(direct_map, key)
+            raw_block_info, direct_block = direct_map[key]
+            @test raw_block.left_iso ≈ direct_block.left_iso atol=tol rtol=tol
+            @test raw_block.right_iso ≈ direct_block.right_iso atol=tol rtol=tol
+            @test raw_block.core ≈ direct_block.core atol=tol rtol=tol
+            raw_info_map[key] = raw_block_info
+        end
+
+        shared_map = Dict(blockkey(block) => block for block in shared_blocks)
+        shared_map_via_svd = Dict(blockkey(block) => block for block in shared_blocks_via_svd)
+
+        @test Set(keys(shared_map)) == Set(keys(shared_map_via_svd))
+
+        for key in keys(shared_map)
+            shared_block = shared_map[key]
+            shared_block_via_svd = shared_map_via_svd[key]
+            @test shared_block.left_iso ≈ shared_block_via_svd.left_iso atol=tol rtol=tol
+            @test shared_block.right_iso ≈ shared_block_via_svd.right_iso atol=tol rtol=tol
+            @test shared_block.core ≈ shared_block_via_svd.core atol=tol rtol=tol
+
+            @test haskey(raw_info_map, key)
+            raw_block_info = raw_info_map[key]
+
+            r = ct.rows[shared_block.row_index]
+            left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
+            expected_left_spaces, expected_right_spaces =
+                QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
+            @test shared_block.left_spaces == expected_left_spaces
+            @test shared_block.right_spaces == expected_right_spaces
+
+            recon = QSpaces._reconstruct_reduced_svd_cgr_block(shared_block)
+            denom = max(norm(raw_block_info.coeffs), 1.0)
+            @test norm(recon - raw_block_info.coeffs) / denom < 1e-10
+        end
+    end
+
+    for n in 1:length(ct.symm)
+        QSpaces.isabelian(ct.symm[n]) && continue
+
+        left_groups = Dict{Any, Vector{Matrix{Float64}}}()
+        right_groups = Dict{Any, Vector{Matrix{Float64}}}()
+        for block in split_blocks_via_svd[n]
+            left_key = (block.left_spaces, block.q)
+            right_key = (block.right_spaces, block.q)
+            push!(get!(left_groups, left_key, Matrix{Float64}[]), block.left_iso)
+            push!(get!(right_groups, right_key, Matrix{Float64}[]), block.right_iso)
+        end
+
+        for mats in values(left_groups)
+            first_mat = first(mats)
+            for mat in mats
+                @test mat ≈ first_mat atol=tol rtol=tol
+            end
+        end
+        for mats in values(right_groups)
+            first_mat = first(mats)
+            for mat in mats
+                @test mat ≈ first_mat atol=tol rtol=tol
+            end
+        end
+    end
+end
+
+function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Float64 = 1e-12)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    ct  = qf * a
+
+    left_legs = (1, 2)
+    prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    split_blocks = prep.blocks_by_symm
+    got = prep.intermediate_qrows
+
+    Sector = NTuple{length(ct.symm), Tuple{Vararg{Int}}}
+    expected = Dict{Sector, Vector{Int}}()
+    for (ri, r) in enumerate(ct.rows)
+        qchoices = ntuple(length(ct.symm)) do n
+            left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
+            left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
+
+            qs = Tuple{Vararg{Int}}[]
+            for block in QSpaces._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
+                reduced = QSpaces._reduce_svd_cgr_block(
+                    block, ri, left_spaces, right_spaces; tol=tol)
+                isnothing(reduced) || push!(qs, reduced.q)
+            end
+            sort!(qs; alg=MergeSort)
+            unique!(qs)
+            qs
+        end
+
+        @test all(!isempty, qchoices)
+        for sector in Iterators.product(qchoices...)
+            push!(get!(expected, Tuple(sector), Int[]), ri)
+        end
+    end
+
+    @test got == expected
+    for blocks in split_blocks
+        row_q_pairs = [(block.row_index, block.q) for block in blocks]
+        @test row_q_pairs == sort(copy(row_q_pairs); alg=MergeSort)
+    end
+end
+
+function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOptions;
+                                                         tol::Float64 = 1e-12)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    ct  = qf * a
+
+    left_legs = (1, 2)
+    prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    qrows = prep.intermediate_qrows
+    got_left_sigs, got_right_sigs = prep.left_signatures, prep.right_signatures
+    got = prep.intermediate_qrow_classes
+
+    left_sigs = [ntuple(length(ct.symm)) do n
+        left_legs_canon = QSpaces._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
+        QSpaces._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[1]
+    end for ri in 1:length(ct.rows)]
+    right_sigs = [ntuple(length(ct.symm)) do n
+        left_legs_canon = QSpaces._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
+        QSpaces._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[2]
+    end for ri in 1:length(ct.rows)]
+
+    @test got_left_sigs == left_sigs
+    @test got_right_sigs == right_sigs
+
+    Sector = NTuple{length(ct.symm), Tuple{Vararg{Int}}}
+    expected = Dict{Sector, Vector{Vector{Int}}}()
+    LeftSig = eltype(left_sigs)
+    RightSig = eltype(right_sigs)
+
+    for sector in sort!(collect(keys(qrows)); alg=MergeSort)
+        rows = sort!(copy(qrows[sector]); alg=MergeSort)
+        left_groups = Dict{LeftSig, Vector{Int}}()
+        right_groups = Dict{RightSig, Vector{Int}}()
+
+        for ri in rows
+            push!(get!(left_groups, left_sigs[ri], Int[]), ri)
+            push!(get!(right_groups, right_sigs[ri], Int[]), ri)
+        end
+
+        classes = Vector{Vector{Int}}()
+        unassigned = Set(rows)
+        for seed in rows
+            seed in unassigned || continue
+            component = Int[seed]
+            frontier = Int[seed]
+            delete!(unassigned, seed)
+            seen_left = Set{LeftSig}()
+            seen_right = Set{RightSig}()
+
+            while !isempty(frontier)
+                ri = pop!(frontier)
+                left_sig = left_sigs[ri]
+                if left_sig ∉ seen_left
+                    push!(seen_left, left_sig)
+                    for rj in left_groups[left_sig]
+                        rj in unassigned || continue
+                        delete!(unassigned, rj)
+                        push!(frontier, rj)
+                        push!(component, rj)
+                    end
+                end
+
+                right_sig = right_sigs[ri]
+                if right_sig ∉ seen_right
+                    push!(seen_right, right_sig)
+                    for rj in right_groups[right_sig]
+                        rj in unassigned || continue
+                        delete!(unassigned, rj)
+                        push!(frontier, rj)
+                        push!(component, rj)
+                    end
+                end
+            end
+
+            sort!(component; alg=MergeSort)
+            push!(classes, component)
+        end
+        sort!(classes; by = cls -> cls[1], alg=MergeSort)
+        expected[sector] = classes
+    end
+
+    @test got == expected
+end
+
+function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64 = 1e-12)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    ct  = qf * a
+
+    left_legs = (1, 4)
+    prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+
+    expected_signatures = [begin
+        per_symm = ntuple(length(ct.symm)) do n
+            cgr = r.cgrs[n]
+            nin = cgr.legdir[1]
+            left_up = Tuple(
+                cgr.qlabels[cgr.cgp[leg]] for leg in 1:length(ct.inds)
+                if leg in left_legs && cgr.cgp[leg] <= nin
+            )
+            left_dn = Tuple(
+                cgr.qlabels[cgr.cgp[leg]] for leg in 1:length(ct.inds)
+                if leg in left_legs && cgr.cgp[leg] > nin
+            )
+            right_up = Tuple(
+                cgr.qlabels[cgr.cgp[leg]] for leg in 1:length(ct.inds)
+                if leg ∉ left_legs && cgr.cgp[leg] <= nin
+            )
+            right_dn = Tuple(
+                cgr.qlabels[cgr.cgp[leg]] for leg in 1:length(ct.inds)
+                if leg ∉ left_legs && cgr.cgp[leg] > nin
+            )
+            ((left_up, left_dn), (right_up, right_dn))
+        end
+        (ntuple(n -> per_symm[n][1], length(ct.symm)),
+         ntuple(n -> per_symm[n][2], length(ct.symm)))
+    end for r in ct.rows]
+
+    expected_left = first.(expected_signatures)
+    expected_right = last.(expected_signatures)
+
+    @test prep.left_signatures == expected_left
+    @test prep.right_signatures == expected_right
+end
+
+function test_svd_cgr_split_spaces_preserves_physical_leg_order()
+    cgr = QSpaces.CGR(
+        U1,
+        ((10,), (20,), (30,), (40,)),
+        QTensor([1.0;;]),
+        (2, 1, 4, 3),
+        (2, 2),
+    )
+
+    left_legs = (1, 2)
+    left_legs_canon = QSpaces._svd_cgr_leftlegs(cgr, left_legs)
+    left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(cgr, left_legs_canon)
+
+    @test left_spaces == (((20,), (10,)), ())
+    @test right_spaces == ((), ((40,), (30,)))
+end
+
+function _svd_cgtsvd_fixture(option::LocalSpaceOptions)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    ct  = qf * a
+    return ct, (1, 2)
+end
+
+function _svd_reconstruction_permutation(left_legs, rank::Int)
+    right_legs = [l for l in 1:rank if l ∉ left_legs]
+    combined_order = vcat(collect(Int, left_legs), right_legs)
+    perm = zeros(Int, rank)
+    for (new_pos, orig_leg) in enumerate(combined_order)
+        perm[orig_leg] = new_pos
+    end
+    return Tuple(perm)
+end
+
+function _diag_singular_values(q::QSpace)
+    isempty(q.rows) && return Float64[]
+    vals = Float64[]
+    for r in q.rows
+        mat = reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))
+        append!(vals, diag(mat))
+    end
+    return vals
+end
+
+function test_svd_cgtsvd_factorization(option::LocalSpaceOptions;
+                                       cutoff::Float64 = 1e-12,
+                                       tol::Float64 = 1e-9)
+    ct, left_legs = _svd_cgtsvd_fixture(option)
+
+    U, S, Vd = svd_cgtsvd(ct, left_legs; cutoff=cutoff)
+
+    @test U isa QSpace
+    @test S isa QSpace
+    @test Vd isa QSpace
+
+    @test U.inds[end].dir == '-'
+    @test S.inds[1].dir == '+'
+    @test S.inds[2].dir == '+'
+    @test Vd.inds[1].dir == '-'
+
+    US = U * S
+    rec = US * Vd
+    rec_perm = permutedims(rec, _svd_reconstruction_permutation(left_legs, ndims(ct)))
+
+    arr_ct = Array(to_sparse_array(ct))
+    arr_rec = Array(to_sparse_array(rec_perm))
+    ref_norm = max(norm(arr_ct), 1.0)
+    diff = norm(arr_ct - arr_rec) / ref_norm
+    @test diff < tol
+
+    Uiso = U' * lock(U, ndims(U))
+    arr_Uiso = Array(to_sparse_array(Uiso))
+    @test norm(arr_Uiso - Matrix(I, size(arr_Uiso, 1), size(arr_Uiso, 2))) < tol
+
+    Vdiso = lock(Vd, 1) * Vd'
+    arr_Vdiso = Array(to_sparse_array(Vdiso))
+    @test norm(arr_Vdiso - Matrix(I, size(arr_Vdiso, 1), size(arr_Vdiso, 2))) < tol
+end
+
+function test_truncate_svd_cgtsvd(option::LocalSpaceOptions)
+    ct, left_legs = _svd_cgtsvd_fixture(option)
+
+    _, Sfull, _ = svd_cgtsvd(ct, left_legs; cutoff=0.0)
+    full_vals = sort(_diag_singular_values(Sfull); rev=true)
+    nkeep = min(2, length(full_vals))
+    @test nkeep > 0
+
+    U, S, Vd = svd_cgtsvd(ct, left_legs; cutoff=0.0, Nkeep=nkeep)
+    kept_vals = sort(_diag_singular_values(S); rev=true)
+
+    @test length(kept_vals) == nkeep
+    @test kept_vals ≈ full_vals[1:nkeep]
+    @test U.spaces[end] == S.spaces[1]
+    @test Vd.spaces[1] == S.spaces[2]
+end
+
+function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
+                                         tol::Float64 = 1e-12,
+                                         recon_tol::Float64 = 1e-10)
+    q   = getLocalSpace(option, ("lur", "lur", "op"))
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
+    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    ct  = qf * a
+
+    left_legs = (1, 2)
+    for (ri, r) in enumerate(ct.rows)
+        for n in 1:length(ct.symm)
+            left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
+            left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
+            raw_blocks = QSpaces._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
+            reduced_pairs = [(raw, QSpaces._reduce_svd_cgr_block(
+                raw, ri, left_spaces, right_spaces; tol=tol)) for raw in raw_blocks]
+            filter!(pair -> !isnothing(pair[2]), reduced_pairs)
+            reduced_blocks = [pair[2] for pair in reduced_pairs]
+            kept_raw_blocks = [pair[1] for pair in reduced_pairs]
+
+            for (raw, reduced) in zip(kept_raw_blocks, reduced_blocks)
+                @test reduced.row_index == ri
+                @test reduced.left_spaces == left_spaces
+                @test reduced.right_spaces == right_spaces
+                @test reduced.q == raw.q
+                @test size(reduced.left_iso, 1) == raw.omL
+                @test size(reduced.right_iso, 1) == raw.omR
+                @test size(reduced.left_iso, 2) <= raw.omL
+                @test size(reduced.right_iso, 2) <= raw.omR
+                @test size(reduced.core) ==
+                      (size(reduced.left_iso, 2), size(reduced.right_iso, 2), size(raw.coeffs, 3))
+
+                left_gram = reduced.left_iso' * reduced.left_iso
+                right_gram = reduced.right_iso' * reduced.right_iso
+                @test left_gram ≈ Matrix{Float64}(I, size(left_gram, 1), size(left_gram, 2)) atol=recon_tol rtol=recon_tol
+                @test right_gram ≈ Matrix{Float64}(I, size(right_gram, 1), size(right_gram, 2)) atol=recon_tol rtol=recon_tol
+
+                recon = QSpaces._reconstruct_reduced_svd_cgr_block(reduced)
+                denom = max(norm(raw.coeffs), 1.0)
+                @test norm(recon - raw.coeffs) / denom < recon_tol
+            end
+        end
+    end
+end
+
 # ─── test_truncate_svdQS ─────────────────────────────────────────────────────
 # Verify that Nkeep truncation keeps the largest singular values, and that
 # missing sectors are still counted as zero singular values when enough states

@@ -404,7 +404,7 @@ struct QSpace{T, QD, N, RD}
         normalize_qspace!(q)
         _orient_wmats!(q)
         _drop_small_rows!(q)
-        sort_rows!(q)
+        #sort_rows!(q)
         for r in q.rows, cgr in r.cgrs
             _check_cgr_qlabel_order(cgr)
         end
@@ -471,6 +471,53 @@ function QSpace(q::QSpace{T, QD, N, RD}, inds::NTuple{QD, QIndex}) where {T, QD,
 end
 
 Base.getindex(q::QSpace, i::Int) = q.rows[i]
+
+function _normalize_qspace_row_index(i::Int, nrows::Int)
+    i == 0 && throw(BoundsError(1:nrows, i))
+    idx = i < 0 ? nrows + i + 1 : i
+    1 <= idx <= nrows || throw(BoundsError(1:nrows, i))
+    return idx
+end
+
+function _normalize_qspace_row_selector(selector, nrows::Int)
+    if selector isa Colon
+        return collect(1:nrows)
+    elseif selector isa Integer
+        return Int[_normalize_qspace_row_index(Int(selector), nrows)]
+    elseif selector isa AbstractVector{Bool}
+        length(selector) == nrows || throw(DimensionMismatch(
+            "row selector of length $(length(selector)) does not match number of rows $nrows"))
+        return findall(selector)
+    elseif selector isa AbstractRange{<:Integer}
+        return _normalize_qspace_row_selector(collect(selector), nrows)
+    elseif selector isa AbstractVector{<:Integer}
+        inds = Int[_normalize_qspace_row_index(Int(i), nrows) for i in selector]
+        length(unique(inds)) == length(inds) || throw(ArgumentError(
+            "row selector must not contain duplicate indices"))
+        return inds
+    else
+        throw(ArgumentError(
+            "row selector must be :, Int, AbstractRange{<:Integer}, AbstractVector{<:Integer}, or AbstractVector{Bool}"))
+    end
+end
+
+"""
+    QSpace(q::QSpace, selector) -> QSpace
+
+Create a new `QSpace` from a subset of `q.rows`, preserving the original
+symmetry tuple, leg indices, and cached leg-space metadata in `q.spaces`.
+
+`selector` may be `:`, an `Int`, an integer range, an integer vector, or a
+boolean mask. Negative integer indices count from the end.
+"""
+function QSpace(q::QSpace{T, QD, N, RD}, selector) where {T, QD, N, RD}
+    inds = _normalize_qspace_row_selector(selector, length(q.rows))
+    return QSpace(q.symm, deepcopy(q.rows[inds]), q.inds, _copy_spaces_tuple(q.spaces))
+end
+
+Base.getindex(q::QSpace,
+              selector::Union{Colon, AbstractRange{<:Integer},
+                              AbstractVector{<:Integer}, AbstractVector{Bool}}) = QSpace(q, selector)
 
 # For 0-dimensional QSpace (scalar), q[] returns the unique RMT element.
 function Base.getindex(q::QSpace{T, 0, N, N}) where {T, N}
@@ -1875,8 +1922,7 @@ end
 
 Base.adjoint(q::QSpace) = conj(q)
 
-getsub(q::QSpace, i::Int) = getsub(q, [i])
-getsub(q::QSpace, inds::Vector{Int}) = QSpace(q.symm, q.rows[inds], q.inds, q.spaces)
+getsub(q::QSpace, selector) = QSpace(q, selector)
 
 function _normalize_getsub_index(i::Int, dim::Int, sector, leg::Int)
     i == 0 && throw(ArgumentError(

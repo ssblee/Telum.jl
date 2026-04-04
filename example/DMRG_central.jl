@@ -1,6 +1,6 @@
-using LurCGT
-using QSpaces
-using LinearAlgebra
+#using LurCGT
+#using QSpaces
+#using LinearAlgebra
 include("MPO.jl")
 include("DMRG_GS.jl")
 
@@ -31,7 +31,7 @@ function init_MPS(MPO::Vector{<:QSpace}, Nkeep::Int)
     return MPS, E, sp
 end
 
-MPO = MajumdarGhoshMPO(1.0, 40)
+#MPO = MajumdarGhoshMPO(1.0, 40)
 #MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
 #MPO = XYMPO(1.0, 40)
 #MPO = XXZMPO(0.3, 0.5, 40)

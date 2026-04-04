@@ -199,8 +199,8 @@ end
 
 # ─── _compress_sector ────────────────────────────────────────────────────────
 # Pure-arithmetic core: given K per-pair (w-matrix, RMT) contributions for one
-# output sector, perform per-symmetry truncated SVD compression and accumulate
-# the result into a single (U_mats, result_RMT) pair.
+# output sector, compress the per-symmetry w-matrices into a shared basis and
+# accumulate the result into a single (U_mats, result_RMT) pair.
 #
 #   new_wmats[n][i] : (OM3_n, OM12_n_i)  — w-matrix for pair i, symmetry n
 #   new_RMTs[i]     : QTensor{T} (sz_free..., OM12_1_i,...,OM12_N_i)
@@ -209,8 +209,8 @@ end
 #   U_mats[n]  : QTensor{Float64,2} (OM3_n, r_n)  — new CGR wmat per symmetry
 #   result_RMT : QTensor{T} (sz_free..., r_1,...,r_N)  — compressed RMT
 #
-# Note: SVD is performed on plain CPU matrices (LAPACK); QTensor wrapping is
-# used for inputs/outputs so callers never need to unwrap/rewrap at call sites.
+# We use QR-based shared isometries for every sector, including K == 1, so the
+# resulting basis is normalized consistently with the multi-contribution case.
 function _compress_sector(
     new_wmats ::NTuple{N, Vector{<:QTensor{Float64, 2}}},
     new_RMTs  ::Vector{<:QTensor{T, RD}},
@@ -219,24 +219,23 @@ function _compress_sector(
 ) where {T, N, RD}
     K = length(new_RMTs)
 
-    # ── Truncated SVD per symmetry ───────────────────────────────────────────
+    # ── Shared QR basis per symmetry ─────────────────────────────────────────
     U_mats   = Vector{QTensor{Float64, 2}}(undef, N)
     SV_split = [Vector{Matrix{Float64}}(undef, K) for _ in 1:N]
 
     for n in 1:N
-        W_n   = hcat((w.data for w in new_wmats[n])...)  # (OM3_n, Σ_i OM12_n_i)
-        F     = svd(W_n; full = false)
-        s_max = isempty(F.S) ? 0.0 : F.S[1]
-        r_n   = max(count(s -> s > tol * s_max, F.S), 1)
-
-        U_mats[n] = QTensor(F.U[:, 1:r_n])                    # (OM3_n, r_n)
-        SV_n      = Diagonal(F.S[1:r_n]) * F.Vt[1:r_n, :]     # (r_n, Σ OM12)
-
-        col = 0
-        for i in 1:K
-            w              = size(new_wmats[n][i], 2)
-            SV_split[n][i] = SV_n[:, col+1:col+w]
-            col += w
+        mats = [w.data for w in new_wmats[n]]
+        if all(mat -> all(iszero, mat), mats)
+            U_mats[n] = QTensor(zeros(Float64, size(mats[1], 1), 1))
+            for i in 1:K
+                SV_split[n][i] = zeros(Float64, 1, size(mats[i], 2))
+            end
+        else
+            common_iso, factors = _qr_shared_isometry(mats; tol=tol)
+            U_mats[n] = QTensor(common_iso)
+            for i in 1:K
+                SV_split[n][i] = factors[i]
+            end
         end
     end
 
@@ -326,7 +325,7 @@ function Base.:*(q1::QSpace, q2::QSpace)
 
     @assert length(legs1) > 0 "No matching contractible indices found between the two QSpace objects"
 
-    return contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
+    return contract_v2(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
 end
 
 function contract(q1::QSpace{T1, QD1, N, RD1},

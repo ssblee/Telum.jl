@@ -1,4 +1,4 @@
-function eigs_GS(Hl, H, Hr, M; tol, nKrylov)
+function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov)
     # solve the effective Hamiltonian eigenvalue problem by Lanczos method
     # return the ground state and energy
     As = Vector{QSpace}(undef, nKrylov)
@@ -7,7 +7,9 @@ function eigs_GS(Hl, H, Hr, M; tol, nKrylov)
     cnt = 0
 
     for i in 1:nKrylov
-        Amul = ((Hl * As[i]) * H) * Hr
+        Amul = Hl * As[i]
+        for H in Hs Amul = Amul * H end
+        Amul = Amul * Hr
         αs[i] = (As[i]' * Amul)[]
         cnt += 1
 
@@ -23,7 +25,9 @@ function eigs_GS(Hl, H, Hr, M; tol, nKrylov)
     Hkrylov = SymTridiagonal(αs[1:cnt], βs[1:cnt-1])
     _, V = eigen(Hkrylov); vec = V[:, 1]
     Anew = sum(vec[i] * As[i] for i in 1:cnt)
-    Enew = (Anew' * (((Hl * Anew) * H) * Hr))[]
+    Enew = Hl * Anew
+    for H in Hs Enew = Enew * H end
+    Enew = ((Enew * Hr) * Anew')[]
     @assert imag(Enew) < tol
     return Anew, real(Enew)
 end
@@ -59,7 +63,7 @@ function DMRG_GS_1site!(MPS::Vector{<:QSpace{T1, 3}},
         # right to left sweep
         println("DMRG right->left sweep $si")
         for i in N:-1:1
-            M, E = eigs_GS(Hlr[i], MPO[i], Hlr[i+2], MPS[i]; tol, nKrylov)
+            M, E = eigs_GS(Hlr[i], [MPO[i]], Hlr[i+2], MPS[i]; tol, nKrylov)
             target_tag = i == 1 ? "SLeft" : "SB,$(i-1)"
             if i > 1
                 U, S, Vd = svd(M, "temp", target_tag; itag=target_tag)
@@ -72,7 +76,7 @@ function DMRG_GS_1site!(MPS::Vector{<:QSpace{T1, 3}},
         # left to right sweep
         println("DMRG left->right sweep $si")
         for i in 1:N
-            M, E = eigs_GS(Hlr[i], MPO[i], Hlr[i+2], MPS[i]; tol, nKrylov)
+            M, E = eigs_GS(Hlr[i], [MPO[i]], Hlr[i+2], MPS[i]; tol, nKrylov)
             target_tag = i == N ? "SRight" : "SB,$i"
             if i < N
                 U, S, Vd = svd(M, target_tag, "temp"; itag=target_tag, rev=true)
@@ -100,7 +104,7 @@ function DMRG_GS_2site!(MPS::Vector{<:QSpace{T1, 3}},
         # right to left sweep
         println("DMRG right->left sweep $si")
         for i in N-1:-1:1
-            M, E = eigs_GS(Hlr[i], MPO[i] * MPO[i+1], Hlr[i+3], MPS[i] * MPS[i+1]; tol, nKrylov)
+            M, E = eigs_GS(Hlr[i], [MPO[i], MPO[i+1]], Hlr[i+3], MPS[i] * MPS[i+1]; tol, nKrylov)
 
             tags = i == 1 ? ("SLeft", "S,$i") : ("SB,$(i-1)", "S,$i")
             lids = [findleg(M; itag=t) for t in tags]
@@ -115,7 +119,7 @@ function DMRG_GS_2site!(MPS::Vector{<:QSpace{T1, 3}},
         # left to right sweep
         println("DMRG left->right sweep $si")
         for i in 1:N-1
-            M, E = eigs_GS(Hlr[i], MPO[i] * MPO[i+1], Hlr[i+3], MPS[i] * MPS[i+1]; tol, nKrylov)
+            M, E = eigs_GS(Hlr[i], [MPO[i], MPO[i+1]], Hlr[i+3], MPS[i] * MPS[i+1]; tol, nKrylov)
 
             tags = i == 1 ? ("SLeft", "S,$i") : ("SB,$(i-1)", "S,$i")
             lids = [findleg(M; itag=t) for t in tags]

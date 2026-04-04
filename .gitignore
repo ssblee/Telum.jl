@@ -4,3 +4,4 @@ Manifest.toml
 *.jl.mem
 .DS_Store
 SESSION_NOTES.md
+scratch_julia_worker.jl

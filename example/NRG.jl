@@ -292,7 +292,7 @@ function NRG_IterDiag(H0::QSpace{T, 2, N},
             l = findleg(Hprev; dir='-')
             Anow = getIdentity((Hprev, l), (Z, 2); itag="L,$si")
             
-            Hnow = lock(Anow'; itag="L") * (Hprev * Anow)
+            Hnow = lock(Anow'; itag="L") * Hprev * Anow
             Hnow = Hnow * (EScale[itN-1] / EScale[itN])
 
             Fnow = F' * lock(Z, 2)
@@ -300,7 +300,7 @@ function NRG_IterDiag(H0::QSpace{T, 2, N},
             Hhop = Hhop * (ff[itN-1] / EScale[itN])
             Hhop = Hhop + Hhop'
 
-            Hon = lock(Anow'; itag="L") * (n0 * Anow)
+            Hon = lock(Anow'; itag="L") * n0 * Anow
             Hon = (gg[itN-1] / EScale[itN]) * Hon
 
             Hnow = Hnow + Hhop + Hon

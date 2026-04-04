@@ -40,6 +40,42 @@ end
     test_spaces_svdQS(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
+@testset "CGTSVD preprocessing for svd" begin
+    test_svd_cgtsvd_preprocess(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_svd_cgtsvd_preprocess(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
+@testset "CGTSVD intermediate qlabels for svd" begin
+    test_svd_cgtsvd_intermediate_qrows(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_svd_cgtsvd_intermediate_qrows(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
+@testset "CGTSVD intermediate qlabel row classes for svd" begin
+    test_svd_cgtsvd_intermediate_qrow_equivclasses(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_svd_cgtsvd_intermediate_qrow_equivclasses(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
+@testset "CGTSVD signature order for svd" begin
+    test_svd_cgtsvd_signature_order(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_svd_cgtsvd_signature_order(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_svd_cgr_split_spaces_preserves_physical_leg_order()
+end
+
+@testset "CGTSVD block reduction for svd" begin
+    test_svd_cgtsvd_block_reduction(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_svd_cgtsvd_block_reduction(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
+@testset "CGTSVD full svd factorization" begin
+    test_svd_cgtsvd_factorization(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_svd_cgtsvd_factorization(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
+@testset "CGTSVD truncation" begin
+    test_truncate_svd_cgtsvd(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_truncate_svd_cgtsvd(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
 @testset "svd truncation of QSpace" begin
     test_truncate_svdQS(FermionSOptions(U1, SU{2}, nothing, 1))
     test_truncate_svdQS(FermionSOptions(U1, SU{2}, SU{3}, 3))
@@ -272,6 +308,7 @@ end
 end
 
 @testset "compress_sector test" begin
+    test_compress_sector(2, 1, 3; verbose=false)
     test_compress_sector(2, 7, 3; verbose=false)
     test_compress_sector(3, 5, 4; verbose=false)
 end
