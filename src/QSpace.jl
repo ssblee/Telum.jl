@@ -62,6 +62,12 @@ function _has_itag(base::AbstractString, query::AbstractString)
     return all(t -> t ∈ bset, _parse_itag(query))
 end
 
+_matches_itag_selector(base::AbstractString, query::AbstractString) = _has_itag(base, query)
+_matches_itag_selector(base::AbstractString, queries::Tuple{Vararg{AbstractString}}) =
+    any(query -> _has_itag(base, query), queries)
+_matches_itag_selector(base::AbstractString, queries::AbstractVector{<:AbstractString}) =
+    any(query -> _has_itag(base, query), queries)
+
 # Add tags from `newtags` to `base`; result is sorted and deduplicated.
 _add_itag(base::AbstractString, newtags::AbstractString) =
     Itag(join(sort!(unique!(vcat(_parse_itag(base), _parse_itag(newtags)))), ','))
@@ -563,10 +569,10 @@ end
 
 # Internal: check if a QIndex matches all specified criteria
 function _matches_criteria(idx::QIndex; dir=nothing, itag=nothing, plev=nothing, lock=nothing)
-    (!isnothing(dir)  && idx.dir != dir)               && return false
-    (!isnothing(itag) && !_has_itag(idx.itags, itag))  && return false
-    (!isnothing(plev) && idx.plev != plev)             && return false
-    (!isnothing(lock) && idx.lock != lock)             && return false
+    (!isnothing(dir)  && idx.dir != dir)                                 && return false
+    (!isnothing(itag) && !_matches_itag_selector(idx.itags, itag))       && return false
+    (!isnothing(plev) && idx.plev != plev)                               && return false
+    (!isnothing(lock) && idx.lock != lock)                               && return false
     return true
 end
 
@@ -578,7 +584,8 @@ If `rev=true`, the selection is reversed: legs that do *not* match are returned.
 
 # Arguments
 - `dir`: Match direction ('+' for incoming, '-' for outgoing)
-- `itag`: Match if this string is a substring of the leg's itags
+- `itag`: Match exact tags. A single string like `"a,b"` means both `a` and `b`
+  must be present; a tuple/vector of strings means any one of those tag-sets may match
 - `plev`: Match exact prime level
 - `lock`: Match exact lock level
 - `rev`: If `true`, return legs that do *not* satisfy the criteria (default `false`)
@@ -586,7 +593,8 @@ If `rev=true`, the selection is reversed: legs that do *not* match are returned.
 # Examples
 ```julia
 findlegs(q; dir='-')                    # all outgoing legs
-findlegs(q; itag="site")                # legs with "site" in their tag
+findlegs(q; itag="site")                # legs carrying tag "site"
+findlegs(q; itag=("a,b", "a,c"))        # legs with tags a+b, or a+c
 findlegs(q; dir='+', plev=0)            # incoming, unprimed legs
 findlegs(q; lock=0)                     # non-locked legs
 findlegs(q; dir='-', rev=true)          # all legs that are NOT outgoing
@@ -616,6 +624,169 @@ function findleg(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock
         _matches_criteria(q.inds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev && return i
     end
     return nothing
+end
+
+function _matching_targets(q::QSpace; require_unlocked::Bool=false)
+    return Set(change_dir(idx) for idx in q.inds
+               if !require_unlocked || idx.lock == 0)
+end
+
+_has_target_match(idx::QIndex, targets; require_unlocked::Bool=false) =
+    (!require_unlocked || idx.lock == 0) && (idx in targets)
+
+function _find_matching_legs(a::QSpace{T, QD}, b::QSpace;
+                             dir=nothing, itag=nothing, plev=nothing,
+                             lock=nothing, rev::Bool=false,
+                             matched::Bool=true,
+                             require_unlocked::Bool=false) where {T, QD}
+    targets = _matching_targets(b; require_unlocked=require_unlocked)
+    return [i for i in 1:QD
+            if (_has_target_match(a.inds[i], targets; require_unlocked=require_unlocked) == matched) &&
+               (_matches_criteria(a.inds[i]; dir=dir, itag=itag,
+                                  plev=plev, lock=lock) ⊻ rev)]
+end
+
+function _find_matching_leg(a::QSpace{T, QD}, b::QSpace;
+                            dir=nothing, itag=nothing, plev=nothing,
+                            lock=nothing, rev::Bool=false,
+                            matched::Bool=true,
+                            require_unlocked::Bool=false) where {T, QD}
+    targets = _matching_targets(b; require_unlocked=require_unlocked)
+    for i in 1:QD
+        (_has_target_match(a.inds[i], targets; require_unlocked=require_unlocked) == matched) || continue
+        _matches_criteria(a.inds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev && return i
+    end
+    return nothing
+end
+
+"""
+    matchings(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+
+Return all leg indices of `a` that have at least one matching leg in `b`.
+
+A leg matches when it has the same `itags`, `plev`, and `green` flag as a leg
+of `b`, but with opposite direction. Lock is ignored for the cross-tensor
+match test. Keyword arguments filter the returned legs of `a` using the same
+rules as `findlegs`.
+"""
+function matchings(a::QSpace{T, QD}, b::QSpace;
+                   dir=nothing, itag=nothing, plev=nothing,
+                   lock=nothing, rev::Bool=false) where {T, QD}
+    return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
+                               rev=rev, matched=true)
+end
+
+"""
+    matching(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+
+Return the first leg index of `a` that has a matching leg in `b`, or `nothing`
+if no such leg exists.
+
+Matching ignores lock between tensors; keyword arguments filter the returned
+leg of `a` using the same rules as `findleg`.
+"""
+function matching(a::QSpace{T, QD}, b::QSpace;
+                  dir=nothing, itag=nothing, plev=nothing,
+                  lock=nothing, rev::Bool=false) where {T, QD}
+    return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
+                              rev=rev, matched=true)
+end
+
+"""
+    unmatchings(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+
+Return all leg indices of `a` that do not have any matching leg in `b`.
+
+The match test uses the same rule as `matchings`: same `itags`, `plev`, and
+`green`, opposite direction, and lock ignored between tensors. Keyword
+arguments filter the returned legs of `a` using the same rules as `findlegs`.
+"""
+function unmatchings(a::QSpace{T, QD}, b::QSpace;
+                     dir=nothing, itag=nothing, plev=nothing,
+                     lock=nothing, rev::Bool=false) where {T, QD}
+    return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
+                               rev=rev, matched=false)
+end
+
+"""
+    unmatching(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+
+Return the first leg index of `a` that does not have any matching leg in `b`,
+or `nothing` if every leg is matched.
+
+The match test uses the same rule as `matchings`: same `itags`, `plev`, and
+`green`, opposite direction, and lock ignored between tensors. Keyword
+arguments filter the returned leg of `a` using the same rules as `findleg`.
+"""
+function unmatching(a::QSpace{T, QD}, b::QSpace;
+                    dir=nothing, itag=nothing, plev=nothing,
+                    lock=nothing, rev::Bool=false) where {T, QD}
+    return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
+                              rev=rev, matched=false)
+end
+
+"""
+    contractables(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+
+Return all leg indices of `a` that have at least one contractable leg in `b`.
+
+Two legs are contractable when they satisfy the same cross-tensor match rule as
+`matchings` and both legs have `lock == 0`. Keyword arguments filter the
+returned legs of `a` using the same rules as `findlegs`.
+"""
+function contractables(a::QSpace{T, QD}, b::QSpace;
+                       dir=nothing, itag=nothing, plev=nothing,
+                       lock=nothing, rev::Bool=false) where {T, QD}
+    return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
+                               rev=rev, matched=true, require_unlocked=true)
+end
+
+"""
+    contractable(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+
+Return the first leg index of `a` that has a contractable leg in `b`, or
+`nothing` if no such leg exists.
+
+Contractable legs satisfy the same cross-tensor match rule as `matchings`, but
+both tensors must have `lock == 0` on the matched legs.
+"""
+function contractable(a::QSpace{T, QD}, b::QSpace;
+                      dir=nothing, itag=nothing, plev=nothing,
+                      lock=nothing, rev::Bool=false) where {T, QD}
+    return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
+                              rev=rev, matched=true, require_unlocked=true)
+end
+
+"""
+    uncontractables(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+
+Return all leg indices of `a` that do not have any contractable leg in `b`.
+
+Contractability requires the same cross-tensor match rule as `matchings`, plus
+`lock == 0` on both matched legs. Keyword arguments filter the returned legs of
+`a` using the same rules as `findlegs`.
+"""
+function uncontractables(a::QSpace{T, QD}, b::QSpace;
+                         dir=nothing, itag=nothing, plev=nothing,
+                         lock=nothing, rev::Bool=false) where {T, QD}
+    return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
+                               rev=rev, matched=false, require_unlocked=true)
+end
+
+"""
+    uncontractable(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+
+Return the first leg index of `a` that does not have any contractable leg in
+`b`, or `nothing` if every eligible leg is contractable.
+
+Contractability requires the same cross-tensor match rule as `matchings`, plus
+`lock == 0` on both matched legs.
+"""
+function uncontractable(a::QSpace{T, QD}, b::QSpace;
+                        dir=nothing, itag=nothing, plev=nothing,
+                        lock=nothing, rev::Bool=false) where {T, QD}
+    return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
+                              rev=rev, matched=false, require_unlocked=true)
 end
 
 # ─── Lock utilities ──────────────────────────────────────────────────────────
@@ -2024,6 +2195,97 @@ function getsub(q::QSpace{T, QD, N, RD}, leg::Int, selector::AbstractVector) whe
     end, QD)
 
     return QSpace(q.symm, rows_out, q.inds, spaces_out)
+end
+
+function _normalize_getsub_predicate_legs(q::QSpace{T, QD}, legs) where {T, QD}
+    positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
+    isempty(positions) && throw(ArgumentError("getsub requires at least one leg"))
+    all(1 <= leg <= QD for leg in positions) || throw(ArgumentError(
+        "getsub legs must lie in 1:$QD, got $positions"))
+    length(unique(positions)) == length(positions) || throw(ArgumentError(
+        "getsub legs must be unique, got $positions"))
+    return positions
+end
+
+"""
+    getsub(q::QSpace, leg::Integer, pred::Function; preserve_space::Bool=false) -> QSpace
+
+Return a new `QSpace` containing only rows whose sector on `leg` satisfies
+`pred`.
+
+If `preserve_space=false` (the default), only `q.spaces[leg]` is truncated to
+the retained sectors and all other leg-space lists are copied unchanged. If
+`preserve_space=true`, all cached leg-space lists are preserved exactly and only
+the rows are filtered.
+"""
+function getsub(q::QSpace{T, QD, N, RD}, leg::Integer, pred::Function; preserve_space::Bool=false) where {T, QD, N, RD}
+    return getsub(q, (Int(leg),), pred; preserve_space=preserve_space)
+end
+
+"""
+    getsub(q::QSpace, legs, pred::Function; preserve_space::Bool=false) -> QSpace
+
+Return a new `QSpace` containing only rows whose sectors on every selected leg
+satisfy `pred`.
+
+If `preserve_space=false` (the default), each selected leg keeps only the
+matching entries in its space list, while unselected legs keep copies of their
+original space lists. If `preserve_space=true`, all cached leg-space lists are
+preserved exactly and only the rows are filtered.
+"""
+function getsub(q::QSpace{T, QD, N, RD}, legs::LegList, pred::Function; preserve_space::Bool=false) where {T, QD, N, RD}
+    positions = _normalize_getsub_predicate_legs(q, legs)
+    selected_leg_set = Set(positions)
+    selected_sectors = Dict{Int, Set{Any}}()
+
+    for leg in positions
+        sectors = Set{Any}()
+        for (sector, _) in q.spaces[leg]
+            pred(sector) && push!(sectors, sector)
+        end
+        selected_sectors[leg] = sectors
+    end
+
+    keepinds = Int[]
+    for (i, r) in pairs(q.rows)
+        all(_oplus_row_qlabel(r, leg) in selected_sectors[leg] for leg in positions) || continue
+        push!(keepinds, i)
+    end
+    rows_out = deepcopy(q.rows[keepinds])
+
+    spaces_out = if preserve_space
+        _copy_spaces_tuple(q.spaces)
+    else
+        ntuple(l -> begin
+            if l in selected_leg_set
+                out = eltype(q.spaces[l])[]
+                for entry in q.spaces[l]
+                    entry[1] in selected_sectors[l] || continue
+                    push!(out, entry)
+                end
+                out
+            else
+                copy(q.spaces[l])
+            end
+        end, QD)
+    end
+
+    return QSpace(q.symm, rows_out, q.inds, spaces_out)
+end
+
+"""
+    getsub(q::QSpace, pred::Function; preserve_space::Bool=false, dir=nothing,
+           itag=nothing, plev=nothing, lock=nothing, rev=false) -> QSpace
+
+Apply predicate-based `getsub` to every leg selected by the keyword criteria.
+The leg selection follows the same matching rules as `findlegs`.
+"""
+function getsub(q::QSpace{T, QD, N, RD}, pred::Function; preserve_space::Bool=false,
+                dir=nothing, itag=nothing, plev=nothing, lock=nothing,
+                rev::Bool=false) where {T, QD, N, RD}
+    legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
+                                  rev=rev, opname="getsub")
+    return getsub(q, legs, pred; preserve_space=preserve_space)
 end
 
 """

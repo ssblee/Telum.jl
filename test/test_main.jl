@@ -397,6 +397,11 @@ end
         # multi-criteria (AND logic)
         @test findlegs(q; dir='-', itag="op")           == [3]
         @test findlegs(q; dir='-', itag="op", rev=true) == [1, 2]
+
+        q_tagsets = QSpace(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
+        @test findlegs(q_tagsets; itag="aaa,bbb") == [1]
+        @test findlegs(q_tagsets; itag=("aaa,bbb", "aaa,ccc")) == [1, 2]
+        @test findlegs(q_tagsets; itag=["aaa,ccc", "bbb,ccc"]) == [2, 3]
     end
 
     # ── findleg ───────────────────────────────────────────────────────────────
@@ -408,6 +413,85 @@ end
         @test findleg(q; dir='+', rev=true)   == 2   # first non-'+' leg
         @test findleg(q; plev=0, rev=true)   === nothing  # no leg with plev≠0
         @test findleg(q; itag="nope")        === nothing
+
+        q_tagsets = QSpace(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
+        @test findleg(q_tagsets; itag=("aaa,ccc", "bbb,ccc")) == 2
+        @test findleg(q_tagsets; itag=["missing", "bbb,ccc"]) == 3
+    end
+
+    @testset "matching / unmatching" begin
+        q_adj = q'
+
+        @test matching(q, q_adj) == 1
+        @test matchings(q, q_adj) == [1, 2, 3]
+        @test unmatching(q, q_adj) === nothing
+        @test unmatchings(q, q_adj) == Int[]
+
+        q_selective = QSpace(q_adj, (
+            QIndex("site1", '-', 1, 0, false),
+            QIndex("site2", '+', 0, 0, true),
+            QIndex("op", '+', 0, 7, false),
+        ))
+
+        @test matching(q, q_selective) == 3
+        @test matchings(q, q_selective) == [3]
+        @test unmatching(q, q_selective) == 1
+        @test unmatchings(q, q_selective) == [1, 2]
+
+        @test matching(q, q_selective; dir='+') === nothing
+        @test matchings(q, q_selective; itag="op") == [3]
+        @test matchings(q, q_selective; dir='+', rev=true) == [3]
+        @test unmatching(q, q_selective; itag="op") === nothing
+        @test unmatchings(q, q_selective; dir='-', rev=true) == [1]
+
+        q_match_locked = lock(q, 3)
+        q_unmatch_locked = lock(q, 1)
+        @test matchings(q_match_locked, q_selective; lock=1) == [3]
+        @test matchings(q_match_locked, q_selective; lock=0) == Int[]
+        @test unmatchings(q_unmatch_locked, q_selective; lock=1) == [1]
+
+        q_tagsets = QSpace(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
+        q_tagsets_adj = q_tagsets'
+        @test matchings(q_tagsets, q_tagsets_adj; itag=("aaa,bbb", "bbb,ccc")) == [1, 3]
+        @test matchings(q_tagsets, q_tagsets_adj; itag=["aaa,ccc", "bbb,ccc"], rev=true) == [1]
+    end
+
+    @testset "contractable / uncontractable" begin
+        q_adj = q'
+
+        @test contractable(q, q_adj) == 1
+        @test contractables(q, q_adj) == [1, 2, 3]
+        @test uncontractable(q, q_adj) === nothing
+        @test uncontractables(q, q_adj) == Int[]
+
+        q_selective = QSpace(q_adj, (
+            QIndex("site1", '-', 1, 0, false),
+            QIndex("site2", '+', 0, 0, true),
+            QIndex("op", '+', 0, 7, false),
+        ))
+
+        @test contractable(q, q_selective) === nothing
+        @test contractables(q, q_selective) == Int[]
+        @test uncontractable(q, q_selective) == 1
+        @test uncontractables(q, q_selective) == [1, 2, 3]
+
+        q_a_locked = lock(q, 3)
+        q_b_locked = lock(q_adj, 2)
+        @test contractables(q_a_locked, q_adj) == [1, 2]
+        @test uncontractables(q_a_locked, q_adj) == [3]
+        @test contractables(q, q_b_locked) == [1, 3]
+        @test uncontractables(q, q_b_locked) == [2]
+
+        @test contractables(q, q_adj; dir='-') == [2, 3]
+        @test contractables(q, q_adj; itag="op") == [3]
+        @test contractables(q_a_locked, q_adj; lock=1) == Int[]
+        @test uncontractables(q_a_locked, q_adj; lock=1) == [3]
+        @test uncontractables(q, q_b_locked; dir='+', rev=true) == [2]
+
+        q_tagsets = QSpace(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
+        q_tagsets_adj = q_tagsets'
+        @test contractables(q_tagsets, q_tagsets_adj; itag=("aaa,bbb", "aaa,ccc")) == [1, 2]
+        @test uncontractables(lock(q_tagsets, 2), q_tagsets_adj; itag=["aaa,ccc", "bbb,ccc"]) == [2]
     end
 
     @testset "Itag predicate equality" begin
@@ -1063,6 +1147,113 @@ end
     @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => -(dim_reorder + 1)])
     @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => :, sector_reorder => 1])
     @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => :, (sector_full, :)])
+end
+
+@testset "getsub sector predicate" begin
+    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    q0 = getLocalSpace(option)
+    candidate = nothing
+    for base in values(q0)
+        for legcand in 1:length(base.spaces)
+            qcand = oplus([base, 2.0 * base, 3.0 * base], legcand)
+            length(qcand.spaces[legcand]) >= 2 || continue
+            candidate = (q = qcand, leg = legcand, target_sector = qcand.spaces[legcand][1][1])
+            break
+        end
+        !isnothing(candidate) && break
+    end
+
+    @test !isnothing(candidate)
+
+    q = candidate.q
+    leg = candidate.leg
+    target_sector = candidate.target_sector
+
+    row_sector(qs::QSpace, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(qs.symm))
+    expected_rows = [r for r in q.rows if row_sector(q, r) == target_sector]
+    expected_leg_spaces = [entry for entry in q.spaces[leg] if entry[1] == target_sector]
+
+    q_exact = QSpaces.getsub(q, leg, sector -> sector == target_sector)
+    @test _rows_equal(q_exact.rows, expected_rows)
+    @test q_exact.spaces[leg] == expected_leg_spaces
+    for other_leg in 1:length(q.spaces)
+        other_leg == leg && continue
+        @test q_exact.spaces[other_leg] == q.spaces[other_leg]
+    end
+
+    q_component = QSpaces.getsub(q, leg, sector -> sector[1] == target_sector[1])
+    expected_component_rows = [r for r in q.rows if row_sector(q, r)[1] == target_sector[1]]
+    expected_component_spaces = [entry for entry in q.spaces[leg] if entry[1][1] == target_sector[1]]
+    @test _rows_equal(q_component.rows, expected_component_rows)
+    @test q_component.spaces[leg] == expected_component_spaces
+
+    q_preserved = QSpaces.getsub(q, leg, sector -> sector == target_sector; preserve_space=true)
+    @test _rows_equal(q_preserved.rows, expected_rows)
+    @test q_preserved.spaces == q.spaces
+    @test all(q_preserved.spaces[legidx] !== q.spaces[legidx] for legidx in 1:length(q.spaces))
+
+    q_none = QSpaces.getsub(q, leg, _ -> false)
+    @test isempty(q_none.rows)
+    @test isempty(q_none.spaces[leg])
+    for other_leg in 1:length(q.spaces)
+        other_leg == leg && continue
+        @test q_none.spaces[other_leg] == q.spaces[other_leg]
+    end
+
+    q_none_preserved = QSpaces.getsub(q, leg, _ -> false; preserve_space=true)
+    @test isempty(q_none_preserved.rows)
+    @test q_none_preserved.spaces == q.spaces
+
+    @test_throws ArgumentError QSpaces.getsub(q, 0, _ -> true)
+end
+
+@testset "getsub multi-leg sector predicate" begin
+    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    base = getLocalSpace(option, ("sel,left", "sel,right", "op")).I
+    q = oplus([base, 2.0 * base, 3.0 * base], (1, 2))
+    legs = (1, 2)
+
+    @test length(q.spaces[1]) >= 2
+    @test length(q.spaces[2]) >= 2
+    @test !isempty(q.rows)
+
+    row_sector_at(r, leg) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(q.symm))
+    allowed = Set{Any}([row_sector_at(q.rows[1], 1), row_sector_at(q.rows[1], 2)])
+    pred = sector -> sector in allowed
+
+    expected_rows = [
+        r for r in q.rows
+        if all(row_sector_at(r, leg) in allowed for leg in legs)
+    ]
+    expected_spaces_1 = [entry for entry in q.spaces[1] if entry[1] in allowed]
+    expected_spaces_2 = [entry for entry in q.spaces[2] if entry[1] in allowed]
+
+    q_multi = QSpaces.getsub(q, legs, pred)
+    @test _rows_equal(q_multi.rows, expected_rows)
+    @test q_multi.spaces[1] == expected_spaces_1
+    @test q_multi.spaces[2] == expected_spaces_2
+    @test q_multi.spaces[3] == q.spaces[3]
+
+    q_multi_range = QSpaces.getsub(q, 1:2, pred)
+    @test _rows_equal(q_multi_range.rows, q_multi.rows)
+    @test q_multi_range.spaces == q_multi.spaces
+
+    q_multi_preserved = QSpaces.getsub(q, legs, pred; preserve_space=true)
+    @test _rows_equal(q_multi_preserved.rows, expected_rows)
+    @test q_multi_preserved.spaces == q.spaces
+
+    q_multi_kw = QSpaces.getsub(q, pred; itag="sel")
+    @test _rows_equal(q_multi_kw.rows, q_multi.rows)
+    @test q_multi_kw.spaces == q_multi.spaces
+
+    q_multi_kw_preserved = QSpaces.getsub(q, pred; itag="sel", preserve_space=true)
+    @test _rows_equal(q_multi_kw_preserved.rows, q_multi.rows)
+    @test q_multi_kw_preserved.spaces == q.spaces
+
+    @test_throws ArgumentError QSpaces.getsub(q, Int[], pred)
+    @test_throws ArgumentError QSpaces.getsub(q, (1, 1), pred)
+    @test_throws ArgumentError QSpaces.getsub(q, (0, 1), pred)
+    @test_throws ArgumentError QSpaces.getsub(q, pred; itag="missing")
 end
 
 @testset "getvac" begin
