@@ -181,14 +181,38 @@ function _select_eig_rows(template::QSpace{T, 2, N, RD},
     return QSpace(template.symm, rows_out, template.inds, spaces_out)
 end
 
+function _effective_eigen_keep_count(eig_entries,
+                                     Nkeep::Integer,
+                                     tol::Real;
+                                     hermitian::Bool)
+    nkeep_eff = min(Nkeep, length(eig_entries))
+    if tol > 0 && 0 < nkeep_eff < length(eig_entries)
+        extra = min(length(eig_entries) - nkeep_eff, max(1, ceil(Int, Nkeep * Float64(tol))))
+        window_end = nkeep_eff + extra
+        sort_vals = [_eig_sort_value(eig_entries[i][1], hermitian) for i in 1:window_end]
+        if length(sort_vals) > 1
+            _, nkeep_eff = findmax(diff(sort_vals))
+        end
+    end
+    return nkeep_eff
+end
+
 function _split_eigen_result(result::EigenResult, Nkeep::Integer;
                              hermitian::Bool = isnothing(result.V_inv))
+    return _split_eigen_result(result, Nkeep, 0.0; hermitian=hermitian)
+end
+
+function _split_eigen_result(result::EigenResult,
+                             Nkeep::Integer,
+                             tol::Real;
+                             hermitian::Bool = isnothing(result.V_inv))
     @assert Nkeep >= 0 "Nkeep must be non-negative"
+    @assert isfinite(tol) "tol must be finite"
 
     eig_entries = copy(result.eig_list)
     sort!(eig_entries; by = x -> _eig_sort_value(x[1], hermitian))
 
-    nkeep_eff = min(Nkeep, length(eig_entries))
+    nkeep_eff = _effective_eigen_keep_count(eig_entries, Nkeep, tol; hermitian=hermitian)
     kept_entries = eig_entries[1:nkeep_eff]
     discarded_entries = eig_entries[nkeep_eff+1:end]
 
@@ -434,17 +458,29 @@ function eigen_full(q::QSpace{T, 2, N, RD},
 end
 
 """
-    discard_eigen(result::EigenResult, Nkeep, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))
+    discard_eigen(result::EigenResult, Nkeep, tol, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))
 
 Keep the `Nkeep` smallest eigenvalues, ignoring degeneracy, and return two
 `EigenResult` objects: the kept part and the discarded part.
+
+If `tol > 0`, inspect up to `ceil(Int, Nkeep * tol)` additional eigenvalues and
+move the truncation to the largest adjacent gap within that enlarged window.
 """
+function discard_eigen(result::EigenResult,
+                       Nkeep::Integer,
+                       tol::Real,
+                       kept_tag::AbstractString = "eigK",
+                       discarded_tag::AbstractString = "eigD";
+                       hermitian::Bool = isnothing(result.V_inv))
+    kept, discarded = _split_eigen_result(result, Nkeep, tol; hermitian=hermitian)
+    return _retag_eigen_result(kept, kept_tag), _retag_eigen_result(discarded, discarded_tag)
+end
+
 function discard_eigen(result::EigenResult,
                        Nkeep::Integer,
                        kept_tag::AbstractString = "eigK",
                        discarded_tag::AbstractString = "eigD";
                        hermitian::Bool = isnothing(result.V_inv))
-    kept, discarded = _split_eigen_result(result, Nkeep; hermitian=hermitian)
-    return _retag_eigen_result(kept, kept_tag), _retag_eigen_result(discarded, discarded_tag)
+    return discard_eigen(result, Nkeep, 0.1, kept_tag, discarded_tag; hermitian=hermitian)
 end
 

@@ -132,6 +132,11 @@ end
     test_discard_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
+@testset "eig truncation tol of QSpace" begin
+    test_discard_eigen_tol(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_discard_eigen_tol(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
 @testset "eig full discard of QSpace" begin
     test_eigen_full_discard(FermionSOptions(U1, SU{2}, nothing, 1))
     test_eigen_full_discard(FermionSOptions(U1, SU{2}, SU{3}, 3))

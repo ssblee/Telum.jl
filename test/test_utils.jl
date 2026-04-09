@@ -856,7 +856,7 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     A = QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
 
     result = eigen(A; hermitian = true)
-    kept, discarded = discard_eigen(result, removed_dim, "eigK", "eigD"; hermitian = true)
+    kept, discarded = discard_eigen(result, removed_dim, 0.0, "eigK", "eigD"; hermitian = true)
     expected_cgp = (result.D.inds[1].dir, result.D.inds[2].dir) == ('+', '-') ? (1, 2) : (2, 1)
     eig_tag = result.D.inds[1].itags
     v_orig_leg = only(findall(i -> result.V.inds[i].itags != eig_tag, 1:2))
@@ -884,7 +884,7 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     @test all(ql != removed_sector for (ql, _) in discarded.D.spaces[1])
 
     result_full = eigen_full(A)
-    kept_full, discarded_full = discard_eigen(result_full, removed_dim, "eigKf", "eigDf"; hermitian = false)
+    kept_full, discarded_full = discard_eigen(result_full, removed_dim, 0.0, "eigKf", "eigDf"; hermitian = false)
     eig_tag_full = result_full.D.inds[1].itags
     v_full_orig_leg = only(findall(i -> result_full.V.inds[i].itags != eig_tag_full, 1:2))
     v_full_eig_leg = only(findall(i -> result_full.V.inds[i].itags == eig_tag_full, 1:2))
@@ -924,7 +924,7 @@ function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     V = result.V
     eig_list = result.eig_list
     Nkeep = min(3, length(eig_list))
-    kept, discarded = discard_eigen(result, Nkeep, "eigK", "eigD"; hermitian = true)
+    kept, discarded = discard_eigen(result, Nkeep, 0.0, "eigK", "eigD"; hermitian = true)
     Vkeep = kept.V
     Dkeep = kept.D
     eig_keep = kept.eig_list
@@ -1000,6 +1000,40 @@ function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     arr_total = Array(to_sparse_array(rec_total))
     arr_A = Array(to_sparse_array(A))
     @test norm(arr_A - arr_total) / max(norm(arr_A), 1.0) < tol
+end
+
+function test_discard_eigen_tol(option::LocalSpaceOptions)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
+    A = copy(q.I)
+
+    dims = [size(r.RMT.data, 1) for r in A.rows]
+    total_dim = sum(dims)
+    @assert total_dim >= 3
+
+    vals_all = [1.0, 10.0, 10.1]
+    append!(vals_all, (30.0 + i for i in 0:total_dim-length(vals_all)-1))
+
+    offset = 1
+    for r in A.rows
+        n = size(r.RMT.data, 1)
+        vals = vals_all[offset:offset+n-1]
+        r.RMT.data .= reshape(Matrix(Diagonal(vals)), size(r.RMT.data))
+        offset += n
+    end
+
+    result = eigen(A; hermitian = true)
+    kept_exact, discarded_exact = discard_eigen(result, 2, 0.0, "eigK0", "eigD0"; hermitian = true)
+    kept_tol, discarded_tol = discard_eigen(result, 2, 0.5, "eigKT", "eigDT"; hermitian = true)
+
+    @test length(kept_exact.eig_list) == 2
+    @test length(discarded_exact.eig_list) + length(kept_exact.eig_list) == length(result.eig_list)
+
+    @test length(kept_tol.eig_list) == 1
+    @test length(discarded_tol.eig_list) + length(kept_tol.eig_list) == length(result.eig_list)
+
+    @test [x[1] for x in kept_exact.eig_list] ≈ [1.0, 10.0]
+    @test [x[1] for x in kept_tol.eig_list] ≈ [1.0]
+    @test [x[1] for x in discarded_tol.eig_list][1:2] ≈ [10.0, 10.1]
 end
 
 # ─── test_eigen_full_discard ─────────────────────────────────────────────────
