@@ -12,6 +12,8 @@ function FermionS_basicops(N::Int)
     NN = Matrix{SparseMatrixCSC{Int}}(undef, 2, N)
     # SS[n]: spin lowering operator for channel n
     SS = Vector{SparseMatrixCSC{Int}}(undef, N)
+    # CC[n]: charge lowering operator for channel n
+    CC = Vector{SparseMatrixCSC{Int}}(undef, N)
     
     # Total number of fermionic modes: 2 spins × N channels
     total_modes = 2 * N
@@ -26,6 +28,12 @@ function FermionS_basicops(N::Int)
         mats = vcat([I2 for _=1:2*(i-1)], [ss], [I2 for _=1:2*(N-i)])
         SS[i] = reduce(⊗, mats)
         @assert SS[i] == FF[2, i]' * FF[1, i]
+    end
+
+    for i in 1:N
+        mats = vcat([I2 for _=1:2*(i-1)], [f4down * f4up], [I2 for _=1:2*(N-i)])
+        CC[i] = reduce(⊗, mats)
+        @assert CC[i] == FF[2, i] * FF[1, i]
     end
 
     SZ = Vector{SparseMatrixCSC{Int}}(undef, N)
@@ -74,36 +82,37 @@ function FermionS_basicops(N::Int)
         end
     end
 
-    return (; FF, NN, SS, SZ, chan_l, chan_z)
+    return (; FF, NN, SS, CC, SZ, chan_l, chan_z)
 end
 
 # For now, we only implement U1 charge relative to half-filling
 function charge_weights(opts::FermionSOptions, basic_ops)
-    # TODO: generalize to another charge symmetry
-    @assert opts.charge_symm == U1
     nchan = opts.nchannels
     charge = Int.(diag(sum(basic_ops.NN)) .- nchan)
     return [(Int(i),) for i in charge]
 end
 
 function charge_lowering(opts::FermionSOptions, basic_ops)
-    # TODO: generalize to another charge symmetry
-    @assert opts.charge_symm == U1
-    return Matrix{Int}[]
+    if opts.charge_symm == SU{2} return [sum(basic_ops.CC)]
+    elseif opts.charge_symm == U1 return Matrix{Int}[]
+    else error("Unsupported charge symmetry") end
 end
 
-# For now, we only implement SU(2) spin symmetry
+# This covers U1 and SU(2) spin symmetries since the weights are 
+# just the total spin-z component
 function spin_weights(opts::FermionSOptions, basic_ops)
-    # TODO: generalize to another spin symmetry
-    @assert opts.spin_symm == SU{2}
     spin_z = Int.(diag(sum(basic_ops.SZ)))
     return [(Int(i),) for i in spin_z]
 end
 
+# For U1 spin symmetry, there is no lowering operator.
+# For SU(2) spin symmetry, the lowering operator is 
+# the sum of all single-channel spin lowering operators.
 function spin_lowering(opts::FermionSOptions, basic_ops)
-    # TODO: generalize to another spin symmetry
-    @assert opts.spin_symm == SU{2}
-    return [sum(basic_ops.SS)]
+    @assert opts.spin_symm in [SU{2}, U1]
+    if opts.spin_symm == SU{2} return [sum(basic_ops.SS)]
+    elseif opts.spin_symm == U1 return Matrix{Int}[]
+    else error("Unsupported spin symmetry") end
 end
 
 # For now, we only implement SU(N) channel symmetry
@@ -156,8 +165,18 @@ function getSymmetryInfo(opts::FermionSOptions)
 
     totalN = diag(sum(basic_ops.NN[i] for i in 1:2*N))
     mwirops = Dict{Symbol, Tuple{AbstractMatrix{Int}, Float64}}()
-    mwirops[:S] = (sum(basic_ops.SS[i]' for i in 1:N), 1/sqrt(2))
-    mwirops[:F] = (basic_ops.FF[2, N], 1.0)
+    if opts.spin_symm == SU{2}
+        mwirops[:S] = (sum(basic_ops.SS[i]' for i in 1:N), 1/sqrt(2))
+    elseif opts.spin_symm == U1 || opts.spin_symm === nothing
+        mwirops[:Sp] = (sum(basic_ops.SS[i]' for i in 1:N), 1/sqrt(2))
+        mwirops[:Sz] = (sum(basic_ops.SZ[i] for i in 1:N), 1/2)
+        mwirops[:Sm] = (sum(basic_ops.SS[i] for i in 1:N), 1/sqrt(2))
+    else error("Unsupported spin symmetry") end
+    if opts.charge_symm == SU{2}
+        mwirops[:F] = (sum(basic_ops.FF[1, i]' for i in 1:N), 1.0)
+    elseif opts.charge_symm == U1
+        mwirops[:F] = (basic_ops.FF[2, N], 1.0)
+    elseif opts.charge_symm === nothing error("Not implemented yet") end
     mwirops[:Z] = (diagm([i%2==0 ? 1 : -1 for i in totalN]), 1.0)
     mwirops[:I] = (sparse(I, 4^N, 4^N), 1.0)
 

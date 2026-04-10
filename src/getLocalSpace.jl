@@ -7,7 +7,10 @@
 # Internal pipeline (common to all option types):
 #
 #   1. getSymmetryInfo(opts)
-#        └─► (symm_tuple, weights, lowering_ops)
+#        └─► (symm_tuple, weights, lowering_ops, mwirops)
+#              |
+#              ▼
+#      validate_cross_symmetry_commutation(...)
 #              |
 #              ▼
 #   2. decompose_space(...)          [decomp_space.jl]
@@ -32,21 +35,106 @@
 
 """
     getSymmetryInfo(opts::LocalSpaceOptions)
-        -> (symm, weights, lowering_ops)
+        -> (symm, weights, lowering_ops, mwirops)
 
 Return the ingredients needed to decompose the local Hilbert space into
 symmetry sectors:
 
 - `symm`         – `NTuple{N, Type{<:Symmetry}}` listing the relevant symmetries.
 - `weights`      – `NTuple{N, Vector}`, weight (charge) of each basis state for
-                   each symmetry.
-- `z_ops`        – `NTuple{N, Vector{<:AbstractMatrix}}`, diagonal Cartan / charge
-                   operators (one per symmetry; U(1) has one, SU(2) has one, SU(3) two).
+                   each symmetry. These are interpreted as the diagonals of the
+                   Cartan / charge operators for that symmetry.
 - `lowering_ops` – `NTuple{N, Vector{<:AbstractMatrix}}`, lowering operators
                    (empty vector for purely abelian symmetries).
+- `mwirops`      – `Dict{Symbol, Tuple{AbstractMatrix, Float64}}` mapping the
+                   returned operator names to their maximal-weight operator and
+                   overall prefactor.
 """
 function getSymmetryInfo(opts::LocalSpaceOptions)
     error("getSymmetryInfo not implemented for $(typeof(opts))")
+end
+
+function _symmetry_name(symm::Type{<:Symmetry})
+    return totxt(symm)
+end
+
+function _zops_from_weights(symm::Type{<:Symmetry},
+    weights::AbstractVector{<:Tuple{Vararg{Int}}},
+    symm_idx::Int)
+
+    isempty(weights) && throw(ArgumentError(
+        "Symmetry $symm_idx ($(_symmetry_name(symm))) must provide at least one weight tuple"))
+
+    nz = nzops(symm)
+    for (state_idx, weight) in pairs(weights)
+        length(weight) == nz || throw(ArgumentError(
+            "Weight tuple $state_idx for symmetry $symm_idx ($(_symmetry_name(symm))) " *
+            "has $(length(weight)) entries, expected $nz"))
+    end
+
+    return [spdiagm(0 => Int[weight[zidx] for weight in weights]) for zidx in 1:nz]
+end
+
+function _commutator_iszero(A::AbstractMatrix, B::AbstractMatrix)
+    comm_res = sparse(comm(A, B))
+    dropzeros!(comm_res)
+    return nnz(comm_res) == 0
+end
+
+function _symmetry_ops_for_commutation_check(symm::Type{<:Symmetry},
+    weights::AbstractVector{<:Tuple{Vararg{Int}}},
+    lowering_ops::AbstractVector{<:AbstractMatrix},
+    symm_idx::Int,
+    spdim::Int)
+
+    ops = Tuple{String, AbstractMatrix}[]
+    for (zidx, zop) in pairs(_zops_from_weights(symm, weights, symm_idx))
+        size(zop) == (spdim, spdim) || throw(ArgumentError(
+            "Weight-derived z-operator $zidx for symmetry $symm_idx ($(_symmetry_name(symm))) " *
+            "has size $(size(zop)), expected ($spdim, $spdim)"))
+        push!(ops, ("weight[$zidx]", zop))
+    end
+
+    for (lopidx, lop) in pairs(lowering_ops)
+        lop_sparse = sparse(lop)
+        size(lop_sparse) == (spdim, spdim) || throw(ArgumentError(
+            "Lowering operator $lopidx for symmetry $symm_idx ($(_symmetry_name(symm))) " *
+            "has size $(size(lop_sparse)), expected ($spdim, $spdim)"))
+        push!(ops, ("lowering[$lopidx]", lop_sparse))
+    end
+    return ops
+end
+
+function _validate_cross_symmetry_commutation(symm::NTuple{N, Any},
+    weights::NTuple{N, Vector{<:Tuple{Vararg{Int}}}},
+    lowering_ops::NTuple{N, Vector{<:AbstractMatrix}}) where N
+
+    N <= 1 && return nothing
+
+    spdim = length(weights[1])
+    ops_by_symmetry = Vector{Vector{Tuple{String, AbstractMatrix}}}(undef, N)
+    for i in 1:N
+        length(weights[i]) == spdim || throw(ArgumentError(
+            "All symmetries must act on the same local-space dimension; " *
+            "symmetry $i ($(_symmetry_name(symm[i]))) has $(length(weights[i])) weights, expected $spdim"))
+        ops_by_symmetry[i] = _symmetry_ops_for_commutation_check(
+            symm[i], weights[i], lowering_ops[i], i, spdim)
+    end
+
+    for i in 1:N-1
+        for j in i+1:N
+            for (label_i, op_i) in ops_by_symmetry[i]
+                for (label_j, op_j) in ops_by_symmetry[j]
+                    _commutator_iszero(op_i, op_j) && continue
+                    throw(ArgumentError(
+                        "Symmetry operations for symmetry $i ($(_symmetry_name(symm[i]))) " *
+                        "and symmetry $j ($(_symmetry_name(symm[j]))) must commute, " *
+                        "but $label_i and $label_j do not"))
+                end
+            end
+        end
+    end
+    return nothing
 end
 
 # ── Generic pipeline ─────────────────────────────────────────────────────────
@@ -110,6 +198,7 @@ function getLocalSpace(opts::LocalSpaceOptions,
     tags::Tuple{Vararg{AbstractString, 3}}=("", "", ""))
     # Step 1 – symmetry operators that define the local Hilbert space structure
     symm, weights, lowering_ops, mwirops = getSymmetryInfo(opts)
+    _validate_cross_symmetry_commutation(symm, weights, lowering_ops)
 
     # Step 2 – decompose local space into symmetry sectors
     ortho_vecs, space_list = decompose_space(symm, weights, lowering_ops)

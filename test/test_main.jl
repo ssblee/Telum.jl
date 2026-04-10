@@ -20,6 +20,32 @@ end
     test_spin_local_space()
 end
 
+struct NonCommutingSymmetryOptions <: LocalSpaceOptions end
+
+function QSpaces.getSymmetryInfo(::NonCommutingSymmetryOptions)
+    symm = (U1, SU{2})
+    weights = ([(1,), (-1,)], [(1,), (-1,)])
+    lowering_ops = (Matrix{Int}[], [sparse([0 0; 1 0])])
+
+    mwirops = Dict{Symbol, Tuple{AbstractMatrix{Int}, Float64}}()
+    mwirops[:I] = (sparse(I, 2, 2), 1.0)
+    return symm, weights, lowering_ops, mwirops
+end
+
+@testset "getLocalSpace validates cross-symmetry commutation" begin
+    err = try
+        getLocalSpace(NonCommutingSymmetryOptions())
+        nothing
+    catch caught
+        caught
+    end
+
+    @test err isa ArgumentError
+    @test occursin("must commute", sprint(showerror, err))
+    @test occursin("weight[1]", sprint(showerror, err))
+    @test occursin("lowering[1]", sprint(showerror, err))
+end
+
 @testset "auto contract requires matching spaces" begin
     test_contract_requires_matching_spaces_in_star(
         FermionSOptions(U1, SU{2}, nothing, 1))
