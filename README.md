@@ -1,7 +1,7 @@
-# QSpaces.jl
+﻿# QSpaces.jl
 
 `QSpaces.jl` is the tensor-space layer extracted from `CGTfromInts`. It owns
-`QSpace`, `QTensor`, local-space construction, tensor contraction, SVD/eigen
+`QSpace`, `LurTensor`, local-space construction, tensor contraction, SVD/eigen
 helpers, and QIndex manipulation utilities.
 
 ## Installation
@@ -36,3 +36,4 @@ using Pkg
 Pkg.develop(path="../LurCGT.jl")
 Pkg.test()
 ```
+

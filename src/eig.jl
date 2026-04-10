@@ -1,4 +1,4 @@
-# ─── eigen ────────────────────────────────────────────────────────────────────
+﻿# ─── eigen ────────────────────────────────────────────────────────────────────
 #
 # Perform symmetry-adapted eigendecomposition of a rank-2 QSpace object.
 #
@@ -43,7 +43,7 @@ function _eig_identity_cgrs(symm::NTuple{N, Any},
     return ntuple(N) do n
         ql = sector_qlabels[n]
         dim_n = dimension(symm[n], ql)
-        wmat_n = QTensor([sqrt(Float64(dim_n));;])
+        wmat_n = LurTensor([sqrt(Float64(dim_n));;])
         CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
     end
 end
@@ -66,7 +66,7 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
         end
 
         cgrs = _eig_identity_cgrs(symm, sector_qlabels, cgp)
-        rmt_eye = QTensor(reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...))
+        rmt_eye = LurTensor(reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...))
 
         push!(rows_V, row(cgrs, rmt_eye))
         if !isnothing(rows_Vinv)
@@ -138,11 +138,11 @@ function _select_eig_rows(template::QSpace{T, 2, N, RD},
         mat = reshape(rmt, s1, s2)
 
         rmt_new = if mode == :diag
-            QTensor(reshape(mat[idxs_sorted, idxs_sorted], length(idxs_sorted), length(idxs_sorted), ones(Int, N)...))
+            LurTensor(reshape(mat[idxs_sorted, idxs_sorted], length(idxs_sorted), length(idxs_sorted), ones(Int, N)...))
         elseif mode == :cols
-            QTensor(reshape(mat[:, idxs_sorted], s1, length(idxs_sorted), ones(Int, N)...))
+            LurTensor(reshape(mat[:, idxs_sorted], s1, length(idxs_sorted), ones(Int, N)...))
         elseif mode == :rows
-            QTensor(reshape(mat[idxs_sorted, :], length(idxs_sorted), s2, ones(Int, N)...))
+            LurTensor(reshape(mat[idxs_sorted, :], length(idxs_sorted), s2, ones(Int, N)...))
         else
             error("Unknown eig row selection mode: $mode")
         end
@@ -186,28 +186,27 @@ function _effective_eigen_keep_count(eig_entries,
                                      tol::Real;
                                      hermitian::Bool)
     nkeep_eff = min(Nkeep, length(eig_entries))
-    if tol > 0 && 0 < nkeep_eff < length(eig_entries)
-        extra = min(length(eig_entries) - nkeep_eff, max(1, ceil(Int, Nkeep * Float64(tol))))
-        window_end = nkeep_eff + extra
-        sort_vals = [_eig_sort_value(eig_entries[i][1], hermitian) for i in 1:window_end]
-        if length(sort_vals) > 1
-            _, nkeep_eff = findmax(diff(sort_vals))
-        end
+    if !(tol > 0) || nkeep_eff == 0 || nkeep_eff == length(eig_entries)
+        return nkeep_eff
     end
-    return nkeep_eff
-end
 
-function _split_eigen_result(result::EigenResult, Nkeep::Integer;
-                             hermitian::Bool = isnothing(result.V_inv))
-    return _split_eigen_result(result, Nkeep, 0.0; hermitian=hermitian)
+    extra = min(length(eig_entries) - nkeep_eff, floor(Int, Nkeep * Float64(tol)))
+    extra == 0 && return nkeep_eff
+
+    candidate_end = nkeep_eff + extra
+    candidate_end == length(eig_entries) && return candidate_end
+
+    sort_vals = [_eig_sort_value(eig_entries[i][1], hermitian) for i in nkeep_eff:candidate_end+1]
+    _, gap_idx = findmax(diff(sort_vals))
+    return nkeep_eff + gap_idx - 1
 end
 
 function _split_eigen_result(result::EigenResult,
-                             Nkeep::Integer,
-                             tol::Real;
+                             Nkeep::Integer;
+                             tol::Real=0.1,
                              hermitian::Bool = isnothing(result.V_inv))
     @assert Nkeep >= 0 "Nkeep must be non-negative"
-    @assert isfinite(tol) "tol must be finite"
+    @assert isfinite(tol) && tol >= 0 "tol must be finite and nonnegative"
 
     eig_entries = copy(result.eig_list)
     sort!(eig_entries; by = x -> _eig_sort_value(x[1], hermitian))
@@ -290,14 +289,14 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
         end
 
-        rmt_D = QTensor(reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...))
-        rmt_V = QTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
+        rmt_D = LurTensor(reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...))
+        rmt_V = LurTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
 
         cgrs_D = ntuple(N) do n
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
             dim_n = dimension(symm[n], ql)
-            wmat_n = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
@@ -305,7 +304,7 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
             dim_n = dimension(symm[n], ql)
-            wmat_n = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
@@ -393,15 +392,15 @@ function eigen_full(q::QSpace{T, 2, N, RD},
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
         end
 
-        rmt_D    = QTensor(reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...))
-        rmt_V    = QTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
-        rmt_Vinv = QTensor(reshape(eigenvectors_inv, chi, sL, ones(Int, N)...))
+        rmt_D    = LurTensor(reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...))
+        rmt_V    = LurTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
+        rmt_Vinv = LurTensor(reshape(eigenvectors_inv, chi, sL, ones(Int, N)...))
 
         cgrs_D = ntuple(N) do n
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
             dim_n = dimension(symm[n], ql)
-            wmat_n = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
@@ -409,7 +408,7 @@ function eigen_full(q::QSpace{T, 2, N, RD},
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
             dim_n = dimension(symm[n], ql)
-            wmat_n = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
@@ -417,7 +416,7 @@ function eigen_full(q::QSpace{T, 2, N, RD},
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
             dim_n = dimension(symm[n], ql)
-            wmat_n = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
@@ -463,8 +462,10 @@ end
 Keep the `Nkeep` smallest eigenvalues, ignoring degeneracy, and return two
 `EigenResult` objects: the kept part and the discarded part.
 
-If `tol > 0`, inspect up to `ceil(Int, Nkeep * tol)` additional eigenvalues and
-move the truncation to the largest adjacent gap within that enlarged window.
+If `tol > 0`, keep at least `Nkeep` eigenvalues and consider up to
+`floor(Int, Nkeep * tol)` additional next-smallest eigenvalues. The actual cut is
+chosen from that extra window by the largest adjacent gap, so the truncation can
+move later but never earlier than `Nkeep`.
 """
 function discard_eigen(result::EigenResult,
                        Nkeep::Integer,
@@ -472,7 +473,7 @@ function discard_eigen(result::EigenResult,
                        kept_tag::AbstractString = "eigK",
                        discarded_tag::AbstractString = "eigD";
                        hermitian::Bool = isnothing(result.V_inv))
-    kept, discarded = _split_eigen_result(result, Nkeep, tol; hermitian=hermitian)
+    kept, discarded = _split_eigen_result(result, Nkeep; tol=tol, hermitian=hermitian)
     return _retag_eigen_result(kept, kept_tag), _retag_eigen_result(discarded, discarded_tag)
 end
 
@@ -480,7 +481,9 @@ function discard_eigen(result::EigenResult,
                        Nkeep::Integer,
                        kept_tag::AbstractString = "eigK",
                        discarded_tag::AbstractString = "eigD";
+                       tol::Real=0.1,
                        hermitian::Bool = isnothing(result.V_inv))
-    return discard_eigen(result, Nkeep, 0.1, kept_tag, discarded_tag; hermitian=hermitian)
+    return discard_eigen(result, Nkeep, tol, kept_tag, discarded_tag; hermitian=hermitian)
 end
+
 

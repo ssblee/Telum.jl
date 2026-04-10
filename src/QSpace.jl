@@ -1,6 +1,6 @@
 ﻿using Printf
 using LinearAlgebra
-include("QTensor.jl")
+include("LurTensor.jl")
 include("utils.jl")
 include("localspaces/localspaces.jl")
 
@@ -121,14 +121,14 @@ change_green(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, !idx.
 struct CGR{QD, NZ}
     symm::Any   # symmetry type, e.g. SU{2}, U1
     qlabels::NTuple{QD, NTuple{NZ, Int}}
-    wmat::QTensor{Float64, 2}
+    wmat::LurTensor{Float64, 2}
     cgp::NTuple{QD, Int}
     # (# incoming legs, # outgoing legs); sum == QD
     legdir::Tuple{Int, Int}  
 end
 
 # Constructor for QD=0 case: infer NZ from the symmetry type
-function CGR(symm::Type{S}, qlabels::Tuple{}, wmat::QTensor{Float64, 2}, 
+function CGR(symm::Type{S}, qlabels::Tuple{}, wmat::LurTensor{Float64, 2}, 
              cgp::Tuple{}, legdir::Tuple{Int, Int}) where {S}
     NZ = nzops(S)
     CGR{0, NZ}(symm, qlabels, wmat, cgp, legdir)
@@ -136,7 +136,7 @@ end
 
 struct row{T, QD, N, RD}
     cgrs::NTuple{N, CGR{QD}}
-    RMT::QTensor{T, RD}
+    RMT::LurTensor{T, RD}
 end
 
 # ─── Pretty-printing helpers ────────────────────────────────────────────────
@@ -285,12 +285,12 @@ function get_rows(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Vararg{Int}}}}, 
     @assert RD == QD + N; @assert QD == 2 || QD == 3
     rows = Vector{row{T, QD, N, RD}}()
     for (qlabels, block) in data
-        wmats = Vector{QTensor{Float64, 2}}()
+        wmats = Vector{LurTensor{Float64, 2}}()
         for i in 1:N
             wmat, block, _ = svd_leg(block, QD + i)
-            push!(wmats, QTensor(wmat))
+            push!(wmats, LurTensor(wmat))
         end
-        RMT = QTensor(block)
+        RMT = LurTensor(block)
         cgrs = CGR{QD}[]
         for i in 1:N
             qforsymm = Tuple(qlabels[j][i] for j in 1:QD)
@@ -1643,12 +1643,12 @@ function Base.:+(qs1::QSpace{T1, QD, N, RD},
         if in1 && !in2
             # Sector exists only in qs1 — copy with promoted element type.
             r = dict1[key]
-            push!(new_rows, row(r.cgrs, QTensor(T.(r.RMT.data))))
+            push!(new_rows, row(r.cgrs, LurTensor(T.(r.RMT.data))))
 
         elseif in2 && !in1
             # Sector exists only in qs2 — copy with promoted element type.
             r = dict2[key]
-            push!(new_rows, row(r.cgrs, QTensor(T.(r.RMT.data))))
+            push!(new_rows, row(r.cgrs, LurTensor(T.(r.RMT.data))))
 
         else
             # Sector exists in both — merge the two (w, RMT) contributions.
@@ -1663,13 +1663,14 @@ function Base.:+(qs1::QSpace{T1, QD, N, RD},
 
             # Pool w-matrices and RMTs as two contributions, then compress.
             new_wmats = ntuple(n -> [r1.cgrs[n].wmat, r2.cgrs[n].wmat], N)
-            new_RMTs  = QTensor{T, RD}[QTensor(T.(r1.RMT.data)),
-                                        QTensor(T.(r2.RMT.data))]
+            new_RMTs  = LurTensor{T, RD}[LurTensor(T.(r1.RMT.data)),
+                                        LurTensor(T.(r2.RMT.data))]
             new_qlabs = ntuple(n -> (r1.cgrs[n].qlabels,
                                      r1.cgrs[n].cgp,
                                      r1.cgrs[n].legdir), N)
 
-            push!(new_rows, merge_new_row(new_wmats, new_RMTs, new_qlabs, symm, QD))
+            new_row = merge_new_row(new_wmats, new_RMTs, new_qlabs, symm, QD)
+            isnothing(new_row) || push!(new_rows, new_row)
         end
     end
 
@@ -1777,7 +1778,7 @@ function _pad_row_for_oplus(r::row{T, QD, N, RD},
     end, RD)
     new_data[fill_inds...] = r.RMT.data
 
-    return row(deepcopy(r.cgrs), QTensor(new_data))
+    return row(deepcopy(r.cgrs), LurTensor(new_data))
 end
 
 function _oplus_pad_qspace(q::QSpace{T, QD, N, RD},
@@ -2039,7 +2040,7 @@ function Base.conj(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
 
     new_rows = map(q.rows) do r
         # 1. Complex-conjugate the RMT.
-        new_RMT = QTensor(conj.(r.RMT.data))
+        new_RMT = LurTensor(conj.(r.RMT.data))
 
         # 2. Rebuild CGRs with flipped arrow directions.
         new_cgrs = ntuple(N) do n
@@ -2075,7 +2076,7 @@ function Base.conj(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
                     is1j = detect_1j(S, ins_, outs_)
                     cgt_oms  = get_CGTom(S, ins_, outs_, is1j)
                     perm_vec = get_conj_perm(cgt_oms)
-                    QTensor(cgr.wmat.data[perm_vec, :])
+                    LurTensor(cgr.wmat.data[perm_vec, :])
                 else
                     deepcopy(cgr.wmat)
                 end
@@ -2085,10 +2086,12 @@ function Base.conj(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
 
         row(Tuple(new_cgrs), new_RMT)
     end
+    if isempty(new_rows) new_rows = row{T, QD, N, RD}[] 
+    else new_rows = collect(new_rows) end
 
     # spaces remain the same: physical qlabels at each leg don't change in conj,
     # only the CGR internal structure (incoming/outgoing) changes
-    return QSpace(q.symm, collect(new_rows), new_inds, q.spaces)
+    return QSpace(q.symm, new_rows, new_inds, q.spaces)
 end
 
 Base.adjoint(q::QSpace) = conj(q)
@@ -2151,7 +2154,7 @@ end
 
 function _slice_qspace_row_leg(r::row{T, QD, N, RD}, leg::Int, inds::Vector{Int}) where {T, QD, N, RD}
     selectors = ntuple(d -> d == leg ? inds : Colon(), RD)
-    return row(r.cgrs, QTensor(r.RMT.data[selectors...]))
+    return row(r.cgrs, LurTensor(r.RMT.data[selectors...]))
 end
 
 """
@@ -2377,14 +2380,14 @@ function _delete_singleton_cgr(cgr::CGR{QD, NZ}, positions) where {QD, NZ}
     end
 
     new_qlabels = (Tuple(first.(incoming))..., Tuple(first.(outgoing))...)
-    new_wmat = QTensor(copy(cgr.wmat.data))
+    new_wmat = LurTensor(copy(cgr.wmat.data))
     return CGR(cgr.symm, new_qlabels, new_wmat, Tuple(new_cgp),
                (m_new, length(outgoing)))
 end
 
-function _delete_singleton_rmt(rmt::QTensor{T, RD}, positions, qd::Int, n_symm::Int) where {T, RD}
+function _delete_singleton_rmt(rmt::LurTensor{T, RD}, positions, qd::Int, n_symm::Int) where {T, RD}
     selectors = ntuple(axis -> axis <= qd && axis ∈ positions ? 1 : Colon(), qd + n_symm)
-    return QTensor(copy(rmt.data[selectors...]))
+    return LurTensor(copy(rmt.data[selectors...]))
 end
 
 function _delete_singleton_impl(q::QSpace{T, QD, N, RD}, positions) where {T, QD, N, RD}
@@ -2536,12 +2539,12 @@ function _insert_singleton_cgr(cgr::CGR{QD, NZ},
     end
 
     new_qlabels = (Tuple(first.(incoming))..., Tuple(first.(outgoing))...)
-    new_wmat = QTensor(copy(cgr.wmat.data))
+    new_wmat = LurTensor(copy(cgr.wmat.data))
     return CGR(cgr.symm, new_qlabels, new_wmat, Tuple(new_cgp),
                (m_new, length(outgoing)))
 end
 
-function _insert_singleton_rmt(rmt::QTensor{T, RD},
+function _insert_singleton_rmt(rmt::LurTensor{T, RD},
                                positions,
                                qd::Int,
                                n_symm::Int) where {T, RD}
@@ -2564,10 +2567,10 @@ function _insert_singleton_rmt(rmt::QTensor{T, RD},
     end
 
     new_data = copy(reshape(rmt.data, Tuple(vcat(new_phys, collect(om_dims)))))
-    return QTensor(new_data)
+    return LurTensor(new_data)
 end
 
-function _convert_rank2_singleton_normalization!(new_cgrs, new_rmt::QTensor, old_cgrs)
+function _convert_rank2_singleton_normalization!(new_cgrs, new_rmt::LurTensor, old_cgrs)
     for n in eachindex(new_cgrs)
         w_val = old_cgrs[n].wmat[1]
         new_cgrs[n].wmat[:] .= 1.0
@@ -2645,11 +2648,11 @@ function getvac(q::QSpace{T, QD, N, RD},
 
     cgrs = ntuple(n -> begin
         trivial_q = trivial_qlabels[n]
-        CGR(q.symm[n], (trivial_q, trivial_q), QTensor([1.0;;]), (1, 2), (1, 1))
+        CGR(q.symm[n], (trivial_q, trivial_q), LurTensor([1.0;;]), (1, 2), (1, 1))
     end, N)
 
     rmt_data = fill(one(T), ntuple(_ -> 1, N + 2))
-    rows = row{T, 2, N, N + 2}[row(cgrs, QTensor(rmt_data))]
+    rows = row{T, 2, N, N + 2}[row(cgrs, LurTensor(rmt_data))]
     inds = (QIndex(itags[1], '+'), QIndex(itags[2], '-'))
     space_template = Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}([space_entry])
     spaces = (copy(space_template), copy(space_template))
@@ -2675,3 +2678,4 @@ include("get1jtensor.jl")
 include("svd.jl")
 include("eig.jl")
 include("permute.jl")
+

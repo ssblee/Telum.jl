@@ -1,4 +1,4 @@
-# N: the number of symmetries
+﻿# N: the number of symmetries
 # splist: A list of (symmetry sector qlabels, RMT dim)
 struct leginfo{N}
     symm::NTuple{N, Any} # symmetry tuple (same for all legs)
@@ -134,7 +134,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
                 RMT_data[ntuple(_ -> (:), D)..., cs:cs+RMT_dim-1, m] = id_block
             end
             RMT_data .*= sqrt(cgt_dim_out)
-            RMT_t = QTensor(reshape(RMT_data, rmts_dims..., space_cnt, oms...))
+            RMT_t = LurTensor(reshape(RMT_data, rmts_dims..., space_cnt, oms...))
 
             # Build one CGR per symmetry
             cgrs_list = CGR{D+1}[]
@@ -144,7 +144,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
                 inv_perm     = invperm(perm)
                 cgr_qlabels  = (input_qls[perm]..., fused_qlabels[n])
                 om_n         = oms[n]
-                wmat         = QTensor(Matrix{Float64}(I, om_n, om_n))
+                wmat         = LurTensor(Matrix{Float64}(I, om_n, om_n))
                 cgp          = (inv_perm..., D+1)
                 push!(cgrs_list, CGR(symm[n], cgr_qlabels, wmat, cgp, (D, 1)))
             end
@@ -187,3 +187,4 @@ function getIdentity(leginfos::NTuple{D, leginfo{N}};
 
     return q
 end
+

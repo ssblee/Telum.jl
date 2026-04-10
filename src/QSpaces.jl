@@ -1,4 +1,4 @@
-module QSpaces
+﻿module QSpaces
 
 using LinearAlgebra
 using SparseArrays
@@ -18,7 +18,7 @@ comm(A, B) = A * B - B * A
 
 include("QSpace.jl")
 
-export QSpace, QTensor, QIndex, Itag, CGR, row
+export QSpace, LurTensor, QIndex, Itag, CGR, row
 export LocalSpaceOptions, SpinOptions, FermionOptions, FermionSOptions
 export Z, U1, SU, SO, Sp
 export getLocalSpace, getIdentity, get1jtensor, legflip, contract
@@ -35,3 +35,4 @@ export lock, lockp, unlock
 export additag, removeitag, replaceitag, setitag
 
 end
+

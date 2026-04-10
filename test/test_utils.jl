@@ -1,11 +1,12 @@
-using LinearAlgebra
+﻿using LinearAlgebra
 using SparseArrayKit
 using Test
 const _compress_sector = QSpaces._compress_sector
 const _contract_om_axis = QSpaces._contract_om_axis
+const _qr_shared_isometry = QSpaces._qr_shared_isometry
 const _row_qlabel = QSpaces._row_qlabel
 const change_dir = QSpaces.change_dir
-const contract_v2 = QSpaces.contract_v2
+const contract_old = QSpaces.contract_old
 ⊗(a, b) = kron(b, a)
 
 
@@ -266,9 +267,9 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
         end
     end
 
-    new_wmats = Tuple(QTensor{Float64, 2}[QTensor(W[n][p]) for p in 1:K]
+    new_wmats = Tuple(LurTensor{Float64, 2}[LurTensor(W[n][p]) for p in 1:K]
                       for n in 1:N)
-    new_RMTs  = [QTensor(RMTs[p]) for p in 1:K]
+    new_RMTs  = [LurTensor(RMTs[p]) for p in 1:K]
 
     U_mats, result_RMT = _compress_sector(new_wmats, new_RMTs, QD_out, 0.0)
 
@@ -306,6 +307,64 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
     println("test_compress_sector passed (N=$N, K=$K, QD_out=$QD_out).")
 end
 
+function test_compress_sector_zero_wmat_shortcircuits(; N::Int = 3,
+                                                      K::Int = 4,
+                                                      QD_out::Int = 2,
+                                                      zero_symmetry::Int = 2,
+                                                      seed::Int = 421)
+    Random.seed!(seed)
+
+    free_sizes = rand(2:5, QD_out)
+    OM3_sizes = rand(1:4, N)
+    om12_sizes = rand(1:4, N, K)
+
+    W = [[randn(OM3_sizes[n], om12_sizes[n, p]) for p in 1:K] for n in 1:N]
+    for p in 1:K
+        W[zero_symmetry][p] .= 0.0
+    end
+    RMTs = [randn(free_sizes..., [om12_sizes[n, p] for n in 1:N]...) for p in 1:K]
+
+    new_wmats = Tuple(LurTensor{Float64, 2}[LurTensor(W[n][p]) for p in 1:K]
+                      for n in 1:N)
+    new_RMTs  = [LurTensor(RMTs[p]) for p in 1:K]
+
+    @test isnothing(_compress_sector(new_wmats, new_RMTs, QD_out, 0.0))
+    dummy_qlabels = ntuple(_ -> (ntuple(_ -> (0,), QD_out), ntuple(identity, QD_out), (QD_out, 0)), N)
+    @test isnothing(QSpaces.merge_new_row(new_wmats, new_RMTs, dummy_qlabels,
+                                          ntuple(_ -> U1, N), QD_out, 0.0))
+
+    direct = zeros(free_sizes..., OM3_sizes...)
+    for p in 1:K
+        contrib = RMTs[p]
+        for n in 1:N
+            contrib = _contract_om_axis(contrib, W[n][p], QD_out + n)
+        end
+        direct .+= contrib
+    end
+    @test all(iszero, direct)
+
+    println("test_compress_sector_zero_wmat_shortcircuits passed.")
+end
+
+function test_qr_shared_isometry_rank1_fastpath()
+    mats = Matrix{Float64}[
+        reshape([1.0, -2.0, 3.5], 1, :),
+        reshape([0.25, 4.0], 1, :),
+        reshape([-1.5], 1, :),
+    ]
+
+    Q, factors = _qr_shared_isometry(mats; tol=0.0)
+
+    @test Q == [1.0;;]
+    @test length(factors) == length(mats)
+    @test all(factors[i] === mats[i] for i in eachindex(mats))
+
+    reconstructed = [Q * factor for factor in factors]
+    @test reconstructed == mats
+
+    println("test_qr_shared_isometry_rank1_fastpath passed.")
+end
+
 function test_FAcont(option::LocalSpaceOptions)
     q = getLocalSpace(option);
     qi1 = QSpace(q.I, ("lur1", "lur1"))
@@ -324,6 +383,21 @@ function test_FAcont(option::LocalSpaceOptions)
     @test norm(ctarr1 - ctarr2) < 1e-10
 
     return q, a, ct, ctarr1, ctarr2
+end
+
+function test_contract_abelian_wmats_are_unit(option::LocalSpaceOptions)
+    q = getLocalSpace(option)
+    qi1 = QSpace(q.I, ("lur1", "lur1"))
+    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qf = QSpace(q.F, ("lur2", "lur2", "op"))
+    a = getIdentity((qi1, 2), (qi2, 2))
+
+    ct = qf * a
+    @test !isempty(ct.rows)
+    for r in ct.rows
+        @test size(r.cgrs[1].wmat.data) == (1, 1)
+        @test r.cgrs[1].wmat.data ≈ [1.0;;] atol=1e-12 rtol=1e-12
+    end
 end
 
 function test_getIdentity_direct_contract(option::LocalSpaceOptions)
@@ -1028,12 +1102,11 @@ function test_discard_eigen_tol(option::LocalSpaceOptions)
     @test length(kept_exact.eig_list) == 2
     @test length(discarded_exact.eig_list) + length(kept_exact.eig_list) == length(result.eig_list)
 
-    @test length(kept_tol.eig_list) == 1
+    @test length(kept_tol.eig_list) == 3
     @test length(discarded_tol.eig_list) + length(kept_tol.eig_list) == length(result.eig_list)
 
     @test [x[1] for x in kept_exact.eig_list] ≈ [1.0, 10.0]
-    @test [x[1] for x in kept_tol.eig_list] ≈ [1.0]
-    @test [x[1] for x in discarded_tol.eig_list][1:2] ≈ [10.0, 10.1]
+    @test [x[1] for x in kept_tol.eig_list] ≈ [1.0, 10.0, 10.1]
 end
 
 # ─── test_eigen_full_discard ─────────────────────────────────────────────────
@@ -1522,7 +1595,7 @@ function test_svd_cgr_split_spaces_preserves_physical_leg_order()
     cgr = QSpaces.CGR(
         U1,
         ((10,), (20,), (30,), (40,)),
-        QTensor([1.0;;]),
+        LurTensor([1.0;;]),
         (2, 1, 4, 3),
         (2, 2),
     )
@@ -1819,8 +1892,8 @@ function test_contract_requires_matching_spaces_in_star(option::LocalSpaceOption
     @test_throws AssertionError A * B_bad
 end
 
-# ─── test_contract_v2 ───────────────────────────────────────────────────────
-# Compare contract_v2 (batched-GEMM version) against the original contract
+# ─── test_contract_default ──────────────────────────────────────────────────
+# Compare the default contract (batched-GEMM version) against contract_old
 # by converting both results to sparse arrays and computing the norm of the
 # difference.  Several contraction patterns are exercised:
 #
@@ -1831,10 +1904,10 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Helper: replicate the matching logic of Base.:*(::QSpace, ::QSpace) to find
-# the contracted leg pairs, then call both contract and contract_v2 with
-# those same explicit legs. Returns (arr_old, arr_new, diff_norm).
-function _compare_contract_v1v2(q1::QSpace, q2::QSpace;
-                                 tol::Float64 = 1e-10)
+# the contracted leg pairs, then call both contract_old and contract with
+# those same explicit legs. Returns the comparison norm.
+function _compare_contract_old_vs_new(q1::QSpace, q2::QSpace;
+                                      tol::Float64 = 1e-10)
     QD1 = length(q1.inds)
     QD2 = length(q2.inds)
     cands1 = [(i, q1.inds[i]) for i in 1:QD1
@@ -1852,32 +1925,32 @@ function _compare_contract_v1v2(q1::QSpace, q2::QSpace;
             push!(legs1, i); push!(legs2, j); push!(matched2, pos)
         end
     end
-    @assert !isempty(legs1) "No matching legs found for v1-vs-v2 comparison"
+    @assert !isempty(legs1) "No matching legs found for contract comparison"
 
-    ct_v1 = contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
-    ct_v2 = contract_v2(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
+    ct_old = contract_old(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
+    ct_new = contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
 
     # For 0-D (scalar) results, compare scalar values directly.
-    if length(ct_v1.inds) == 0
-        val_v1 = ct_v1[]
-        val_v2 = ct_v2[]
-        diff = abs(val_v1 - val_v2)
-        ref  = max(abs(val_v1), 1.0)
+    if length(ct_old.inds) == 0
+        val_old = ct_old[]
+        val_new = ct_new[]
+        diff = abs(val_old - val_new)
+        ref  = max(abs(val_old), 1.0)
         @test diff / ref < tol
         return diff
     end
 
-    arr_v1 = Array(to_sparse_array(ct_v1))
-    arr_v2 = Array(to_sparse_array(ct_v2))
+    arr_old = Array(to_sparse_array(ct_old))
+    arr_new = Array(to_sparse_array(ct_new))
 
-    @assert size(arr_v1) == size(arr_v2) "Shape mismatch: $(size(arr_v1)) vs $(size(arr_v2))"
-    diff = norm(arr_v1 - arr_v2)
-    ref  = max(norm(arr_v1), 1.0)
+    @assert size(arr_old) == size(arr_new) "Shape mismatch: $(size(arr_old)) vs $(size(arr_new))"
+    diff = norm(arr_old - arr_new)
+    ref  = max(norm(arr_old), 1.0)
     @test diff / ref < tol
     return diff
 end
 
-function test_contract_v2(option::LocalSpaceOptions; tol::Float64 = 1e-10)
+function test_contract_default(option::LocalSpaceOptions; tol::Float64 = 1e-10)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
     qi1 = QSpace(q.I, ("lur1", "lur1"))
     qi2 = QSpace(q.I, ("lur2", "lur2"))
@@ -1885,31 +1958,32 @@ function test_contract_v2(option::LocalSpaceOptions; tol::Float64 = 1e-10)
     a   = getIdentity((qi1, 2), (qi2, 2))
 
     # ── Case 1: F × Identity (3-leg × 4-leg, 1 contracted leg) ──────────────
-    d1 = _compare_contract_v1v2(qf, a; tol=tol)
-    println("test_contract_v2 [F*a]:   Δ = $d1")
+    d1 = _compare_contract_old_vs_new(qf, a; tol=tol)
+    println("test_contract_default [F*a]:   Δ = $d1")
 
     # ── Case 2: Inner product  (full contraction → scalar) ───────────────────
-    d2 = _compare_contract_v1v2(qf, qf'; tol=tol)
-    println("test_contract_v2 [F·F']:  Δ = $d2")
+    d2 = _compare_contract_old_vs_new(qf, qf'; tol=tol)
+    println("test_contract_default [F·F']:  Δ = $d2")
 
     # ── Case 3: Identity × Identity (2-leg × 2-leg, 1 contracted leg) ───────
     # Use explicit legs; verify_legs=false since tags may not match.
-    ct3_v1 = contract(qi1, (2,), qi2, (1,); verify_legs=false)
-    ct3_v2 = contract_v2(qi1, (2,), qi2, (1,); verify_legs=false)
-    arr3_v1 = Array(to_sparse_array(ct3_v1))
-    arr3_v2 = Array(to_sparse_array(ct3_v2))
-    d3 = norm(arr3_v1 - arr3_v2)
-    ref3 = max(norm(arr3_v1), 1.0)
+    ct3_old = contract_old(qi1, (2,), qi2, (1,); verify_legs=false)
+    ct3_new = contract(qi1, (2,), qi2, (1,); verify_legs=false)
+    arr3_old = Array(to_sparse_array(ct3_old))
+    arr3_new = Array(to_sparse_array(ct3_new))
+    d3 = norm(arr3_old - arr3_new)
+    ref3 = max(norm(arr3_old), 1.0)
     @test d3 / ref3 < tol
-    println("test_contract_v2 [I*I]:   Δ = $d3")
+    println("test_contract_default [I*I]:   Δ = $d3")
 
     # ── Case 4: Larger tensor (ct × ct') ─────────────────────────────────────
     ct = qf * a   # 4-leg tensor
-    d4 = _compare_contract_v1v2(ct, ct'; tol=tol)
-    println("test_contract_v2 [ct·ct']: Δ = $d4")
+    d4 = _compare_contract_old_vs_new(ct, ct'; tol=tol)
+    println("test_contract_default [ct·ct']: Δ = $d4")
 
-    println("test_contract_v2 passed (all cases).")
+    println("test_contract_default passed (all cases).")
 end
+
 
 
 

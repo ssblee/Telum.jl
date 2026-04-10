@@ -1,4 +1,4 @@
-@testset "re-exported LurCGT symmetries" begin
+﻿@testset "re-exported LurCGT symmetries" begin
     @test :Z in names(QSpaces)
     @test :U1 in names(QSpaces)
     @test :SU in names(QSpaces)
@@ -51,9 +51,13 @@ end
         FermionSOptions(U1, SU{2}, nothing, 1))
 end
 
-@testset "contract_v2 vs contract" begin
-    test_contract_v2(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_contract_v2(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "contract vs contract_old" begin
+    test_contract_default(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_contract_default(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
+@testset "contract abelian w-matrices stay unit" begin
+    test_contract_abelian_wmats_are_unit(FermionSOptions(U1, SU{2}, nothing, 1))
 end
 
 @testset "getIdentity direct contraction" begin
@@ -184,8 +188,8 @@ function permtest()
 
     om = get_CGTom(S, upsp, dnsp).totalOM
     wmat = randn(om, 1); wmat /= norm(wmat)
-    wmat = QTensor(wmat)
-    RMT = QTensor(reshape([1.0], Tuple(1 for _=1:10)...))
+    wmat = LurTensor(wmat)
+    RMT = LurTensor(reshape([1.0], Tuple(1 for _=1:10)...))
 
     qlabels = (upsp..., dnsp...)
     cgp = (5, 8, 2, 7, 1, 6, 3, 9, 4)
@@ -274,18 +278,18 @@ println("asdfadsf")
     end
 
     # ------------------------------------------------------------------
-    # 4. QTensor overload returns QTensor wrappers with correct shapes
+    # 4. LurTensor overload returns LurTensor wrappers with correct shapes
     # ------------------------------------------------------------------
-    @testset "QTensor overload" begin
+    @testset "LurTensor overload" begin
         A  = randn(3, 4, 5)
-        qt = QTensor(A)
+        qt = LurTensor(A)
 
         for leg in 1:3
             Uq, SVq, Sq = svd_leg(qt, leg; cutoff=1e-12)
             U,  SV,  S  = svd_leg(A,  leg; cutoff=1e-12)
 
-            @test Uq  isa QTensor
-            @test SVq isa QTensor
+            @test Uq  isa LurTensor
+            @test SVq isa LurTensor
             @test size(Uq)  == size(U)
             @test size(SVq) == size(SV)
             @test Sq ≈ S
@@ -339,9 +343,11 @@ end
 end
 
 @testset "compress_sector test" begin
+    test_qr_shared_isometry_rank1_fastpath()
     test_compress_sector(2, 1, 3; verbose=false)
     test_compress_sector(2, 7, 3; verbose=false)
     test_compress_sector(3, 5, 4; verbose=false)
+    test_compress_sector_zero_wmat_shortcircuits()
 end
 
 
@@ -1629,6 +1635,7 @@ end
         @test occursin("4D QSpace", out)
     end
 end
+
 
 
 

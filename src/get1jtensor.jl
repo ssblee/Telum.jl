@@ -1,4 +1,4 @@
-get1jtensor(q::QSpace{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
+﻿get1jtensor(q::QSpace{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
 get1jtensor(leginfo(q, leg))
 
 function _resolve_unique_leg(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
@@ -45,7 +45,7 @@ function get1jtensor(leginfo::leginfo{N}) where N
     inds1 = (change_dir(ind), change_dir(change_green(ind)))
     dir1 = inds1[1].dir
     for (qlabels, RMTd) in leginfo.splist
-        RMT1 = QTensor(reshape(Matrix{Float64}(I, RMTd, RMTd), RMTd, RMTd, (1 for _=1:N)...))
+        RMT1 = LurTensor(reshape(Matrix{Float64}(I, RMTd, RMTd), RMTd, RMTd, (1 for _=1:N)...))
         dual_qlabels = Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N)
 
         cgrs1 = CGR{2}[]
@@ -55,7 +55,7 @@ function get1jtensor(leginfo::leginfo{N}) where N
             if qlabels[n] == dual_qlabels[n] cgp1 = (1, 2)
             elseif qlabels[n] < dual_qlabels[n] cgp1 = (1, 2)
             else cgp1 = (2, 1) end
-            wmat1 = QTensor([sqrt(spdim);;])
+            wmat1 = LurTensor([sqrt(spdim);;])
             legdir1 = dir1 == '+' ? (2, 0) : (0, 2)
 
             push!(cgrs1, CGR(symm[n], cgr_qs1, wmat1, cgp1, legdir1))
@@ -97,3 +97,4 @@ function legflip(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
                                   rev=rev, opname="legflip")
     return legflip(q, legs)
 end
+

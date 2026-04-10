@@ -311,7 +311,7 @@ function NRG_IterDiag(H0::QSpace{T, 2, N},
             e0 = e.eig_list[1][1] # Ground state energy
             E0[itN] = e0
 
-            ek, ed = discard_eigen(e, Nkeep, "K,$si", "D,$si")
+            ek, ed = discard_eigen(e, Nkeep, "K,$si", "D,$si"; tol=0.1)
 
             # Shift energies to make the lowest energy value be 0
             Hprev = ek.D - e0

@@ -1,4 +1,4 @@
-# ─── svd ───────────────────────────────────────────────────────────────
+﻿# ─── svd ───────────────────────────────────────────────────────────────
 #
 # Perform symmetry-adapted SVD of a QSpace object.
 #
@@ -175,6 +175,11 @@ function _reconstruct_reduced_svd_cgr_block(block::_ReducedSVDCGRBlock)
 end
 
 function _qr_shared_isometry(mats::Vector{<:AbstractMatrix}; tol::Float64 = 1e-12)
+    nrows = size(first(mats), 1)
+    @assert all(size(mat, 1) == nrows for mat in mats) "_qr_shared_isometry requires a common row dimension"
+
+    if nrows == 1 return [1.0;;], mats end
+
     concat = hcat(mats...)
     F = qr(concat)
     Q = Matrix(F.Q)
@@ -541,7 +546,7 @@ function _svd_build_side_cgr(symm,
                              phys_legs::NTuple{L, Int},
                              bond_q,
                              bond_first::Bool,
-                             wmat::QTensor{Float64, 2}) where {L}
+                             wmat::LurTensor{Float64, 2}) where {L}
     stored_phys = sort!([(source_cgr.cgp[leg], leg) for leg in phys_legs]; by = first, alg=MergeSort)
     nin = source_cgr.legdir[1]
 
@@ -683,7 +688,7 @@ function _build_svd_cgtsvd_S(symm,
         sector = _svd_sector_qlabels(r, N)
         svals = sector_values[sector]
         count = length(svals)
-        rmt = QTensor(reshape(Matrix(Diagonal(svals)), count, count, ones(Int, N)...))
+        rmt = LurTensor(reshape(Matrix(Diagonal(svals)), count, count, ones(Int, N)...))
         push!(rows_S, row(r.cgrs, rmt))
     end
 
@@ -742,7 +747,7 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
             tmp = reshape(full, info.phys_dims..., info.om_dims..., sector_count)
             perm = Tuple(vcat(collect(1:NL), NL + N + 1, collect(NL+1:NL+N)))
             data = permutedims(tmp, perm)
-            rmt_U = QTensor(data)
+            rmt_U = LurTensor(data)
 
             cgrs_U = ntuple(N) do n
                 _svd_build_side_cgr(
@@ -751,7 +756,7 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
                     left_legs,
                     sector[n],
                     false,
-                    QTensor(copy(row_blocks[n].left_iso)),
+                    LurTensor(copy(row_blocks[n].left_iso)),
                 )
             end
             push!(rows_U, row(cgrs_U, rmt_U))
@@ -762,7 +767,7 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
             part = result.Vt[keep, info.range]
             full = zeros(eltype(result.Vt), sector_count, length(info.range))
             full[class_range, :] = part
-            rmt_Vd = QTensor(reshape(full, sector_count, info.phys_dims..., info.om_dims...))
+            rmt_Vd = LurTensor(reshape(full, sector_count, info.phys_dims..., info.om_dims...))
 
             cgrs_Vd = ntuple(N) do n
                 _svd_build_side_cgr(
@@ -771,7 +776,7 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
                     right_legs,
                     dual_sector[n],
                     true,
-                    QTensor(copy(row_blocks[n].right_iso)),
+                    LurTensor(copy(row_blocks[n].right_iso)),
                 )
             end
             push!(rows_Vd, row(cgrs_Vd, rmt_Vd))
@@ -1008,16 +1013,16 @@ function svd_old(q::QSpace{T, QD, N, RD},
         Svals = F.S[k]                                 # (chi,)
         Vtmat = F.Vt[k, :]                             # (chi, sR)
 
-        rmt_U  = QTensor(reshape(Umat,                       sL,  chi, ones(Int, N)...))
-        rmt_S  = QTensor(reshape(Matrix(Diagonal(Svals)),    chi, chi, ones(Int, N)...))
-        rmt_Vd = QTensor(reshape(transpose(Vtmat),           sR, chi,  ones(Int, N)...))
+        rmt_U  = LurTensor(reshape(Umat,                       sL,  chi, ones(Int, N)...))
+        rmt_S  = LurTensor(reshape(Matrix(Diagonal(Svals)),    chi, chi, ones(Int, N)...))
+        rmt_Vd = LurTensor(reshape(transpose(Vtmat),           sR, chi,  ones(Int, N)...))
 
         # U: identity CGT on left_ql, legdir=(1,1)
         cgrs_U  = ntuple(N) do n
             cgr_M   = r.cgrs[n]
             left_ql = cgr_M.qlabels[cgr_M.cgp[1]]
             dim_n   = dimension(symm[n], left_ql)
-            wmat_n  = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n  = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], (left_ql, left_ql), wmat_n, (2, 1), (1, 1))
         end
         # S: same qlabels and legdir as M (both legs outgoing)
@@ -1025,7 +1030,7 @@ function svd_old(q::QSpace{T, QD, N, RD},
             cgr_M    = r.cgrs[n]
             left_ql  = cgr_M.qlabels[cgr_M.cgp[1]]
             dim_n    = dimension(symm[n], left_ql)
-            wmat_n   = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n   = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], cgr_M.qlabels, wmat_n, cgr_M.cgp, (0, 2))
         end
         # Vd: identity CGT on right_ql, legdir=(1,1)
@@ -1033,7 +1038,7 @@ function svd_old(q::QSpace{T, QD, N, RD},
             cgr_M    = r.cgrs[n]
             right_ql = cgr_M.qlabels[cgr_M.cgp[2]]
             dim_n    = dimension(symm[n], right_ql)
-            wmat_n   = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n   = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], (right_ql, right_ql), wmat_n, (2, 1), (1, 1))
         end
 
@@ -1050,20 +1055,20 @@ function svd_old(q::QSpace{T, QD, N, RD},
         Umat = Matrix{Float64}(I, sL, sL)[:, 1:chi]
         Vmat = Matrix{Float64}(I, sR, sR)[:, 1:chi]
 
-        rmt_U = QTensor(reshape(Umat, sL, chi, ones(Int, N)...))
-        rmt_Vd = QTensor(reshape(Vmat, sR, chi, ones(Int, N)...))
+        rmt_U = LurTensor(reshape(Umat, sL, chi, ones(Int, N)...))
+        rmt_Vd = LurTensor(reshape(Vmat, sR, chi, ones(Int, N)...))
 
         cgrs_U = ntuple(N) do n
             left_ql = sector[n]
             dim_n = dimension(symm[n], left_ql)
-            wmat_n = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], (left_ql, left_ql), wmat_n, (2, 1), (1, 1))
         end
 
         cgrs_Vd = ntuple(N) do n
             right_ql = right_sector[n]
             dim_n = dimension(symm[n], right_ql)
-            wmat_n = QTensor([sqrt(Float64(dim_n));;])
+            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
             CGR(symm[n], (right_ql, right_ql), wmat_n, (2, 1), (1, 1))
         end
 
@@ -1173,3 +1178,4 @@ function svd_old(q::QSpace{T, QD, N, RD},
     left_legs = _select_svd_left_legs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return svd_old(q, left_legs, left_tag, right_tag; cutoff=cutoff, Nkeep=Nkeep)
 end
+

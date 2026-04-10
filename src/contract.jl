@@ -1,4 +1,4 @@
-# ─── Helpers ─────────────────────────────────────────────────────────────────
+﻿# ─── Helpers ─────────────────────────────────────────────────────────────────
 
 # Physical qlabel of leg l in row r: an N-tuple of qlabels, one per symmetry.
 function _row_qlabel(r::row{T, QD, N}, l::Int) where {T, QD, N}
@@ -203,46 +203,43 @@ end
 # accumulate the result into a single (U_mats, result_RMT) pair.
 #
 #   new_wmats[n][i] : (OM3_n, OM12_n_i)  — w-matrix for pair i, symmetry n
-#   new_RMTs[i]     : QTensor{T} (sz_free..., OM12_1_i,...,OM12_N_i)
+#   new_RMTs[i]     : LurTensor{T} (sz_free..., OM12_1_i,...,OM12_N_i)
 #
 # Returns:
-#   U_mats[n]  : QTensor{Float64,2} (OM3_n, r_n)  — new CGR wmat per symmetry
-#   result_RMT : QTensor{T} (sz_free..., r_1,...,r_N)  — compressed RMT
+#   U_mats[n]  : LurTensor{Float64,2} (OM3_n, r_n)  — new CGR wmat per symmetry
+#   result_RMT : LurTensor{T} (sz_free..., r_1,...,r_N)  — compressed RMT
+#   nothing    : when any symmetry contributes only zero w-matrices, so the
+#                whole merged row is identically zero and can be skipped
 #
 # We use QR-based shared isometries for every sector, including K == 1, so the
 # resulting basis is normalized consistently with the multi-contribution case.
 function _compress_sector(
-    new_wmats ::NTuple{N, Vector{<:QTensor{Float64, 2}}},
-    new_RMTs  ::Vector{<:QTensor{T, RD}},
+    new_wmats ::NTuple{N, Vector{<:LurTensor{Float64, 2}}},
+    new_RMTs  ::Vector{<:LurTensor{T, RD}},
     QD_out    ::Int,
     tol       ::Float64 = 1e-12,
 ) where {T, N, RD}
     K = length(new_RMTs)
 
     # ── Shared QR basis per symmetry ─────────────────────────────────────────
-    U_mats   = Vector{QTensor{Float64, 2}}(undef, N)
+    U_mats   = Vector{LurTensor{Float64, 2}}(undef, N)
     SV_split = [Vector{Matrix{Float64}}(undef, K) for _ in 1:N]
 
     for n in 1:N
         mats = [w.data for w in new_wmats[n]]
-        if all(mat -> all(iszero, mat), mats)
-            U_mats[n] = QTensor(zeros(Float64, size(mats[1], 1), 1))
-            for i in 1:K
-                SV_split[n][i] = zeros(Float64, 1, size(mats[i], 2))
-            end
-        else
-            common_iso, factors = _qr_shared_isometry(mats; tol=tol)
-            U_mats[n] = QTensor(common_iso)
-            for i in 1:K
-                SV_split[n][i] = factors[i]
-            end
+        if all(mat -> all(iszero, mat), mats) return nothing end
+
+        common_iso, factors = _qr_shared_isometry(mats; tol=tol)
+        U_mats[n] = LurTensor(common_iso)
+        for i in 1:K
+            SV_split[n][i] = factors[i]
         end
     end
 
-    # ── Preallocate output RMT as QTensor (sz_free..., r_1,...,r_N) ──────────
+    # ── Preallocate output RMT as LurTensor (sz_free..., r_1,...,r_N) ──────────
     sz_free    = size(new_RMTs[1])[1:QD_out]
     r_sizes    = ntuple(n -> size(U_mats[n], 2), N)
-    result_RMT = QTensor{T}(sz_free..., r_sizes...)
+    result_RMT = LurTensor{T}(sz_free..., r_sizes...)
 
     # ── Contract SV pieces into each RMT and accumulate ─────────────────────
     for i in 1:K
@@ -259,15 +256,17 @@ end
 # ─── merge_new_row ────────────────────────────────────────────────────────────
 # Wraps _compress_sector and assembles the output row struct.
 function merge_new_row(
-    new_wmats        ::NTuple{N, Vector{<:QTensor{Float64, 2}}},
-    new_RMTs         ::Vector{<:QTensor{T, RD}},
+    new_wmats        ::NTuple{N, Vector{<:LurTensor{Float64, 2}}},
+    new_RMTs         ::Vector{<:LurTensor{T, RD}},
     new_qlabels_per_n,
     symm,
     QD_out           ::Int,
     tol              ::Float64 = 1e-12,
 ) where {T, N, RD}
-    U_mats, result_RMT = _compress_sector(new_wmats, new_RMTs, QD_out, tol)
-    # U_mats[n] and result_RMT are already QTensor; no re-wrapping needed.
+    compressed = _compress_sector(new_wmats, new_RMTs, QD_out, tol)
+    isnothing(compressed) && return nothing
+    U_mats, result_RMT = compressed
+    # U_mats[n] and result_RMT are already LurTensor; no re-wrapping needed.
     cgrs_new = ntuple(N) do n
         new_ql, new_cgp, new_ld = new_qlabels_per_n[n]
         CGR(symm[n], new_ql, U_mats[n], new_cgp, new_ld)
@@ -277,14 +276,14 @@ function merge_new_row(
 end
 
 
-# ─── contract ────────────────────────────────────────────────────────────────
+# ─── contract_old ────────────────────────────────────────────────────────────
 
-contract(q1, l1::Int, q2, l2::Int) = contract(q1, (l1,), q2, (l2,))
+contract_old(q1, l1::Int, q2, l2::Int) = contract_old(q1, (l1,), q2, (l2,))
 
 # Vector / LegList overload: convert to tuples and delegate to the NTuple method.
-function contract(q1::QSpace, legs1::AbstractVector{<:Integer},
-                  q2::QSpace, legs2::AbstractVector{<:Integer}; kwargs...)
-    return contract(q1, Tuple(legs1), q2, Tuple(legs2); kwargs...)
+function contract_old(q1::QSpace, legs1::AbstractVector{<:Integer},
+                      q2::QSpace, legs2::AbstractVector{<:Integer}; kwargs...)
+    return contract_old(q1, Tuple(legs1), q2, Tuple(legs2); kwargs...)
 end
 
 # ─── * operator ──────────────────────────────────────────────────────────────
@@ -325,15 +324,15 @@ function Base.:*(q1::QSpace, q2::QSpace)
 
     @assert length(legs1) > 0 "No matching contractible indices found between the two QSpace objects"
 
-    return contract_v2(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
+    return contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
 end
 
-function contract(q1::QSpace{T1, QD1, N, RD1},
-                  legs1::NTuple{CN, Int},
-                  q2::QSpace{T2, QD2, N, RD2},
-                  legs2::NTuple{CN, Int};
-                  reduce_lock::Bool=true,
-                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, CN}
+function contract_old(q1::QSpace{T1, QD1, N, RD1},
+                      legs1::NTuple{CN, Int},
+                      q2::QSpace{T2, QD2, N, RD2},
+                      legs2::NTuple{CN, Int};
+                      reduce_lock::Bool=true,
+                      verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, CN}
 
     @assert q1.symm == q2.symm "QSpace objects must share the same symmetry tuple"
     
@@ -386,8 +385,8 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
 
     for (fq1, v1) in sm1.data
         for (fq2, v2) in sm2.data
-            new_wmats = ntuple(_ -> Vector{QTensor{Float64, 2}}(), N)
-            new_RMTs  = Vector{QTensor{T, RD_out}}()
+            new_wmats = ntuple(_ -> Vector{LurTensor{Float64, 2}}(), N)
+            new_RMTs  = Vector{LurTensor{T, RD_out}}()
             
             # Two-pointer merge on ckey (both v1, v2 sorted by ckey from the sort above).
             i, j = 1, 1
@@ -406,7 +405,7 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
                     #    to get the new w-matrix: result_w[a,b,c] = sum_{bb,cc} X[bb,cc,a] * wmat1[bb,b] * wmat2[cc,c]
                     #    Efficient form: result_w[a,:,:] = wmat1' * X[:,:,a] * wmat2
                     zero_xsym = false
-                    wmats = Vector{QTensor{Float64, 2}}(undef, N)
+                    wmats = Vector{LurTensor{Float64, 2}}(undef, N)
                     for n in 1:N
                         cgr1n = r1.cgrs[n];  cgr2n = r2.cgrs[n]
                         wm1 = cgr1n.wmat.data   # (OM1, d1)
@@ -428,7 +427,7 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
                                 result_w[a, :, :] = wm1' * xarr[:, :, a] * wm2
                             end
                         end
-                        wmats[n] = QTensor(reshape(result_w, size(result_w, 1), :))
+                        wmats[n] = LurTensor(reshape(result_w, size(result_w, 1), :))
                     end
                     
                     if !zero_xsym
@@ -437,7 +436,7 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
                         # 2. Contract pre-permuted RMTs; OM pairs merged into N axes.
                         contr_RMT = _contract_RMTs(permed1[idx1], permed2[idx2],
                                                 nf1, nf2, N, CN)
-                        push!(new_RMTs, QTensor(contr_RMT))
+                        push!(new_RMTs, LurTensor(contr_RMT))
                     end
 
                     i += 1; j += 1
@@ -451,9 +450,9 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
                 r1_rep = rows1[v1[1][2]]; r2_rep = rows2[v2[1][2]]
                 new_qlabels_per_n = get_new_cgr_metadata(
                     r1_rep, r2_rep, free1, free2, legs1, legs2)
-                push!(result_rows,
-                      merge_new_row(new_wmats, new_RMTs, new_qlabels_per_n,
-                                    symm, QD_out))
+                new_row = merge_new_row(new_wmats, new_RMTs, new_qlabels_per_n,
+                                        symm, QD_out)
+                isnothing(new_row) || push!(result_rows, new_row)
             end
         end
     end
@@ -483,7 +482,7 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
 end
 
 
-# ─── contract_v2 ─────────────────────────────────────────────────────────────
+# ─── contract ────────────────────────────────────────────────────────────────
 # Optimised contraction that groups rows by *contracted* qlabels first and
 # performs a single batched GEMM per contracted sector, replacing many small
 # matrix multiplies with one large one.
@@ -499,6 +498,7 @@ end
 #      e) Accumulate results per output free-sector.
 #   3. Merge each output sector (SVD compression → output row).
 #   4. Lock reduction / build result QSpace.
+# The legacy implementation remains available as `contract_old` for tests.
 
 # ── Post-process helper ──────────────────────────────────────────────────────
 # Reshape a (F1·OM1, F2·OM2) block from the batched matmul back to the
@@ -524,23 +524,20 @@ function _reshape_contract_block(block::AbstractMatrix,
 end
 
 # ── Convenience overloads ─────────────────────────────────────────────────────
-contract_v2(q1, l1::Int, q2, l2::Int) = contract_v2(q1, (l1,), q2, (l2,))
+contract(q1, l1::Int, q2, l2::Int) = contract(q1, (l1,), q2, (l2,))
 
-function contract_v2(q1::QSpace, legs1::AbstractVector{<:Integer},
-                     q2::QSpace, legs2::AbstractVector{<:Integer}; kwargs...)
-    return contract_v2(q1, Tuple(legs1), q2, Tuple(legs2); kwargs...)
+function contract(q1::QSpace, legs1::AbstractVector{<:Integer},
+                  q2::QSpace, legs2::AbstractVector{<:Integer}; kwargs...)
+    return contract(q1, Tuple(legs1), q2, Tuple(legs2); kwargs...)
 end
 
-# TODO: Further test this function and benchmark against the original contract 
-# If it is accurate and significantly faster for large contractions, 
-# consider replacing the original contract with this version as the default.
 # ── Main entry point ──────────────────────────────────────────────────────────
-function contract_v2(q1::QSpace{T1, QD1, N, RD1},
-                     legs1::NTuple{CN, Int},
-                     q2::QSpace{T2, QD2, N, RD2},
-                     legs2::NTuple{CN, Int};
-                     reduce_lock::Bool=true,
-                     verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, CN}
+function contract(q1::QSpace{T1, QD1, N, RD1},
+                  legs1::NTuple{CN, Int},
+                  q2::QSpace{T2, QD2, N, RD2},
+                  legs2::NTuple{CN, Int};
+                  reduce_lock::Bool=true,
+                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, CN}
 
     @assert q1.symm == q2.symm "QSpace objects must share the same symmetry tuple"
 
@@ -594,10 +591,10 @@ function contract_v2(q1::QSpace{T1, QD1, N, RD1},
     FreeKey1  = NTuple{nf1, NTuple{N, Tuple{Vararg{Int}}}}
     FreeKey2  = NTuple{nf2, NTuple{N, Tuple{Vararg{Int}}}}
     OutKey    = Tuple{FreeKey1, FreeKey2}
-    WmatVec   = Vector{QTensor{Float64, 2}}
+    WmatVec   = Vector{LurTensor{Float64, 2}}
 
     sector_wmats = Dict{OutKey, NTuple{N, WmatVec}}()
-    sector_rmts  = Dict{OutKey, Vector{QTensor{T, RD_out}}}()
+    sector_rmts  = Dict{OutKey, Vector{LurTensor{T, RD_out}}}()
     sector_reps  = Dict{OutKey, Tuple{Int, Int}}()
 
     # ── 3. Main loop: batched matmul per contracted sector ───────────────────
@@ -664,15 +661,19 @@ function contract_v2(q1::QSpace{T1, QD1, N, RD1},
 
                 # ── W-matrix contraction (per symmetry) ──────────────────────
                 zero_xsym = false
-                wmats = Vector{QTensor{Float64, 2}}(undef, N)
+                wmats = Vector{LurTensor{Float64, 2}}(undef, N)
                 for n in 1:N
                     cgr1n = r1.cgrs[n];  cgr2n = r2.cgrs[n]
                     wm1 = cgr1n.wmat.data
                     wm2 = cgr2n.wmat.data
                     info = get_cgt_contr_info(r1, r2, legs1, legs2, n, symm)
                     if info === nothing
-                        # Abelian: X = [[[1.0]]], OM1=OM2=OM3=1
-                        result_w = reshape(wm1' * wm2, 1, size(wm1,2), size(wm2,2))
+                        @assert size(wm1) == (1, 1) "Abelian contraction expects q1 w-matrix to be 1x1, got size $(size(wm1))"
+                        @assert size(wm2) == (1, 1) "Abelian contraction expects q2 w-matrix to be 1x1, got size $(size(wm2))"
+                        @assert isapprox(wm1[1, 1], 1.0; atol=1e-12, rtol=1e-12) "Abelian contraction expects q1 w-matrix ≈ [1;;], got $(wm1)"
+                        @assert isapprox(wm2[1, 1], 1.0; atol=1e-12, rtol=1e-12) "Abelian contraction expects q2 w-matrix ≈ [1;;], got $(wm2)"
+                        wmats[n] = LurTensor([1.0;;])
+                        continue
                     else
                         xsym_obj = getNsave_Xsymbol(symm[n],
                                                     info.up1sp, info.dn1sp,
@@ -686,7 +687,7 @@ function contract_v2(q1::QSpace{T1, QD1, N, RD1},
                             result_w[a, :, :] = wm1' * xarr[:, :, a] * wm2
                         end
                     end
-                    wmats[n] = QTensor(reshape(result_w, size(result_w, 1), :))
+                    wmats[n] = LurTensor(reshape(result_w, size(result_w, 1), :))
                 end
 
                 zero_xsym && continue
@@ -700,12 +701,12 @@ function contract_v2(q1::QSpace{T1, QD1, N, RD1},
                 # ── Accumulate into output sector ────────────────────────────
                 out_key = (fq1, fq2)::OutKey
                 if !haskey(sector_wmats, out_key)
-                    sector_wmats[out_key] = ntuple(_ -> QTensor{Float64, 2}[], N)
-                    sector_rmts[out_key]  = QTensor{T, RD_out}[]
+                    sector_wmats[out_key] = ntuple(_ -> LurTensor{Float64, 2}[], N)
+                    sector_rmts[out_key]  = LurTensor{T, RD_out}[]
                     sector_reps[out_key]  = (i, j)
                 end
                 for n in 1:N push!(sector_wmats[out_key][n], wmats[n]) end
-                push!(sector_rmts[out_key], QTensor(contr_RMT))
+                push!(sector_rmts[out_key], LurTensor(contr_RMT))
             end
         end
     end
@@ -717,9 +718,9 @@ function contract_v2(q1::QSpace{T1, QD1, N, RD1},
         r1_idx, r2_idx = sector_reps[out_key]
         new_qlabels_per_n = get_new_cgr_metadata(
             rows1[r1_idx], rows2[r2_idx], free1, free2, legs1, legs2)
-        push!(result_rows,
-              merge_new_row(new_wmats, new_RMTs, new_qlabels_per_n,
-                            symm, QD_out))
+        new_row = merge_new_row(new_wmats, new_RMTs, new_qlabels_per_n,
+                                symm, QD_out)
+        isnothing(new_row) || push!(result_rows, new_row)
     end
 
     # ── 5. Lock reduction ────────────────────────────────────────────────────
@@ -740,3 +741,4 @@ function contract_v2(q1::QSpace{T1, QD1, N, RD1},
 
     return QSpace(symm, result_rows, final_inds, spaces_out)
 end
+
