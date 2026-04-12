@@ -483,13 +483,15 @@ end
 
 
 # ─── contract ────────────────────────────────────────────────────────────────
-# Optimised contraction that groups rows by *contracted* qlabels first and
-# performs a single batched GEMM per contracted sector, replacing many small
-# matrix multiplies with one large one.
+# Optimised contraction that sorts rows by *contracted* qlabels first and
+# performs a single batched GEMM per common contracted sector, replacing many
+# small matrix multiplies with one large one.
 #
 # Algorithm sketch:
-#   1. Build contracted-qlabel maps: cq → [row indices]  (for each QSpace)
-#   2. For each common contracted sector cq:
+#   1. Build sorted (row_index, contracted_qlabel) vectors for each QSpace.
+#      For one contracted leg this is Vector{Tuple{Int, QT}}; for multiple
+#      contracted legs the qlabel key is NTuple{CN, QT}.
+#   2. Two-pointer scan over both sorted vectors and process common sectors:
 #      a) Pre-permute & reshape each row's RMT to (F·OM, C) matrix.
 #      b) Vcat all q1 matrices → big_A;  vcat all q2 matrices → big_B.
 #      c) big_C = big_A * big_B'            ← single BLAS call
@@ -499,6 +501,40 @@ end
 #   3. Merge each output sector (SVD compression → output row).
 #   4. Lock reduction / build result QSpace.
 # The legacy implementation remains available as `contract_old` for tests.
+
+# ── Contracted-label helpers ─────────────────────────────────────────────────
+function _row_qlabel(::Type{QT}, r::row{T, QD, N}, l::Int) where {QT, T, QD, N}
+    return ntuple(n -> r.cgrs[n].qlabels[r.cgrs[n].cgp[l]], N)::QT
+end
+
+_contracted_qlabel_type(::Type{QT}, ::Val{1}) where {QT} = QT
+_contracted_qlabel_type(::Type{QT}, ::Val{CN}) where {QT, CN} = NTuple{CN, QT}
+
+_contracted_qlabel(::Type{QT}, r::row, legs::NTuple{1, Int}) where {QT} =
+    _row_qlabel(QT, r, legs[1])
+
+_contracted_qlabel(::Type{QT}, r::row, legs::NTuple{CN, Int}) where {QT, CN} =
+    ntuple(i -> _row_qlabel(QT, r, legs[i]), CN)
+
+function _contracted_qlabel_entries(::Type{QT}, rows::AbstractVector{<:row},
+                                    legs::NTuple{CN, Int}) where {QT, CN}
+    CQT = _contracted_qlabel_type(QT, Val(CN))
+    entries = Vector{Tuple{Int, CQT}}(undef, length(rows))
+    for i in eachindex(rows)
+        entries[i] = (i, _contracted_qlabel(QT, rows[i], legs)::CQT)
+    end
+    return sort!(entries; by=last, alg=MergeSort)
+end
+
+function _contracted_qlabel_run(entries::AbstractVector{Tuple{Int, CQT}},
+                                first_pos::Int) where {CQT}
+    key = entries[first_pos][2]
+    next_pos = first_pos + 1
+    while next_pos <= lastindex(entries) && entries[next_pos][2] == key
+        next_pos += 1
+    end
+    return key, first_pos:(next_pos - 1), next_pos
+end
 
 # ── Post-process helper ──────────────────────────────────────────────────────
 # Reshape a (F1·OM1, F2·OM2) block from the batched matmul back to the
@@ -532,12 +568,12 @@ function contract(q1::QSpace, legs1::AbstractVector{<:Integer},
 end
 
 # ── Main entry point ──────────────────────────────────────────────────────────
-function contract(q1::QSpace{T1, QD1, N, RD1},
+function contract(q1::QSpace{T1, QD1, N, RD1, QT},
                   legs1::NTuple{CN, Int},
-                  q2::QSpace{T2, QD2, N, RD2},
+                  q2::QSpace{T2, QD2, N, RD2, QT},
                   legs2::NTuple{CN, Int};
                   reduce_lock::Bool=true,
-                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, CN}
+                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, CN}
 
     @assert q1.symm == q2.symm "QSpace objects must share the same symmetry tuple"
 
@@ -574,22 +610,13 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
     rows1 = q1.rows
     rows2 = q2.rows
 
-    # ── 1. Build contracted-qlabel maps ──────────────────────────────────────
-    cmap1 = Dict{Any, Vector{Int}}()
-    for (i, r) in enumerate(rows1)
-        ck = Tuple(_row_qlabel(r, l) for l in legs1)
-        push!(get!(cmap1, ck, Int[]), i)
-    end
-
-    cmap2 = Dict{Any, Vector{Int}}()
-    for (j, r) in enumerate(rows2)
-        ck = Tuple(_row_qlabel(r, l) for l in legs2)
-        push!(get!(cmap2, ck, Int[]), j)
-    end
+    # ── 1. Build sorted contracted-qlabel vectors ────────────────────────────
+    contracted_entries1 = _contracted_qlabel_entries(QT, rows1, legs1)
+    contracted_entries2 = _contracted_qlabel_entries(QT, rows2, legs2)
 
     # ── 2. Output-sector accumulator ─────────────────────────────────────────
-    FreeKey1  = NTuple{nf1, NTuple{N, Tuple{Vararg{Int}}}}
-    FreeKey2  = NTuple{nf2, NTuple{N, Tuple{Vararg{Int}}}}
+    FreeKey1  = NTuple{nf1, QT}
+    FreeKey2  = NTuple{nf2, QT}
     OutKey    = Tuple{FreeKey1, FreeKey2}
     WmatVec   = Vector{LurTensor{Float64, 2}}
 
@@ -598,16 +625,30 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
     sector_reps  = Dict{OutKey, Tuple{Int, Int}}()
 
     # ── 3. Main loop: batched matmul per contracted sector ───────────────────
-    for (ck, idxs1) in cmap1
-        haskey(cmap2, ck) || continue
-        idxs2 = cmap2[ck]
-        n1, n2 = length(idxs1), length(idxs2)
+    pos1 = firstindex(contracted_entries1)
+    pos2 = firstindex(contracted_entries2)
+    while pos1 <= lastindex(contracted_entries1) && pos2 <= lastindex(contracted_entries2)
+        ckey1 = contracted_entries1[pos1][2]
+        ckey2 = contracted_entries2[pos2][2]
+
+        if isless(ckey1, ckey2)
+            _, _, pos1 = _contracted_qlabel_run(contracted_entries1, pos1)
+            continue
+        elseif isless(ckey2, ckey1)
+            _, _, pos2 = _contracted_qlabel_run(contracted_entries2, pos2)
+            continue
+        end
+
+        _, run1, next_pos1 = _contracted_qlabel_run(contracted_entries1, pos1)
+        _, run2, next_pos2 = _contracted_qlabel_run(contracted_entries2, pos2)
+        n1, n2 = length(run1), length(run2)
 
         # 3a. Compute per-row sizes and total dimensions for big_A, big_B.
         szinfo1 = Vector{Tuple{Vector{Int}, Vector{Int}}}(undef, n1)
         rsizes1 = Vector{Int}(undef, n1)
         ncols   = 0   # contracted dimension (same for all rows in this sector)
-        for (ii, i) in enumerate(idxs1)
+        for (ii, p1) in enumerate(run1)
+            i = contracted_entries1[p1][1]
             R     = rows1[i].RMT.data
             sz_f  = [size(R, l) for l in free1]
             sz_om = [size(R, QD1+n) for n in 1:N]
@@ -620,7 +661,8 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
 
         szinfo2 = Vector{Tuple{Vector{Int}, Vector{Int}}}(undef, n2)
         rsizes2 = Vector{Int}(undef, n2)
-        for (jj, j) in enumerate(idxs2)
+        for (jj, p2) in enumerate(run2)
+            j = contracted_entries2[p2][1]
             R     = rows2[j].RMT.data
             sz_f  = [size(R, l) for l in free2]
             sz_om = [size(R, QD2+n) for n in 1:N]
@@ -634,13 +676,15 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
 
         # 3b. Allocate big matrices and fill by permuting each RMT in-place.
         big_A = Matrix{T1}(undef, roff1[end], ncols)
-        for (ii, i) in enumerate(idxs1)
+        for (ii, p1) in enumerate(run1)
+            i = contracted_entries1[p1][1]
             P = permutedims(rows1[i].RMT.data, perm1)
             big_A[roff1[ii]+1:roff1[ii+1], :] = reshape(P, rsizes1[ii], ncols)
         end
 
         big_B = Matrix{T2}(undef, roff2[end], ncols)
-        for (jj, j) in enumerate(idxs2)
+        for (jj, p2) in enumerate(run2)
+            j = contracted_entries2[p2][1]
             P = permutedims(rows2[j].RMT.data, perm2)
             big_B[roff2[jj]+1:roff2[jj+1], :] = reshape(P, rsizes2[jj], ncols)
         end
@@ -649,14 +693,16 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
         big_C = big_A * big_B'
 
         # 3d. Process each (row_i, row_j) pair.
-        for (ii, i) in enumerate(idxs1)
+        for (ii, p1) in enumerate(run1)
+            i = contracted_entries1[p1][1]
             r1  = rows1[i]
-            fq1 = Tuple(_row_qlabel(r1, l) for l in free1)::FreeKey1
+            fq1 = ntuple(k -> _row_qlabel(QT, r1, free1[k]), nf1)::FreeKey1
             sz_f1, sz_om1 = szinfo1[ii]
 
-            for (jj, j) in enumerate(idxs2)
+            for (jj, p2) in enumerate(run2)
+                j = contracted_entries2[p2][1]
                 r2  = rows2[j]
-                fq2 = Tuple(_row_qlabel(r2, l) for l in free2)::FreeKey2
+                fq2 = ntuple(k -> _row_qlabel(QT, r2, free2[k]), nf2)::FreeKey2
                 sz_f2, sz_om2 = szinfo2[jj]
 
                 # ── W-matrix contraction (per symmetry) ──────────────────────
@@ -709,6 +755,8 @@ function contract(q1::QSpace{T1, QD1, N, RD1},
                 push!(sector_rmts[out_key], LurTensor(contr_RMT))
             end
         end
+        pos1 = next_pos1
+        pos2 = next_pos2
     end
 
     # ── 4. Merge each output sector ──────────────────────────────────────────

@@ -19,12 +19,13 @@ comm(A, B) = A * B - B * A
 include("QSpace.jl")
 
 export QSpace, LurTensor, QIndex, Itag, CGR, row
+export ProductSymm, productsymm, product_symms, nsymms
 export LocalSpaceOptions, SpinOptions, FermionOptions, FermionSOptions
 export Z, U1, SU, SO, Sp
 export getLocalSpace, getIdentity, get1jtensor, legflip, contract
 export eigen_full, discard_eigen
 export svd_leg, svd_cgtsvd, get_new_cgp
-export empty_qspace, zero_qlabels, getvac
+export empty_qspace, qlabeltype, zero_qlabels, getvac
 export addSingleton, deleteSingleton, ⊗
 export oplus, getsub
 export complete_oplus_matrix

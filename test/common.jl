@@ -1,5 +1,6 @@
 ﻿using LinearAlgebra
 using Random
+using SparseArrays
 using Test
 using LurCGT
 using QSpaces

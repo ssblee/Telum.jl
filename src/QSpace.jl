@@ -4,6 +4,26 @@ include("LurTensor.jl")
 include("utils.jl")
 include("localspaces/localspaces.jl")
 
+# A compile-time tag for a direct product of symmetry groups. QSpaces records
+# symmetry identities in type parameters, while `q.symm` remains available as a
+# computed property for compatibility with existing code.
+abstract type ProductSymm{Syms<:Tuple{Vararg{Symmetry}}} <: Symmetry end
+
+ProductSymm(syms::Type{<:Symmetry}...) = ProductSymm{Tuple{syms...}}
+
+product_symms(::Type{<:ProductSymm{Syms}}) where {Syms} = Tuple(Syms.parameters)
+nsymms(::Type{<:ProductSymm{Syms}}) where {Syms} = length(Syms.parameters)
+
+function productsymm(symm::Tuple)
+    all(s -> s isa Type{<:Symmetry}, symm) || throw(ArgumentError(
+        "all entries of a product symmetry must be symmetry types, got $symm"))
+    return ProductSymm(symm...)
+end
+
+productsymm(::Type{PS}) where {PS<:ProductSymm} = PS
+product_symms(symm::Tuple) = product_symms(productsymm(symm))
+nsymms(symm::Tuple) = nsymms(productsymm(symm))
+
 # ─── Tag helpers ──────────────────────────────────────────────────────────────
 #
 # Tags are stored internally as an Itag wrapper around a canonical
@@ -118,8 +138,7 @@ change_dir(idx::QIndex)  = QIndex(idx.itags, idx.dir == '+' ? '-' : '+', idx.ple
 green(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, true)
 change_green(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, !idx.green)
 
-struct CGR{QD, NZ}
-    symm::Any   # symmetry type, e.g. SU{2}, U1
+struct CGR{QD, NZ, S<:Symmetry}
     qlabels::NTuple{QD, NTuple{NZ, Int}}
     wmat::LurTensor{Float64, 2}
     cgp::NTuple{QD, Int}
@@ -127,16 +146,48 @@ struct CGR{QD, NZ}
     legdir::Tuple{Int, Int}  
 end
 
-# Constructor for QD=0 case: infer NZ from the symmetry type
-function CGR(symm::Type{S}, qlabels::Tuple{}, wmat::LurTensor{Float64, 2}, 
-             cgp::Tuple{}, legdir::Tuple{Int, Int}) where {S}
-    NZ = nzops(S)
-    CGR{0, NZ}(symm, qlabels, wmat, cgp, legdir)
+function CGR(symm::Type{S},
+             qlabels::NTuple{QD, NTuple{NZ, Int}},
+             wmat::LurTensor{Float64, 2},
+             cgp::NTuple{QD, Int},
+             legdir::Tuple{Int, Int}) where {S<:Symmetry, QD, NZ}
+    return CGR{QD, NZ, S}(qlabels, wmat, cgp, legdir)
 end
 
-struct row{T, QD, N, RD}
-    cgrs::NTuple{N, CGR{QD}}
+# Constructor for QD=0 case: infer NZ from the symmetry type
+function CGR(symm::Type{S}, qlabels::Tuple{}, wmat::LurTensor{Float64, 2}, 
+             cgp::Tuple{}, legdir::Tuple{Int, Int}) where {S<:Symmetry}
+    NZ = nzops(S)
+    CGR{0, NZ, S}(qlabels, wmat, cgp, legdir)
+end
+
+cgrsymm(::Type{<:CGR{QD, NZ, S}}) where {QD, NZ, S} = S
+cgrsymm(::CGR{QD, NZ, S}) where {QD, NZ, S} = S
+
+@inline function Base.getproperty(cgr::CGR, name::Symbol)
+    name === :symm && return cgrsymm(cgr)
+    return getfield(cgr, name)
+end
+
+Base.propertynames(::CGR, private::Bool=false) = (:symm, :qlabels, :wmat, :cgp, :legdir)
+
+_cgr_qd(::CGR{QD}) where {QD} = QD
+
+cgrstype(::Type{PS}, ::Val{QD}) where {PS<:ProductSymm, QD} =
+    Tuple{(CGR{QD, nzops(S), S} for S in product_symms(PS))...}
+
+struct row{T, QD, N, RD, CGRS<:NTuple{N, CGR{QD}}}
+    cgrs::CGRS
     RMT::LurTensor{T, RD}
+end
+
+function row(cgrs::CGRS, RMT::LurTensor{T, RD}) where {CGRS<:Tuple, T, RD}
+    N = length(cgrs)
+    N > 0 || throw(ArgumentError("row requires at least one CGR"))
+    QD = _cgr_qd(first(cgrs))
+    all(cgr -> _cgr_qd(cgr) == QD, cgrs) ||
+        throw(ArgumentError("all CGRs in a row must have the same tensor rank"))
+    return row{T, QD, N, RD, CGRS}(cgrs, RMT)
 end
 
 # ─── Pretty-printing helpers ────────────────────────────────────────────────
@@ -291,8 +342,7 @@ function get_rows(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Vararg{Int}}}}, 
             push!(wmats, LurTensor(wmat))
         end
         RMT = LurTensor(block)
-        cgrs = CGR{QD}[]
-        for i in 1:N
+        cgrs = ntuple(N) do i
             qforsymm = Tuple(qlabels[j][i] for j in 1:QD)
             # NZ = length(qforsymm[1])
             if QD == 2
@@ -304,9 +354,9 @@ function get_rows(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Vararg{Int}}}}, 
             if QD == 3 && qforsymm[2] > qforsymm[3]
                 qforsymm = (qforsymm[1], qforsymm[3], qforsymm[2])
             end
-            push!(cgrs, CGR(symm[i], qforsymm, wmats[i], cgp, legdir))
+            CGR(symm[i], qforsymm, wmats[i], cgp, legdir)
         end
-        push!(rows, row(Tuple(cgrs), RMT))
+        push!(rows, row(cgrs, RMT))
     end
     return rows
 end
@@ -391,22 +441,27 @@ end
 # T: type of element in the RMT array, can be Float64, ComplexF64, etc.
 # QD: The rank of tensor (# of legs), N: The number of symmetries
 # RD: The rank of RMT array, which is equal to QD + N
-struct QSpace{T, QD, N, RD}
-    symm::NTuple{N, Any}
+# QT: The qlabel type for one leg sector, inferred from the symmetries
+struct QSpace{T, QD, N, RD, QT, PS<:ProductSymm, CGRS<:NTuple{N, CGR{QD}}}
     # Data rows for QSpace object
-    rows::Vector{row{T, QD, N, RD}}
+    rows::Vector{row{T, QD, N, RD, CGRS}}
     inds::NTuple{QD, QIndex}
     # Space list for each leg: vector of (qlabels, RMT_dim) pairs
     # Similar to leginfo.splist but precomputed for all legs
-    spaces::NTuple{QD, Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}}
+    spaces::NTuple{QD, Vector{Tuple{QT, Int}}}
 
     # Constructor with explicit spaces (for efficiency when spaces are already known)
     function QSpace(symm::NTuple{N, Any}, 
-        rows::Vector{row{T, QD, N, RD}}, 
+        rows::AbstractVector{<:row{T, QD, N, RD}},
         inds::NTuple{QD, QIndex},
-        spaces::NTuple{QD, Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}}) where {T, QD, N, RD}
+        spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {T, QD, N, RD}
 
-        q = new{T, QD, N, RD}(symm, rows, inds, spaces)
+        QT = qlabeltype(symm)
+        PS = productsymm(symm)
+        CGRS = cgrstype(PS, Val(QD))
+        typed_rows = Vector{row{T, QD, N, RD, CGRS}}(rows)
+        typed_spaces = ntuple(l -> convert(Vector{Tuple{QT, Int}}, spaces[l]), QD)
+        q = new{T, QD, N, RD, QT, PS, CGRS}(typed_rows, inds, typed_spaces)
         normalize_qspace!(q)
         _orient_wmats!(q)
         _drop_small_rows!(q)
@@ -419,6 +474,18 @@ struct QSpace{T, QD, N, RD}
         return q
     end
 end
+
+productsymm(::QSpace{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} = PS
+product_symms(q::QSpace) = product_symms(productsymm(q))
+nsymms(q::QSpace) = nsymms(productsymm(q))
+
+@inline function Base.getproperty(q::QSpace, name::Symbol)
+    name === :symm && return product_symms(q)
+    return getfield(q, name)
+end
+
+Base.propertynames(::QSpace, private::Bool=false) =
+    private ? (:symm, :rows, :inds, :spaces) : (:symm, :rows, :inds, :spaces)
 
 # Drop rows whose norm² contribution is below cutoff² × total norm² (relative threshold).
 # For QD == 2 the effective norm² per row is dim_r * ‖RMT_r‖² (see normalize_qspace!);
@@ -477,6 +544,9 @@ function QSpace(q::QSpace{T, QD, N, RD}, inds::NTuple{QD, QIndex}) where {T, QD,
 end
 
 Base.getindex(q::QSpace, i::Int) = q.rows[i]
+Base.length(q::QSpace) = length(q.rows)
+Base.firstindex(q::QSpace) = firstindex(q.rows)
+Base.lastindex(q::QSpace) = lastindex(q.rows)
 
 function _normalize_qspace_row_index(i::Int, nrows::Int)
     i == 0 && throw(BoundsError(1:nrows, i))
@@ -2307,7 +2377,8 @@ function empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, QIndex};
                       T::Type=Float64) where {N, QD}
     RD = QD + N
     rows   = Vector{row{T, QD, N, RD}}()
-    spaces = ntuple(_ -> Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}(), QD)
+    QT = qlabeltype(symm)
+    spaces = ntuple(_ -> Vector{Tuple{QT, Int}}(), QD)
     return QSpace(symm, rows, inds, spaces)
 end
 
@@ -2319,6 +2390,20 @@ function Base.zero(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
     rows = Vector{row{T, QD, N, RD}}()
     return QSpace(q.symm, rows, q.inds, _copy_spaces_tuple(q.spaces))
 end
+
+"""
+    qlabeltype(symm::NTuple{N, Any}) where {N}
+    qlabeltype(q::QSpace)
+
+Return the qlabel type for one leg sector over the symmetries in `symm` or `q`.
+
+For example, `(U1, SU{3})` returns `Tuple{Tuple{Int}, NTuple{2, Int}}`.
+"""
+function qlabeltype(symm::NTuple{N, Any}) where {N}
+    return Tuple{ntuple(n -> NTuple{nzops(symm[n]), Int}, N)...}
+end
+
+qlabeltype(::QSpace{T, QD, N, RD, QT}) where {T, QD, N, RD, QT} = QT
 
 """
     zero_qlabels(symm::NTuple{N, Any}) where {N}
@@ -2395,7 +2480,8 @@ function _delete_singleton_impl(q::QSpace{T, QD, N, RD}, positions) where {T, QD
     new_rd = RD - length(positions)
 
     keep_inds = [q.inds[leg] for leg in 1:QD if leg ∉ positions]
-    keep_spaces = [q.spaces[leg] for leg in 1:QD if leg ∉ positions]
+    QT = qlabeltype(q)
+    keep_spaces = Vector{Tuple{QT, Int}}[q.spaces[leg] for leg in 1:QD if leg ∉ positions]
 
     new_rows = row{T, new_qd, N, new_rd}[]
     for r in q.rows
@@ -2601,7 +2687,8 @@ function addSingleton(q::QSpace{T, QD, N, RD}, legs;
     trivial_qlabels = zero_qlabels(q)
 
     new_inds = Vector{QIndex}(undef, new_qd)
-    new_spaces = Vector{Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}}(undef, new_qd)
+    QT = qlabeltype(q)
+    new_spaces = Vector{Vector{Tuple{QT, Int}}}(undef, new_qd)
     singleton_space = [(trivial_qlabels, 1)]
 
     old_leg = 1
@@ -2654,7 +2741,8 @@ function getvac(q::QSpace{T, QD, N, RD},
     rmt_data = fill(one(T), ntuple(_ -> 1, N + 2))
     rows = row{T, 2, N, N + 2}[row(cgrs, LurTensor(rmt_data))]
     inds = (QIndex(itags[1], '+'), QIndex(itags[2], '-'))
-    space_template = Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}([space_entry])
+    QT = qlabeltype(q)
+    space_template = Vector{Tuple{QT, Int}}([space_entry])
     spaces = (copy(space_template), copy(space_template))
 
     return QSpace(q.symm, rows, inds, spaces)

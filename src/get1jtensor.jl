@@ -38,18 +38,17 @@ function get1jtensor(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
     return get1jtensor(q, leg)
 end
 
-function get1jtensor(leginfo::leginfo{N}) where N
+function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
     rows1 = row{Float64, 2, N, 2+N}[]
 
-    symm, ind = leginfo.symm, leginfo.ind
+    symm, ind = product_symms(PS), info.ind
     inds1 = (change_dir(ind), change_dir(change_green(ind)))
     dir1 = inds1[1].dir
-    for (qlabels, RMTd) in leginfo.splist
+    for (qlabels, RMTd) in info.splist
         RMT1 = LurTensor(reshape(Matrix{Float64}(I, RMTd, RMTd), RMTd, RMTd, (1 for _=1:N)...))
         dual_qlabels = Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N)
 
-        cgrs1 = CGR{2}[]
-        for n in 1:N
+        cgrs1 = ntuple(N) do n
             spdim = dimension(symm[n], qlabels[n])
             cgr_qs1 = sort((qlabels[n], dual_qlabels[n]))
             if qlabels[n] == dual_qlabels[n] cgp1 = (1, 2)
@@ -58,17 +57,17 @@ function get1jtensor(leginfo::leginfo{N}) where N
             wmat1 = LurTensor([sqrt(spdim);;])
             legdir1 = dir1 == '+' ? (2, 0) : (0, 2)
 
-            push!(cgrs1, CGR(symm[n], cgr_qs1, wmat1, cgp1, legdir1))
+            CGR(symm[n], cgr_qs1, wmat1, cgp1, legdir1)
         end
 
-        push!(rows1, row(Tuple(cgrs1), RMT1))
+        push!(rows1, row(cgrs1, RMT1))
     end
 
     # leg 1 = original space, leg 2 = dual space
-    ET = eltype(leginfo.splist)
+    ET = eltype(info.splist)
     dual_splist = sort!(ET[(Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N), RMTd) 
-                           for (qlabels, RMTd) in leginfo.splist], by=x->x[1])
-    spaces1 = (leginfo.splist, dual_splist)
+                           for (qlabels, RMTd) in info.splist], by=x->x[1])
+    spaces1 = (info.splist, dual_splist)
 
     q1 = QSpace(symm, rows1, inds1, spaces1)
     return q1

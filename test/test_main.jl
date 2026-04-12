@@ -1030,6 +1030,48 @@ end
     @test zero_qlabels(q0.I) == ((0,), (0,))
 end
 
+@testset "qlabeltype" begin
+    q_empty = empty_qspace((U1, SU{3}), (QIndex('+'), QIndex('-')))
+    expected = Tuple{Tuple{Int}, NTuple{2, Int}}
+    expected_ps = ProductSymm{Tuple{U1, SU{3}}}
+
+    @test qlabeltype(q_empty) == expected
+    @test qlabeltype(q_empty.symm) == expected
+    @test typeof(q_empty).parameters[5] == expected
+    @test typeof(q_empty).parameters[6] == expected_ps
+    @test typeof(q_empty).parameters[7] == Tuple{CGR{2, 1, U1}, CGR{2, 2, SU{3}}}
+    @test !(:symm in fieldnames(typeof(q_empty)))
+    @test productsymm(q_empty) == expected_ps
+    @test productsymm(q_empty.symm) == expected_ps
+    @test product_symms(q_empty) == (U1, SU{3})
+    @test nsymms(q_empty) == 2
+    @test eltype(q_empty.spaces[1]) == Tuple{expected, Int}
+    @test QSpaces._contracted_qlabel_entries(expected, q_empty.rows, (1,)) isa Vector{Tuple{Int, expected}}
+    @test QSpaces._contracted_qlabel_entries(expected, q_empty.rows, (1, 2)) isa Vector{Tuple{Int, NTuple{2, expected}}}
+
+    q_multi = empty_qspace((U1, SU{2}, SU{3}), (QIndex('+'),))
+    @test qlabeltype(q_multi) == Tuple{Tuple{Int}, Tuple{Int}, NTuple{2, Int}}
+    @test typeof(q_multi).parameters[5] == Tuple{Tuple{Int}, Tuple{Int}, NTuple{2, Int}}
+    @test productsymm(q_multi) == ProductSymm{Tuple{U1, SU{2}, SU{3}}}
+    @test typeof(q_multi).parameters[7] == Tuple{CGR{1, 1, U1}, CGR{1, 1, SU{2}}, CGR{1, 2, SU{3}}}
+
+    q_local = getLocalSpace(FermionSOptions(U1, SU{2}, nothing, 1)).I
+    @test !(:symm in fieldnames(typeof(q_local)))
+    @test all(!(:symm in fieldnames(typeof(cgr))) for r in q_local.rows for cgr in r.cgrs)
+    @test typeof(q_local.rows).parameters[1].parameters[5] == Tuple{CGR{2, 1, U1}, CGR{2, 1, SU{2}}}
+    info = QSpaces.leginfo(q_local, 1)
+    @test !(:symm in fieldnames(typeof(info)))
+    @test info.symm == q_local.symm
+    @test productsymm(info) == productsymm(q_local)
+    @test product_symms(info) == product_symms(q_local)
+    @test nsymms(info) == nsymms(q_local)
+    @test qlabeltype(info) == qlabeltype(q_local)
+    @test typeof(info).parameters[2] == qlabeltype(q_local)
+    @test typeof(info).parameters[3] == productsymm(q_local)
+    @test eltype(info.splist) == Tuple{qlabeltype(q_local), Int}
+    @test typeof(QSpaces.leginfo(q_local.symm, q_local.inds[1], q_local.spaces[1])) == typeof(info)
+end
+
 @testset "getsub sector slicing" begin
     option = FermionSOptions(U1, SU{2}, SU{3}, 3)
     q0 = getLocalSpace(option)

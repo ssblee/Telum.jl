@@ -69,6 +69,8 @@ function _svd_to_cgridx(cgr::CGR, lidxs)
     return Tuple(Int[cgr.cgp[l] for l in lidxs])
 end
 
+_svd_cgr_leftlegs(cgr::CGR, left_legs) = _svd_to_cgridx(cgr, left_legs)
+
 function _svd_abelian_intermediate_q(cgr::CGR{QD}, left_legs_canon) where {QD}
     S = cgr.symm
     nin = cgr.legdir[1]
@@ -109,6 +111,12 @@ function _svd_cgr_split_spaces(cgr::CGR{QD},
     return left_spaces, right_spaces
 end
 
+function _svd_cgr_split_spaces(cgr::CGR{QD}, left_legs_canon) where {QD}
+    leftset = Set(left_legs_canon)
+    right_legs_canon = Tuple(cgr.cgp[l] for l in 1:QD if cgr.cgp[l] ∉ leftset)
+    return _svd_cgr_split_spaces(cgr, left_legs_canon, right_legs_canon)
+end
+
 function _get_svd_cgr_split_blocks(cgr::CGR{QD}, left_legs, right_legs) where {QD}
     left_legs_canon = _svd_to_cgridx(cgr, left_legs)
     right_legs_canon = _svd_to_cgridx(cgr, right_legs)
@@ -145,6 +153,12 @@ function _get_svd_cgr_split_blocks(cgr::CGR{QD}, left_legs, right_legs) where {Q
         push!(blocks, BlockInfo((q=q, omL=omL, omR=omR, coeffs=coeffs)))
     end
     return blocks
+end
+
+function _get_svd_cgr_split_blocks(cgr::CGR{QD}, left_legs) where {QD}
+    leftset = Set(left_legs)
+    right_legs = Tuple(l for l in 1:QD if l ∉ leftset)
+    return _get_svd_cgr_split_blocks(cgr, left_legs, right_legs)
 end
 
 function _reduce_svd_cgr_block(block,
@@ -427,6 +441,14 @@ function _get_svd_cgt_split_rows(q::QSpace{T, QD, N, RD},
     return blocks_by_symm
 end
 
+function _get_svd_cgt_split_rows(q::QSpace{T, QD, N, RD},
+                                 left_legs;
+                                 tol::Float64 = 1e-12) where {T, QD, N, RD}
+    left_legs_ = _normalize_svd_left_legs(left_legs, QD)
+    right_legs_ = [l for l in 1:QD if l ∉ left_legs_]
+    return _get_svd_cgt_split_rows(q, Tuple(left_legs_), Tuple(right_legs_); tol=tol)
+end
+
 function _build_svd_block_lookup(blocks)
     lookup = Dict{Any, Any}()
     for block in blocks
@@ -681,7 +703,7 @@ function _build_svd_cgtsvd_S(symm,
                              right_tag::AbstractString,
                              sector_values)
     N = length(symm)
-    base = get1jtensor(leginfo{N}(symm, QIndex(left_tag, '-'), bond_splist))
+    base = get1jtensor(leginfo(symm, QIndex(left_tag, '-'), bond_splist))
     rows_S = row{Float64, 2, N, 2 + N}[]
 
     for r in base.rows
@@ -827,6 +849,8 @@ function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
         q, prep.left_legs, prep.right_legs, left_tag, right_tag, prep;
         cutoff=cutoff, Nkeep=Nkeep)
 end
+
+svd_cgtsvd(q::QSpace, args...; kwargs...) = svd(q, args...; kwargs...)
 
 function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
                     left_tag::AbstractString = "svdL",
@@ -1178,4 +1202,3 @@ function svd_old(q::QSpace{T, QD, N, RD},
     left_legs = _select_svd_left_legs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return svd_old(q, left_legs, left_tag, right_tag; cutoff=cutoff, Nkeep=Nkeep)
 end
-
