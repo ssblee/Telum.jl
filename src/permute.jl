@@ -1,4 +1,4 @@
-﻿# ─── permutedims ─────────────────────────────────────────────────────────
+# ─── permutedims ─────────────────────────────────────────────────────────
 #
 # Permute the legs of a QSpace object.
 #
@@ -88,14 +88,14 @@ function _permute_cgr(cgr::CGR{QD, NZ},
 
     if isnothing(cgtperm_obj)
         # Permutation is identity, or symmetry is Abelian
-        return CGR(cgr.symm, cgr.qlabels, cgr.wmat, final_cgp, cgr.legdir)
+        return CGR(symm(cgr), cgr.qlabels, cgr.wmat, final_cgp, cgr.legdir)
     end
     
     # Apply CGTperm. CGTperm transforms from old OM basis to new OM basis
     new_wmat_data = cgtperm_obj.perm_arr * cgr.wmat.data
     new_wmat = LurTensor(new_wmat_data)
     
-    return CGR(cgr.symm, cgr.qlabels, new_wmat, final_cgp, cgr.legdir)
+    return CGR(symm(cgr), cgr.qlabels, new_wmat, final_cgp, cgr.legdir)
 end
 
 # Permute a row: permute CGRs and RMT
@@ -136,9 +136,9 @@ function Base.permutedims(q::QSpace{T, QD, N, RD}, perm) where {T, QD, N, RD}
     new_spaces = Tuple(q.spaces[perm[l]] for l in 1:QD)
     
     # 3 & 4. Permute each row (CGRs and RMT)
-    new_rows = row{T, QD, N, RD}[_permute_row(r, perm, q.symm) for r in q.rows]
+    new_rows = row{T, QD, N, RD}[_permute_row(r, perm, symm(q)) for r in q.rows]
     
     # 5. Assemble and return new QSpace with precomputed spaces
-    return QSpace(q.symm, new_rows, new_inds, new_spaces)
+    return QSpace(symm(q), new_rows, new_inds, new_spaces)
 end
 

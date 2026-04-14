@@ -1,12 +1,12 @@
-﻿using Printf
+using Printf
 using LinearAlgebra
 include("LurTensor.jl")
 include("utils.jl")
 include("localspaces/localspaces.jl")
 
 # A compile-time tag for a direct product of symmetry groups. QSpaces records
-# symmetry identities in type parameters, while `q.symm` remains available as a
-# computed property for compatibility with existing code.
+# symmetry identities in type parameters; use `symm(q)` to retrieve them
+# without going through dynamic property access.
 abstract type ProductSymm{Syms<:Tuple{Vararg{Symmetry}}} <: Symmetry end
 
 ProductSymm(syms::Type{<:Symmetry}...) = ProductSymm{Tuple{syms...}}
@@ -163,6 +163,7 @@ end
 
 cgrsymm(::Type{<:CGR{QD, NZ, S}}) where {QD, NZ, S} = S
 cgrsymm(::CGR{QD, NZ, S}) where {QD, NZ, S} = S
+@inline symm(cgr::CGR) = cgrsymm(cgr)
 
 @inline function Base.getproperty(cgr::CGR, name::Symbol)
     name === :symm && return cgrsymm(cgr)
@@ -200,7 +201,7 @@ function _label_widths(cgrs::Tuple{Vararg{<:CGR}},
     N = length(cgrs)
     map(1:N) do n
         cgr  = cgrs[n]
-        s    = isnothing(symm) ? cgr.symm : symm[n]
+        s    = isnothing(symm) ? cgrsymm(cgr) : symm[n]
         vals = (v for ql in cgr.qlabels for v in ql)
         mxabs = maximum(abs, vals, init=0)
         needs_sign = isnothing(s) ? any(<(0), vals) : (s <: U1)
@@ -236,7 +237,7 @@ function _print_cgt_dims(io::IO, cgrs::NTuple{N, CGR{QD}},
                          symm::Union{Tuple, Nothing} = nothing) where {N, QD}
     first = true
     for n in 1:N
-        s = isnothing(symm) ? cgrs[n].symm : symm[n]
+        s = isnothing(symm) ? cgrsymm(cgrs[n]) : symm[n]
         !isnothing(s) && isabelian(s) && continue
         if isnothing(s)
             dim_str = string(size(cgrs[n].wmat.data, 1))
@@ -300,21 +301,23 @@ function Base.show(io::IO, ::MIME"text/plain", r::row{T, QD, N, RD}) where {T, Q
     # Pre-compute column widths for aligned cgr lines.
     # Per-label width for cgr n (raw labels, sign from embedded symm):
     vws = map(r.cgrs) do cgr
-        has_neg = cgr.symm <: U1
+        has_neg = cgrsymm(cgr) <: U1
         mxabs = maximum(abs, (v for ql in cgr.qlabels for v in ql), init=0)
         ndigits(max(mxabs, 1)) + (has_neg ? 1 : 0)
     end
     # Fixed-width prefix: "  SYMNAME  wmat=NxM  "
     prefix_w = maximum(1:N) do n
         cgr = r.cgrs[n]
-        sym_str = isnothing(cgr.symm) ? "cgr[$n]" : totxt(cgr.symm)
+        S = cgrsymm(cgr)
+        sym_str = isnothing(S) ? "cgr[$n]" : totxt(S)
         length("  $(rpad(sym_str, 4))  wmat=$(join(size(cgr.wmat.data),"x"))  ")
     end
 
     # cgr lines: aligned prefix, raw qlabels, cgp, scalar wmat
     for n in 1:N
         cgr = r.cgrs[n]
-        sym_str = isnothing(cgr.symm) ? "cgr[$n]" : totxt(cgr.symm)
+        S = cgrsymm(cgr)
+        sym_str = isnothing(S) ? "cgr[$n]" : totxt(S)
         prefix = "  $(rpad(sym_str, 4))  wmat=$(join(size(cgr.wmat.data),"x"))  "
         print(io, rpad(prefix, prefix_w), "[")
         for (l, ql) in enumerate(cgr.qlabels)
@@ -477,15 +480,9 @@ end
 
 productsymm(::QSpace{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} = PS
 product_symms(q::QSpace) = product_symms(productsymm(q))
+@inline symm(::QSpace{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
+    product_symms(PS)
 nsymms(q::QSpace) = nsymms(productsymm(q))
-
-@inline function Base.getproperty(q::QSpace, name::Symbol)
-    name === :symm && return product_symms(q)
-    return getfield(q, name)
-end
-
-Base.propertynames(::QSpace, private::Bool=false) =
-    private ? (:symm, :rows, :inds, :spaces) : (:symm, :rows, :inds, :spaces)
 
 # Drop rows whose norm² contribution is below cutoff² × total norm² (relative threshold).
 # For QD == 2 the effective norm² per row is dim_r * ‖RMT_r‖² (see normalize_qspace!);
@@ -511,7 +508,7 @@ function _drop_small_rows!(q::QSpace{T, QD, N}; cutoff::Float64 = QSPACE_ROW_CUT
     isempty(rows) && return
 
     row_norms_sq = [
-        QD == 2 ? _cgt_size_2d(r.cgrs, q.symm) * sum(abs2, r.RMT.data) : sum(abs2, r.RMT.data)
+        QD == 2 ? _cgt_size_2d(r.cgrs, symm(q)) * sum(abs2, r.RMT.data) : sum(abs2, r.RMT.data)
         for r in rows
     ]
     total = sum(row_norms_sq)
@@ -532,7 +529,7 @@ function QSpace(q::QSpace{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}
     new_inds = ntuple(l -> QIndex(itags[l], q.inds[l].dir, q.inds[l].plev,
                                   q.inds[l].lock, q.inds[l].green), QD)
     # spaces remain the same since rows didn't change
-    return QSpace(q.symm, q.rows, new_inds, q.spaces)
+    return QSpace(symm(q), q.rows, new_inds, q.spaces)
 end
 
 # Construct a QSpace with the same rows but with all QIndex fields replaced.
@@ -540,7 +537,7 @@ end
 # Arrow directions must match the original QSpace (only itags/lock/plev/green may differ).
 function QSpace(q::QSpace{T, QD, N, RD}, inds::NTuple{QD, QIndex}) where {T, QD, N, RD}
     @assert ntuple(l -> inds[l].dir, QD) == ntuple(l -> q.inds[l].dir, QD) "QSpace(q, inds): arrow directions must match the original QSpace on all legs"
-    return QSpace(q.symm, q.rows, inds, q.spaces)
+    return QSpace(symm(q), q.rows, inds, q.spaces)
 end
 
 Base.getindex(q::QSpace, i::Int) = q.rows[i]
@@ -588,7 +585,7 @@ boolean mask. Negative integer indices count from the end.
 """
 function QSpace(q::QSpace{T, QD, N, RD}, selector) where {T, QD, N, RD}
     inds = _normalize_qspace_row_selector(selector, length(q.rows))
-    return QSpace(q.symm, deepcopy(q.rows[inds]), q.inds, _copy_spaces_tuple(q.spaces))
+    return QSpace(symm(q), deepcopy(q.rows[inds]), q.inds, _copy_spaces_tuple(q.spaces))
 end
 
 Base.getindex(q::QSpace,
@@ -879,7 +876,7 @@ function _modify_lock(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where 
         new_lock = modify_fn(idx.lock)
         new_inds[i] = QIndex(idx.itags, idx.dir, idx.plev, new_lock, idx.green)
     end
-    return QSpace(q.symm, q.rows, Tuple(new_inds), q.spaces)
+    return QSpace(symm(q), q.rows, Tuple(new_inds), q.spaces)
 end
 
 # Lock increase function (respects permanent lock)
@@ -1055,7 +1052,7 @@ function _modify_plev(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where 
         idx = new_inds[i]
         new_inds[i] = QIndex(idx.itags, idx.dir, modify_fn(idx.plev), idx.lock, idx.green)
     end
-    return QSpace(q.symm, q.rows, Tuple(new_inds), q.spaces)
+    return QSpace(symm(q), q.rows, Tuple(new_inds), q.spaces)
 end
 
 """
@@ -1237,7 +1234,7 @@ function _modify_itag(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where 
         idx = new_inds[i]
         new_inds[i] = QIndex(modify_fn(idx.itags), idx.dir, idx.plev, idx.lock, idx.green)
     end
-    return QSpace(q.symm, q.rows, Tuple(new_inds), q.spaces)
+    return QSpace(symm(q), q.rows, Tuple(new_inds), q.spaces)
 end
 
 """
@@ -1442,14 +1439,14 @@ Base.show(io::IO, qs::QSpace) = show(io, MIME"text/plain"(), qs)
 
 # Special pretty-printing for 0-dimensional QSpace (scalar result of full contraction).
 function Base.show(io::IO, ::MIME"text/plain", qs::QSpace{T, 0, N, N}) where {T, N}
-    symm_names = join((totxt(s) for s in qs.symm), ", ")
+    symm_names = join((totxt(s) for s in symm(qs)), ", ")
     print(io, "0D QSpace{$T}, $N symmetries [$symm_names]: ", _fmt_scalar_str(qs[]))
 end
 
 function Base.show(io::IO, ::MIME"text/plain", qs::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
     # --- Header: symmetries and leg dirs/tags on one line ---
     # Format:  QSpace{...}  [Sym1, Sym2]  ["tag1+", "tag2-", ...]
-    symm_names = join((totxt(s) for s in qs.symm), ", ")
+    symm_names = join((totxt(s) for s in symm(qs)), ", ")
     print(io, "$(QD)D QSpace, $N symmetries [$symm_names]")
     leg_strs = map(qs.inds) do idx
         tag  = isempty(idx.itags) ? "" : idx.itags
@@ -1479,7 +1476,7 @@ function Base.show(io::IO, ::MIME"text/plain", qs::QSpace{T, QD, N, RD}) where {
     # Compute per-symmetry widths globally across displayed rows only.
     widths = map(1:N) do n
         maximum(display_indices) do i
-            _label_widths(qs.rows[i].cgrs, qs.symm)[n]
+            _label_widths(qs.rows[i].cgrs, symm(qs))[n]
         end
     end
     # Pre-compute scalar width for alignment (only rows with scalar RMT).
@@ -1501,10 +1498,10 @@ function Base.show(io::IO, ::MIME"text/plain", qs::QSpace{T, QD, N, RD}) where {
         phys_str = join(size(r.RMT.data)[1:QD], "x")
         om_str   = om_dim > 1 ? " @$om_dim" : ""
         print(io, "  $i.\t", phys_str, om_str, "\t")
-        _print_cgt_dims(io, r.cgrs, qs.symm)
+        _print_cgt_dims(io, r.cgrs, symm(qs))
         _print_qlabels(io, r.cgrs, widths)
         length(r.RMT.data) == 1 && print(io, "\t", lpad(_fmt_scalar_str(only(r.RMT.data)), scalar_width))
-        QD == 2 && print(io, "\t√", _cgt_size_2d(r.cgrs, qs.symm))
+        QD == 2 && print(io, "\t√", _cgt_size_2d(r.cgrs, symm(qs)))
         k < length(display_indices) && println(io)
     end
 end
@@ -1517,7 +1514,7 @@ function normalize_qspace!(q::QSpace{T, QD, N}) where {T, QD, N}
     if QD == 2
         for r in q.rows
             for i in 1:N
-                S, cgr = q.symm[i], r.cgrs[i]
+                S, cgr = symm(q)[i], r.cgrs[i]
                 q1, q2 = cgr.qlabels
                 @assert q2 == q1 || q2 == get_dualq(S, q1)
                 dim = dimension(S, q1); @assert dim == dimension(S, q2)
@@ -1604,14 +1601,14 @@ end
 #   block into a (dim × dim) identity matrix  (‖Id_dim‖² = dim).
 #   Consequently:
 #       ‖A‖² = Σ_r dim_r · ‖RMT_r‖²
-#   where dim_r = _cgt_size_2d(r.cgrs, q.symm) = ∏_{non-abelian n} d_leg1^(n).
+#   where dim_r = _cgt_size_2d(r.cgrs, symm(q)) = ∏_{non-abelian n} d_leg1^(n).
 #
 # ─────────────────────────────────────────────────────────────────────────────
 function LinearAlgebra.norm(q::QSpace{T, QD, N}) where {T, QD, N}
     s = zero(Float64)
     if QD == 2
         for r in q.rows
-            d = _cgt_size_2d(r.cgrs, q.symm)
+            d = _cgt_size_2d(r.cgrs, symm(q))
             s += d * sum(abs2, r.RMT.data)
         end
     else
@@ -1684,7 +1681,7 @@ end
 
 function Base.:+(qs1::QSpace{T1, QD, N, RD},
                  qs2::QSpace{T2, QD, N, RD}) where {T1, T2, QD, N, RD}
-    @assert qs1.symm == qs2.symm "QSpace objects must share the same symmetry tuple"
+    @assert symm(qs1) == symm(qs2) "QSpace objects must share the same symmetry tuple"
 
     if qs1.inds != qs2.inds || qs1.spaces != qs2.spaces
         perm = _find_leg_permutation(qs1.inds, qs1.spaces, qs2.inds, qs2.spaces)
@@ -1692,7 +1689,7 @@ function Base.:+(qs1::QSpace{T1, QD, N, RD},
     end
 
     T    = promote_type(T1, T2)
-    symm = qs1.symm
+    symmetries = symm(qs1)
 
     # Physical q-label key for a row: the cgp-permuted qlabels per symmetry.
     # Two rows belong to the same sector iff these match for every symmetry.
@@ -1739,12 +1736,12 @@ function Base.:+(qs1::QSpace{T1, QD, N, RD},
                                      r1.cgrs[n].cgp,
                                      r1.cgrs[n].legdir), N)
 
-            new_row = merge_new_row(new_wmats, new_RMTs, new_qlabs, symm, QD)
+            new_row = merge_new_row(new_wmats, new_RMTs, new_qlabs, symmetries, QD)
             isnothing(new_row) || push!(new_rows, new_row)
         end
     end
 
-    return QSpace(symm, new_rows, qs1.inds, qs1.spaces)
+    return QSpace(symmetries, new_rows, qs1.inds, qs1.spaces)
 end
 
 Base.:-(qs1::QSpace, qs2::QSpace) = qs1 + (-1 * qs2)
@@ -1861,7 +1858,7 @@ function _oplus_pad_qspace(q::QSpace{T, QD, N, RD},
     for r in q.rows
         push!(new_rows, _pad_row_for_oplus(r, dims_set, start_dim_maps, result_dim_maps))
     end
-    return QSpace(q.symm, new_rows, q.inds, _copy_spaces_tuple(result_spaces))
+    return QSpace(symm(q), new_rows, q.inds, _copy_spaces_tuple(result_spaces))
 end
 
 function _zero_qspace_with_spaces(symm::NTuple{N, Any},
@@ -1907,7 +1904,7 @@ function _validate_oplus_common(qs)
     ref = first(qs)
     for (i, q) in enumerate(qs)
         q isa QSpace || throw(ArgumentError("oplus entry $i is not a QSpace"))
-        q.symm == ref.symm || throw(ArgumentError(
+        symm(q) == symm(ref) || throw(ArgumentError(
             "QSpace entry $i has a different symmetry tuple"))
         length(q.inds) == length(ref.inds) || throw(ArgumentError(
             "QSpace entry $i has rank $(length(q.inds)), expected $(length(ref.inds))"))
@@ -1945,7 +1942,7 @@ function _materialize_vector_oplus(qs, dims_tuple)
     start_maps = _accumulate_oplus_starts(qs, dims_tuple, QD)
     T = promote_type((_qspace_eltype(q) for q in qs)...)
 
-    acc = _zero_qspace_with_spaces(ref.symm, ref.inds, result_spaces; T=T)
+    acc = _zero_qspace_with_spaces(symm(ref), ref.inds, result_spaces; T=T)
     for (q, qstarts) in zip(qs, start_maps)
         padded = _oplus_pad_qspace(q, result_spaces, dims_tuple, qstarts, result_dim_maps)
         padded = q.inds == ref.inds ? padded : QSpace(padded, ref.inds)
@@ -2056,7 +2053,7 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
         q = _oplus_matrix_entry(mat, i, j)
         if q === nothing
             spaces = _infer_zero_matrix_spaces(row_sources, col_sources, i, j, length(ref.inds))
-            filled[i, j] = _zero_qspace_with_spaces(ref.symm, ref.inds, spaces; T=T)
+            filled[i, j] = _zero_qspace_with_spaces(symm(ref), ref.inds, spaces; T=T)
         else
             filled[i, j] = q
         end
@@ -2137,7 +2134,7 @@ function Base.conj(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
             #    the flat OM ordering transposed within every central-space block:
             #      old flat = start + (upidx-1) + (dnidx-1)*om_up   [upidx fast]
             #      new flat = start + (dnidx-1) + (upidx-1)*om_dn   [dnidx fast]
-            S = cgr.symm
+            S = symm(cgr)
             ins, outs = cgr.qlabels[1:m], cgr.qlabels[m+1:m+k]
             ins_, _ = remove_zeros(S, ins)
             outs_, _ = remove_zeros(S, outs)
@@ -2151,7 +2148,7 @@ function Base.conj(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
                     deepcopy(cgr.wmat)
                 end
 
-            CGR(cgr.symm, Tuple(new_qlabels), new_wmat, new_cgp, new_legdir)
+            CGR(symm(cgr), Tuple(new_qlabels), new_wmat, new_cgp, new_legdir)
         end
 
         row(Tuple(new_cgrs), new_RMT)
@@ -2161,7 +2158,7 @@ function Base.conj(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
 
     # spaces remain the same: physical qlabels at each leg don't change in conj,
     # only the CGR internal structure (incoming/outgoing) changes
-    return QSpace(q.symm, new_rows, new_inds, q.spaces)
+    return QSpace(symm(q), new_rows, new_inds, q.spaces)
 end
 
 Base.adjoint(q::QSpace) = conj(q)
@@ -2267,7 +2264,7 @@ function getsub(q::QSpace{T, QD, N, RD}, leg::Int, selector::AbstractVector) whe
         end
     end, QD)
 
-    return QSpace(q.symm, rows_out, q.inds, spaces_out)
+    return QSpace(symm(q), rows_out, q.inds, spaces_out)
 end
 
 function _normalize_getsub_predicate_legs(q::QSpace{T, QD}, legs) where {T, QD}
@@ -2343,7 +2340,7 @@ function getsub(q::QSpace{T, QD, N, RD}, legs::LegList, pred::Function; preserve
         end, QD)
     end
 
-    return QSpace(q.symm, rows_out, q.inds, spaces_out)
+    return QSpace(symm(q), rows_out, q.inds, spaces_out)
 end
 
 """
@@ -2383,12 +2380,12 @@ function empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, QIndex};
 end
 
 function empty_qspace(q::QSpace; T::Type=Float64)
-    return empty_qspace(q.symm, q.inds; T=T)
+    return empty_qspace(symm(q), q.inds; T=T)
 end
 
 function Base.zero(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
     rows = Vector{row{T, QD, N, RD}}()
-    return QSpace(q.symm, rows, q.inds, _copy_spaces_tuple(q.spaces))
+    return QSpace(symm(q), rows, q.inds, _copy_spaces_tuple(q.spaces))
 end
 
 """
@@ -2417,7 +2414,7 @@ function zero_qlabels(symm::NTuple{N, Any}) where {N}
     return ntuple(n -> Tuple(0 for _ in 1:nzops(symm[n])), N)
 end
 
-zero_qlabels(q::QSpace) = zero_qlabels(q.symm)
+zero_qlabels(q::QSpace) = zero_qlabels(symm(q))
 
 function _is_singleton_leg(q::QSpace{T, QD, N}, leg::Int) where {T, QD, N}
     1 <= leg <= QD || throw(ArgumentError("leg must lie in 1:$QD, got $leg"))
@@ -2466,7 +2463,7 @@ function _delete_singleton_cgr(cgr::CGR{QD, NZ}, positions) where {QD, NZ}
 
     new_qlabels = (Tuple(first.(incoming))..., Tuple(first.(outgoing))...)
     new_wmat = LurTensor(copy(cgr.wmat.data))
-    return CGR(cgr.symm, new_qlabels, new_wmat, Tuple(new_cgp),
+    return CGR(symm(cgr), new_qlabels, new_wmat, Tuple(new_cgp),
                (m_new, length(outgoing)))
 end
 
@@ -2490,7 +2487,7 @@ function _delete_singleton_impl(q::QSpace{T, QD, N, RD}, positions) where {T, QD
         push!(new_rows, row(new_cgrs, new_rmt))
     end
 
-    return QSpace(q.symm, new_rows, Tuple(keep_inds), Tuple(keep_spaces))
+    return QSpace(symm(q), new_rows, Tuple(keep_inds), Tuple(keep_spaces))
 end
 
 """
@@ -2626,7 +2623,7 @@ function _insert_singleton_cgr(cgr::CGR{QD, NZ},
 
     new_qlabels = (Tuple(first.(incoming))..., Tuple(first.(outgoing))...)
     new_wmat = LurTensor(copy(cgr.wmat.data))
-    return CGR(cgr.symm, new_qlabels, new_wmat, Tuple(new_cgp),
+    return CGR(symm(cgr), new_qlabels, new_wmat, Tuple(new_cgp),
                (m_new, length(outgoing)))
 end
 
@@ -2716,7 +2713,7 @@ function addSingleton(q::QSpace{T, QD, N, RD}, legs;
         push!(new_rows, row(new_cgrs, new_rmt))
     end
 
-    return QSpace(q.symm, new_rows, Tuple(new_inds), Tuple(new_spaces))
+    return QSpace(symm(q), new_rows, Tuple(new_inds), Tuple(new_spaces))
 end
 
 """
@@ -2735,7 +2732,7 @@ function getvac(q::QSpace{T, QD, N, RD},
 
     cgrs = ntuple(n -> begin
         trivial_q = trivial_qlabels[n]
-        CGR(q.symm[n], (trivial_q, trivial_q), LurTensor([1.0;;]), (1, 2), (1, 1))
+        CGR(symm(q)[n], (trivial_q, trivial_q), LurTensor([1.0;;]), (1, 2), (1, 1))
     end, N)
 
     rmt_data = fill(one(T), ntuple(_ -> 1, N + 2))
@@ -2745,12 +2742,12 @@ function getvac(q::QSpace{T, QD, N, RD},
     space_template = Vector{Tuple{QT, Int}}([space_entry])
     spaces = (copy(space_template), copy(space_template))
 
-    return QSpace(q.symm, rows, inds, spaces)
+    return QSpace(symm(q), rows, inds, spaces)
 end
 
 function ⊗(q1::QSpace{T1, QD1, N, RD1},
            q2::QSpace{T2, QD2, N, RD2}) where {T1, T2, QD1, QD2, N, RD1, RD2}
-    @assert q1.symm == q2.symm "QSpace objects must share the same symmetry tuple"
+    @assert symm(q1) == symm(q2) "QSpace objects must share the same symmetry tuple"
 
     q1_ext = addSingleton(q1, QD1 + 1; dir='-')
     q2_ext = addSingleton(q2, 1; dir='+')

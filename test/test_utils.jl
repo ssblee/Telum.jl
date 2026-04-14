@@ -1,4 +1,4 @@
-﻿using LinearAlgebra
+using LinearAlgebra
 using SparseArrayKit
 using Test
 const _compress_sector = QSpaces._compress_sector
@@ -126,12 +126,12 @@ end
 function to_sparse_array(q::QSpace{T, QD, N, RD},
     ::Type{FT} = Float64) where {T, QD, N, RD, FT}
 
-    symm = q.symm
+    symmetries = symm(q)
     rows = q.rows
 
     # ── Step 1: offset map ──────────────────────────────────────────────────
     # Use spaces field directly for each leg's offset computation.
-    leg_info = [get_offset(symm, q.spaces[l]) for l in 1:QD]
+    leg_info = [get_offset(symmetries, q.spaces[l]) for l in 1:QD]
     leg_offsets = [li[1] for li in leg_info]
     leg_total = [li[2] for li in leg_info]
 
@@ -147,7 +147,7 @@ function to_sparse_array(q::QSpace{T, QD, N, RD},
         # and M_n = size(wmat, 2) (compressed bond dimension after SVD).
         cgt_wmats = Vector{Array{FT}}(undef, N)
         for n in 1:N
-            S   = symm[n]
+            S   = symmetries[n]
             cgr = r.cgrs[n]
             M   = size(cgr.wmat.data, 2)
 
@@ -816,7 +816,7 @@ function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
 
     # ── (e) eig_list entries include sector metadata ────────────────────────
     sector_dims = Dict(
-        Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(A.symm)) => size(r.RMT.data, 1)
+        Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(A))) => size(r.RMT.data, 1)
         for r in D.rows
     )
     for entry in eig_list
@@ -882,11 +882,11 @@ function test_missing_spaces_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-
     @test !isempty(q.I.rows)
 
     removed_row = q.I.rows[1]
-    removed_sector = Tuple(removed_row.cgrs[n].qlabels[removed_row.cgrs[n].cgp[1]] for n in 1:length(q.I.symm))
+    removed_sector = Tuple(removed_row.cgrs[n].qlabels[removed_row.cgrs[n].cgp[1]] for n in 1:length(symm(q.I)))
     removed_dim = size(removed_row.RMT.data, 1)
 
     kept_rows = copy(q.I.rows[2:end])
-    A = QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
+    A = QSpace(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
 
     result = eigen(A; hermitian = true)
     D = result.D
@@ -897,12 +897,12 @@ function test_missing_spaces_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-
     @test length(zero_entries) == removed_dim
     @test all(iszero(entry[1]) for entry in zero_entries)
 
-    v_row = only([r for r in V.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(V.symm)) == removed_sector])
+    v_row = only([r for r in V.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(V))) == removed_sector])
     v_mat = reshape(v_row.RMT.data, size(v_row.RMT.data, 1), size(v_row.RMT.data, 2))
     @test v_mat ≈ Matrix(I, removed_dim, removed_dim)
     @test all(cgr.cgp == expected_cgp for cgr in v_row.cgrs)
 
-    d_rows = [r for r in D.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(D.symm)) == removed_sector]
+    d_rows = [r for r in D.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(D))) == removed_sector]
     for d_row in d_rows
         @test all(cgr.cgp == expected_cgp for cgr in d_row.cgrs)
     end
@@ -923,11 +923,11 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     @test !isempty(q.I.rows)
 
     removed_row = q.I.rows[1]
-    removed_sector = Tuple(removed_row.cgrs[n].qlabels[removed_row.cgrs[n].cgp[1]] for n in 1:length(q.I.symm))
+    removed_sector = Tuple(removed_row.cgrs[n].qlabels[removed_row.cgrs[n].cgp[1]] for n in 1:length(symm(q.I)))
     removed_dim = size(removed_row.RMT.data, 1)
 
     kept_rows = copy(q.I.rows[2:end])
-    A = QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
+    A = QSpace(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
 
     result = eigen(A; hermitian = true)
     kept, discarded = discard_eigen(result, removed_dim, 0.0, "eigK", "eigD"; hermitian = true)
@@ -948,7 +948,7 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     @test discarded.V.spaces[v_orig_leg] == result.V.spaces[v_orig_leg]
     @test kept.V.spaces[v_eig_leg] == [(removed_sector, removed_dim)]
     @test all(ql != removed_sector for (ql, _) in discarded.V.spaces[v_eig_leg])
-    kept_v_rows = [r for r in kept.V.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(kept.V.symm)) == removed_sector]
+    kept_v_rows = [r for r in kept.V.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(kept.V))) == removed_sector]
     for r in kept_v_rows
         @test all(cgr.cgp == expected_cgp for cgr in r.cgrs)
     end
@@ -1219,12 +1219,12 @@ function test_spaces_svdQS(option::LocalSpaceOptions)
 
     # qlabel set from a splist
     qls(sp) = Set(ql for (ql, _) in sp)
-    symm = q.I.symm; N = length(symm)
+    symmetries = symm(q.I); N = length(symmetries)
 
     # Compute the dual of a splist: apply get_dualq per-symmetry to every qlabel tuple.
     function dual_sp(sp)
         ET = eltype(sp)
-        sort!(ET[(Tuple(get_dualq(symm[n], ql[n]) for n in 1:N), d)
+        sort!(ET[(Tuple(get_dualq(symmetries[n], ql[n]) for n in 1:N), d)
                  for (ql, d) in sp]; by = x -> x[1])
     end
 
@@ -1307,13 +1307,13 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
     left_legs = (1, 2)
     split_blocks = QSpaces._get_svd_cgt_split_rows(ct, left_legs; tol)
     expected_blocks = QSpaces._get_svd_cgt_split_rows(ct, left_legs; tol)
-    QSpaces._share_svd_row_isometries!(expected_blocks, ct.symm; tol=tol)
+    QSpaces._share_svd_row_isometries!(expected_blocks, symm(ct); tol=tol)
     prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
     split_blocks_via_svd = prep.blocks_by_symm
 
-    direct_pairs_by_symm = ntuple(_ -> Tuple{Any, Any}[], length(ct.symm))
+    direct_pairs_by_symm = ntuple(_ -> Tuple{Any, Any}[], length(symm(ct)))
     for (ri, r) in enumerate(ct.rows)
-        row_pairs = ntuple(length(ct.symm)) do n
+        row_pairs = ntuple(length(symm(ct))) do n
             left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
             left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
 
@@ -1326,16 +1326,16 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
             pairs
         end
         any(isempty, row_pairs) && continue
-        for n in 1:length(ct.symm)
+        for n in 1:length(symm(ct))
             append!(direct_pairs_by_symm[n], row_pairs[n])
         end
     end
 
-    @test length(split_blocks) == length(ct.symm)
-    @test length(expected_blocks) == length(ct.symm)
-    @test length(split_blocks_via_svd) == length(ct.symm)
+    @test length(split_blocks) == length(symm(ct))
+    @test length(expected_blocks) == length(symm(ct))
+    @test length(split_blocks_via_svd) == length(symm(ct))
 
-    for n in 1:length(ct.symm)
+    for n in 1:length(symm(ct))
         raw_blocks = split_blocks[n]
         shared_blocks = expected_blocks[n]
         shared_blocks_via_svd = split_blocks_via_svd[n]
@@ -1389,8 +1389,8 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
         end
     end
 
-    for n in 1:length(ct.symm)
-        QSpaces.isabelian(ct.symm[n]) && continue
+    for n in 1:length(symm(ct))
+        QSpaces.isabelian(symm(ct)[n]) && continue
 
         left_groups = Dict{Any, Vector{Matrix{Float64}}}()
         right_groups = Dict{Any, Vector{Matrix{Float64}}}()
@@ -1429,10 +1429,10 @@ function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Floa
     split_blocks = prep.blocks_by_symm
     got = prep.intermediate_qrows
 
-    Sector = NTuple{length(ct.symm), Tuple{Vararg{Int}}}
+    Sector = NTuple{length(symm(ct)), Tuple{Vararg{Int}}}
     expected = Dict{Sector, Vector{Int}}()
     for (ri, r) in enumerate(ct.rows)
-        qchoices = ntuple(length(ct.symm)) do n
+        qchoices = ntuple(length(symm(ct))) do n
             left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
             left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
 
@@ -1475,11 +1475,11 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
     got_left_sigs, got_right_sigs = prep.left_signatures, prep.right_signatures
     got = prep.intermediate_qrow_classes
 
-    left_sigs = [ntuple(length(ct.symm)) do n
+    left_sigs = [ntuple(length(symm(ct))) do n
         left_legs_canon = QSpaces._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
         QSpaces._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[1]
     end for ri in 1:length(ct.rows)]
-    right_sigs = [ntuple(length(ct.symm)) do n
+    right_sigs = [ntuple(length(symm(ct))) do n
         left_legs_canon = QSpaces._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
         QSpaces._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[2]
     end for ri in 1:length(ct.rows)]
@@ -1487,7 +1487,7 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
     @test got_left_sigs == left_sigs
     @test got_right_sigs == right_sigs
 
-    Sector = NTuple{length(ct.symm), Tuple{Vararg{Int}}}
+    Sector = NTuple{length(symm(ct)), Tuple{Vararg{Int}}}
     expected = Dict{Sector, Vector{Vector{Int}}}()
     LeftSig = eltype(left_sigs)
     RightSig = eltype(right_sigs)
@@ -1559,7 +1559,7 @@ function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64
     prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
 
     expected_signatures = [begin
-        per_symm = ntuple(length(ct.symm)) do n
+        per_symm = ntuple(length(symm(ct))) do n
             cgr = r.cgrs[n]
             nin = cgr.legdir[1]
             left_up = Tuple(
@@ -1580,8 +1580,8 @@ function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64
             )
             ((left_up, left_dn), (right_up, right_dn))
         end
-        (ntuple(n -> per_symm[n][1], length(ct.symm)),
-         ntuple(n -> per_symm[n][2], length(ct.symm)))
+        (ntuple(n -> per_symm[n][1], length(symm(ct))),
+         ntuple(n -> per_symm[n][2], length(symm(ct))))
     end for r in ct.rows]
 
     expected_left = first.(expected_signatures)
@@ -1702,7 +1702,7 @@ function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
 
     left_legs = (1, 2)
     for (ri, r) in enumerate(ct.rows)
-        for n in 1:length(ct.symm)
+        for n in 1:length(symm(ct))
             left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
             left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
             raw_blocks = QSpaces._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
@@ -1750,7 +1750,7 @@ function test_truncate_svdQS(option::LocalSpaceOptions)
     removed_dim = size(removed_row.RMT.data, 1)
 
     kept_rows = copy(q.I.rows[2:end])
-    A = QSpace(q.I.symm, kept_rows, q.I.inds, q.I.spaces)
+    A = QSpace(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
 
     offset = 0.0
     all_positive_vals = Float64[]
@@ -1785,11 +1785,11 @@ function test_truncate_svdQS(option::LocalSpaceOptions)
     @test Vd.spaces[1] == S.spaces[2]
 
     s_left_row_sectors = Set(
-        Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(S.symm))
+        Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(S)))
         for r in S.rows
     )
     s_right_row_sectors = Set(
-        Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[2]] for n in 1:length(S.symm))
+        Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[2]] for n in 1:length(symm(S)))
         for r in S.rows
     )
 
@@ -1805,11 +1805,11 @@ function test_truncate_svdQS(option::LocalSpaceOptions)
     @test missing_u_sector in Set(ql for (ql, _) in S.spaces[1])
     @test missing_vd_sector in Set(ql for (ql, _) in S.spaces[2])
 
-    u_row = only([r for r in U.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[end]] for n in 1:length(U.symm)) == missing_u_sector])
+    u_row = only([r for r in U.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[end]] for n in 1:length(symm(U))) == missing_u_sector])
     u_mat = reshape(u_row.RMT.data, size(u_row.RMT.data, 1), size(u_row.RMT.data, 2))
     @test u_mat ≈ Matrix(I, removed_dim, removed_dim)
 
-    vd_row = only([r for r in Vd.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(Vd.symm)) == missing_vd_sector])
+    vd_row = only([r for r in Vd.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(Vd))) == missing_vd_sector])
     vd_mat = reshape(vd_row.RMT.data, size(vd_row.RMT.data, 1), size(vd_row.RMT.data, 2))
     @test vd_mat ≈ Matrix(I, removed_dim, removed_dim)
 end
@@ -1887,7 +1887,7 @@ function test_contract_requires_matching_spaces_in_star(option::LocalSpaceOption
 
     first_sector, first_dim = first(B.spaces[1])
     bad_leg1 = vcat([(first_sector, first_dim + 1)], B.spaces[1][2:end])
-    B_bad = QSpace(B.symm, B.rows, B.inds, (bad_leg1, B.spaces[2]))
+    B_bad = QSpace(symm(B), B.rows, B.inds, (bad_leg1, B.spaces[2]))
 
     @test_throws AssertionError A * B_bad
 end

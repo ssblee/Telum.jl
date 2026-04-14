@@ -22,6 +22,7 @@ end
 
 productsymm(::leginfo{N, QT, PS}) where {N, QT, PS} = PS
 product_symms(info::leginfo) = product_symms(productsymm(info))
+symm(info::leginfo) = product_symms(info)
 nsymms(::leginfo{N}) where {N} = N
 qlabeltype(::leginfo{N, QT}) where {N, QT} = QT
 

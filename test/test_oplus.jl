@@ -18,7 +18,7 @@ end
         r.cgrs[1].wmat[:] .*= -1
     end
 
-    q_oriented = QSpace(q.symm, rows_neg, q.inds, q.spaces)
+    q_oriented = QSpace(symm(q), rows_neg, q.inds, q.spaces)
     arr_ref = -Array(to_sparse_array(q))
     arr_oriented = Array(to_sparse_array(q_oriented))
 

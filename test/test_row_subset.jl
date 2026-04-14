@@ -4,7 +4,7 @@ function _rows_equal(rows1, rows2)
         r1.RMT.data == r2.RMT.data || return false
         length(r1.cgrs) == length(r2.cgrs) || return false
         all(zip(r1.cgrs, r2.cgrs)) do (c1, c2)
-            c1.symm == c2.symm &&
+            symm(c1) == symm(c2) &&
             c1.qlabels == c2.qlabels &&
             c1.wmat.data == c2.wmat.data &&
             c1.cgp == c2.cgp &&
@@ -14,7 +14,7 @@ function _rows_equal(rows1, rows2)
 end
 
 function _row_sector(qs::QSpace, r, leg::Int)
-    return Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(qs.symm))
+    return Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(qs)))
 end
 
 @testset "QSpace row subset selection" begin
@@ -27,7 +27,7 @@ end
     subset_mask = QSpace(q, vcat(false, trues(length(q.rows) - 1)))
     subset_index = q[2:end]
 
-    @test subset.symm == q.symm
+    @test symm(subset) == symm(q)
     @test subset.inds == q.inds
     @test subset.spaces == q.spaces
     @test all(subset.spaces[leg] !== q.spaces[leg] for leg in 1:length(q.spaces))

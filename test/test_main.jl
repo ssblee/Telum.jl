@@ -1,4 +1,4 @@
-﻿@testset "re-exported LurCGT symmetries" begin
+@testset "re-exported LurCGT symmetries" begin
     @test :Z in names(QSpaces)
     @test :U1 in names(QSpaces)
     @test :SU in names(QSpaces)
@@ -923,7 +923,7 @@ end
 
         @test length(q.rows)  == 0
         @test length(q.inds)  == QD
-        @test q.symm          == symm
+        @test QSpaces.symm(q) == symm
         @test q.inds          == inds
         @test all(isempty(q.spaces[l]) for l in 1:QD)
     end
@@ -934,10 +934,10 @@ end
         inds = (QIndex("a", '+'), QIndex("b", '-'), QIndex("c", '-'))
         q = empty_qspace(symm, inds)
 
-        @test length(q.symm) == 2
+        @test length(QSpaces.symm(q)) == 2
         @test length(q.rows) == 0
         @test length(q.inds) == 3
-        @test q.symm == symm
+        @test QSpaces.symm(q) == symm
         # spaces: 3 empty vectors, one per leg
         @test length(q.spaces) == 3
         @test all(isempty(q.spaces[l]) for l in 1:3)
@@ -1000,7 +1000,7 @@ end
 
         @test qz isa QSpace
         @test isempty(qz.rows)
-        @test qz.symm == q.symm
+        @test symm(qz) == symm(q)
         @test qz.inds == q.inds
         @test qz.spaces == q.spaces
         @test qz.spaces !== q.spaces
@@ -1023,7 +1023,7 @@ end
 @testset "zero_qlabels" begin
     q_empty = empty_qspace((SU{2}, SU{3}), (QIndex('+'), QIndex('-')))
     @test zero_qlabels(q_empty) == ((0,), (0, 0))
-    @test zero_qlabels(q_empty.symm) == ((0,), (0, 0))
+    @test zero_qlabels(symm(q_empty)) == ((0,), (0, 0))
 
     option = FermionSOptions(U1, SU{2}, nothing, 1)
     q0 = getLocalSpace(option)
@@ -1036,13 +1036,15 @@ end
     expected_ps = ProductSymm{Tuple{U1, SU{3}}}
 
     @test qlabeltype(q_empty) == expected
-    @test qlabeltype(q_empty.symm) == expected
+    @test qlabeltype(symm(q_empty)) == expected
     @test typeof(q_empty).parameters[5] == expected
     @test typeof(q_empty).parameters[6] == expected_ps
     @test typeof(q_empty).parameters[7] == Tuple{CGR{2, 1, U1}, CGR{2, 2, SU{3}}}
     @test !(:symm in fieldnames(typeof(q_empty)))
     @test productsymm(q_empty) == expected_ps
-    @test productsymm(q_empty.symm) == expected_ps
+    @test productsymm(symm(q_empty)) == expected_ps
+    @test symm(q_empty) == (U1, SU{3})
+    @test @inferred(symm(q_empty)) == (U1, SU{3})
     @test product_symms(q_empty) == (U1, SU{3})
     @test nsymms(q_empty) == 2
     @test eltype(q_empty.spaces[1]) == Tuple{expected, Int}
@@ -1061,7 +1063,7 @@ end
     @test typeof(q_local.rows).parameters[1].parameters[5] == Tuple{CGR{2, 1, U1}, CGR{2, 1, SU{2}}}
     info = QSpaces.leginfo(q_local, 1)
     @test !(:symm in fieldnames(typeof(info)))
-    @test info.symm == q_local.symm
+    @test symm(info) == symm(q_local)
     @test productsymm(info) == productsymm(q_local)
     @test product_symms(info) == product_symms(q_local)
     @test nsymms(info) == nsymms(q_local)
@@ -1069,7 +1071,7 @@ end
     @test typeof(info).parameters[2] == qlabeltype(q_local)
     @test typeof(info).parameters[3] == productsymm(q_local)
     @test eltype(info.splist) == Tuple{qlabeltype(q_local), Int}
-    @test typeof(QSpaces.leginfo(q_local.symm, q_local.inds[1], q_local.spaces[1])) == typeof(info)
+    @test typeof(QSpaces.leginfo(symm(q_local), q_local.inds[1], q_local.spaces[1])) == typeof(info)
 end
 
 @testset "getsub sector slicing" begin
@@ -1107,10 +1109,10 @@ end
     sector_full = candidate.sector_full
     dim_full = candidate.dim_full
 
-    row_sector(qs::QSpace, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(qs.symm))
+    row_sector(qs::QSpace, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(qs)))
     rows_for_sector(qs::QSpace, sector) = [r for r in qs.rows if row_sector(qs, r) == sector]
     original_sectors = Set(first.(q.spaces[leg]))
-    bad_sector = ntuple(n -> ntuple(_ -> 999, length(sector_full[n])), length(q.symm))
+    bad_sector = ntuple(n -> ntuple(_ -> 999, length(sector_full[n])), length(symm(q)))
 
     @test bad_sector ∉ original_sectors
 
@@ -1248,7 +1250,7 @@ end
     leg = candidate.leg
     target_sector = candidate.target_sector
 
-    row_sector(qs::QSpace, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(qs.symm))
+    row_sector(qs::QSpace, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(qs)))
     expected_rows = [r for r in q.rows if row_sector(q, r) == target_sector]
     expected_leg_spaces = [entry for entry in q.spaces[leg] if entry[1] == target_sector]
 
@@ -1296,7 +1298,7 @@ end
     @test length(q.spaces[2]) >= 2
     @test !isempty(q.rows)
 
-    row_sector_at(r, leg) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(q.symm))
+    row_sector_at(r, leg) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(q)))
     allowed = Set{Any}([row_sector_at(q.rows[1], 1), row_sector_at(q.rows[1], 2)])
     pred = sector -> sector in allowed
 
@@ -1341,7 +1343,7 @@ end
         q0 = getLocalSpace(option)
         vac = getvac(q0.I)
 
-        @test vac.symm == q0.I.symm
+        @test symm(vac) == symm(q0.I)
         @test length(vac.rows) == 1
         @test vac.inds == (QIndex("", '+'), QIndex("", '-'))
         @test length(vac.spaces[1]) == 1
@@ -1352,9 +1354,9 @@ end
         @test vac.spaces[2][1] == (trivial, 1)
 
         r = vac.rows[1]
-        @test size(r.RMT.data) == ntuple(_ -> 1, length(vac.symm) + 2)
+        @test size(r.RMT.data) == ntuple(_ -> 1, length(symm(vac)) + 2)
         @test only(r.RMT.data) == one(eltype(r.RMT.data))
-        for n in 1:length(vac.symm)
+        for n in 1:length(symm(vac))
             @test r.cgrs[n].qlabels == (trivial[n], trivial[n])
             @test r.cgrs[n].cgp == (1, 2)
             @test r.cgrs[n].legdir == (1, 1)
@@ -1489,7 +1491,7 @@ end
     q12 = QSpaces.:⊗(q1, q2)
     q12_kron = kron(q1, q2)
 
-    @test q12.symm == q1.symm == q2.symm
+    @test symm(q12) == symm(q1) == symm(q2)
     @test q12.inds == (q1.inds..., q2.inds...)
     @test q12.spaces == (q1.spaces..., q2.spaces...)
     @test q12_kron.inds == q12.inds

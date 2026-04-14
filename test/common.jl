@@ -1,4 +1,4 @@
-﻿using LinearAlgebra
+using LinearAlgebra
 using Random
 using SparseArrays
 using Test
@@ -126,7 +126,7 @@ function _dense_vector_start_maps(qs, dims)
         starts[qi] = [Dict{Any, Int}() for _ in 1:QD]
         for leg in 1:QD
             leg ∈ dims_set || continue
-            leg_offsets, _ = get_offset(q.symm, q.spaces[leg])
+            leg_offsets, _ = get_offset(symm(q), q.spaces[leg])
             for (qlabels, _) in q.spaces[leg]
                 start = get(running[leg], qlabels, 1)
                 starts[qi][leg][qlabels] = start
@@ -149,7 +149,7 @@ function _dense_vector_oplus_ref(qs, dimensions)
     end, length(ref.inds))
 
     result_sizes = ntuple(leg -> begin
-        get_offset(ref.symm, result_spaces[leg])[2]
+        get_offset(symm(ref), result_spaces[leg])[2]
     end, length(ref.inds))
     T = promote_type((eltype(Array(to_sparse_array(q))) for q in qs_vec)...)
     result = zeros(T, result_sizes)
@@ -161,7 +161,7 @@ function _dense_vector_oplus_ref(qs, dimensions)
         for leg in 1:length(q.inds)
             if leg in dims_set
                 offset_sizes = Dict{Any, Int}(qlabels => start - 1 for (qlabels, start) in qstarts[leg])
-                idxmaps[leg] = _dense_leg_index_map(q.symm, q.spaces[leg], result_spaces[leg]; offset_sizes=offset_sizes)
+                idxmaps[leg] = _dense_leg_index_map(symm(q), q.spaces[leg], result_spaces[leg]; offset_sizes=offset_sizes)
             else
                 idxmaps[leg] = collect(1:size(arr, leg))
             end
@@ -186,7 +186,7 @@ end
 
 function _zero_qspace_ref_like(ref::QSpace{TQ, QD, N, RD}, spaces; T::Type=Float64) where {TQ, QD, N, RD}
     rows = Vector{row{T, QD, N, RD}}()
-    return QSpace(ref.symm, rows, ref.inds, spaces)
+    return QSpace(symm(ref), rows, ref.inds, spaces)
 end
 
 function _matrix_axis_start_maps(sources, dims, QD::Int, symm::Tuple)
@@ -247,10 +247,10 @@ function _dense_matrix_oplus_ref(mat, dimensions)
         end
     end, length(ref.inds))
 
-    row_starts = _matrix_axis_start_maps(row_sources, row_dims, length(ref.inds), ref.symm)
-    col_starts = _matrix_axis_start_maps(col_sources, col_dims, length(ref.inds), ref.symm)
+    row_starts = _matrix_axis_start_maps(row_sources, row_dims, length(ref.inds), symm(ref))
+    col_starts = _matrix_axis_start_maps(col_sources, col_dims, length(ref.inds), symm(ref))
     T = promote_type((eltype(Array(to_sparse_array(q))) for q in defined)...)
-    result_sizes = ntuple(leg -> get_offset(ref.symm, result_spaces[leg])[2], length(ref.inds))
+    result_sizes = ntuple(leg -> get_offset(symm(ref), result_spaces[leg])[2], length(ref.inds))
     result = zeros(T, result_sizes)
 
     for j in axes(mat, 2), i in axes(mat, 1)
@@ -273,10 +273,10 @@ function _dense_matrix_oplus_ref(mat, dimensions)
         for leg in 1:length(ref.inds)
             if leg ∈ row_dims_set
                 offsets = Dict{Any, Int}(qlabels => start - 1 for (qlabels, start) in row_starts[i][leg])
-                idxmaps[leg] = _dense_leg_index_map(ref.symm, q.spaces[leg], result_spaces[leg]; offset_sizes=offsets)
+                idxmaps[leg] = _dense_leg_index_map(symm(ref), q.spaces[leg], result_spaces[leg]; offset_sizes=offsets)
             elseif leg ∈ col_dims_set
                 offsets = Dict{Any, Int}(qlabels => start - 1 for (qlabels, start) in col_starts[j][leg])
-                idxmaps[leg] = _dense_leg_index_map(ref.symm, q.spaces[leg], result_spaces[leg]; offset_sizes=offsets)
+                idxmaps[leg] = _dense_leg_index_map(symm(ref), q.spaces[leg], result_spaces[leg]; offset_sizes=offsets)
             else
                 idxmaps[leg] = collect(1:size(arr, leg))
             end

@@ -1,4 +1,4 @@
-﻿# ─── svd ───────────────────────────────────────────────────────────────
+# ─── svd ───────────────────────────────────────────────────────────────
 #
 # Perform symmetry-adapted SVD of a QSpace object.
 #
@@ -72,7 +72,7 @@ end
 _svd_cgr_leftlegs(cgr::CGR, left_legs) = _svd_to_cgridx(cgr, left_legs)
 
 function _svd_abelian_intermediate_q(cgr::CGR{QD}, left_legs_canon) where {QD}
-    S = cgr.symm
+    S = symm(cgr)
     nin = cgr.legdir[1]
     leftset = Set(left_legs_canon)
 
@@ -124,7 +124,7 @@ function _get_svd_cgr_split_blocks(cgr::CGR{QD}, left_legs, right_legs) where {Q
     BlockInfo = NamedTuple{(:q, :omL, :omR, :coeffs),
         Tuple{NTuple{NZ, Int}, Int, Int, Array{Float64, 3}}}
 
-    if isabelian(cgr.symm)
+    if isabelian(symm(cgr))
         q = _svd_abelian_intermediate_q(cgr, left_legs_canon)
         coeffs = reshape(copy(cgr.wmat.data), 1, 1, size(cgr.wmat.data, 2))
         _is_zero_array(coeffs) && return BlockInfo[]
@@ -132,7 +132,7 @@ function _get_svd_cgr_split_blocks(cgr::CGR{QD}, left_legs, right_legs) where {Q
     end
 
     upsp, dnsp = _svd_cgr_updn(cgr)
-    cgtsvd = getNsave_CGTSVD(cgr.symm, upsp, dnsp, left_legs_canon; save=true)
+    cgtsvd = getNsave_CGTSVD(symm(cgr), upsp, dnsp, left_legs_canon; save=true)
 
     blocks = BlockInfo[]
     if cgtsvd isa LurCGT.CGTSVD
@@ -146,7 +146,7 @@ function _get_svd_cgr_split_blocks(cgr::CGR{QD}, left_legs, right_legs) where {Q
         end
         @assert offset == size(coeff_split, 1) + 1
     else
-        q = zero_qlabels((cgr.symm,))[1]
+        q = zero_qlabels((symm(cgr),))[1]
         om = size(cgr.wmat.data, 1)
         omL, omR = cgtsvd ? (1, om) : (om, 1)
         coeffs = reshape(cgr.wmat.data, omL, omR, size(cgr.wmat.data, 2))
@@ -430,7 +430,7 @@ function _get_svd_cgt_split_rows(q::QSpace{T, QD, N, RD},
                                  left_legs,
                                  right_legs;
                                  tol::Float64 = 1e-12) where {T, QD, N, RD}
-    blocks_by_symm = ntuple(n -> Vector{_ReducedSVDCGRBlock{nzops(q.symm[n])}}(), N)
+    blocks_by_symm = ntuple(n -> Vector{_ReducedSVDCGRBlock{nzops(symm(q)[n])}}(), N)
     for (ri, r) in enumerate(q.rows)
         row_blocks = _get_svd_row_split_blocks(r, left_legs, right_legs, ri; tol=tol)
         isnothing(row_blocks) && continue
@@ -468,7 +468,7 @@ function _preprocess_svd_cgtsvd(q::QSpace{T, QD, N, RD},
     _get_svd_row_spaces(q, left_legs_, right_legs_)
 
     blocks_by_symm = _get_svd_cgt_split_rows(q, left_legs_, right_legs_; tol=tol)
-    _share_svd_row_isometries!(blocks_by_symm, q.symm; tol=tol)
+    _share_svd_row_isometries!(blocks_by_symm, symm(q); tol=tol)
     intermediate_qrows = _get_svd_intermediate_qrow_dict(blocks_by_symm, length(q.rows))
     intermediate_qrow_classes = _get_svd_intermediate_qrow_equivclasses(
         left_signatures, right_signatures, intermediate_qrows)
@@ -628,7 +628,7 @@ function _build_svd_cgtsvd_class(q::QSpace{T, QD, N, RD},
 
 
     F = svd(mat; full=false)
-    dimq = prod(Float64(dimension(q.symm[n], sector[n])) for n in 1:N)
+    dimq = prod(Float64(dimension(symm(q)[n], sector[n])) for n in 1:N)
     scale = sqrt(dimq)
     return (
         sector = sector,
@@ -757,7 +757,7 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
         isempty(keep) && continue
 
         sector = result.sector
-        dual_sector = _svd_dual_sector(q.symm, sector)
+        dual_sector = _svd_dual_sector(symm(q), sector)
         sector_count = sector_counts[sector]
         class_range = class_ranges[ci]
 
@@ -773,7 +773,7 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
 
             cgrs_U = ntuple(N) do n
                 _svd_build_side_cgr(
-                    q.symm[n],
+                    symm(q)[n],
                     q.rows[info.row_index].cgrs[n],
                     left_legs,
                     sector[n],
@@ -793,7 +793,7 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
 
             cgrs_Vd = ntuple(N) do n
                 _svd_build_side_cgr(
-                    q.symm[n],
+                    symm(q)[n],
                     q.rows[info.row_index].cgrs[n],
                     right_legs,
                     dual_sector[n],
@@ -809,7 +809,7 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
         (sector, sector_counts[sector]) for sector in sector_order
     ]
     dual_bond_splist = Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}[
-        (_svd_dual_sector(q.symm, sector), sector_counts[sector]) for sector in sector_order
+        (_svd_dual_sector(symm(q), sector), sector_counts[sector]) for sector in sector_order
     ]
     sort!(dual_bond_splist; by = first, alg=MergeSort)
 
@@ -819,9 +819,9 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
     spaces_U = (ntuple(i -> q.spaces[left_legs[i]], NL)..., bond_splist)
     spaces_Vd = (dual_bond_splist, ntuple(i -> q.spaces[right_legs[i]], NR)...)
 
-    U = QSpace(q.symm, rows_U, inds_U, spaces_U)
-    S = _build_svd_cgtsvd_S(q.symm, bond_splist, left_tag, right_tag, sector_values)
-    Vd = QSpace(q.symm, rows_Vd, inds_Vd, spaces_Vd)
+    U = QSpace(symm(q), rows_U, inds_U, spaces_U)
+    S = _build_svd_cgtsvd_S(symm(q), bond_splist, left_tag, right_tag, sector_values)
+    Vd = QSpace(symm(q), rows_Vd, inds_Vd, spaces_Vd)
     return U, S, Vd
 end
 
@@ -895,7 +895,7 @@ function svd_old(q::QSpace{T, QD, N, RD},
                            Nkeep    ::Union{Nothing, Int} = nothing,
 ) where {T, QD, N, RD}
 
-    symm = q.symm
+    symmetries = symm(q)
     left_legs  = _normalize_svd_left_legs(left_legs, QD)
     right_legs = [l for l in 1:QD if l ∉ left_legs]
     NL, NR = length(left_legs), length(right_legs)
@@ -903,7 +903,7 @@ function svd_old(q::QSpace{T, QD, N, RD},
 
     # ── Step 1: stamp unique internal tags on every leg (lock=1) ─────────────
     internal_tags = ntuple(l -> "__svd_leg_$(l)__", QD)
-    q_work = QSpace(q.symm, q.rows,
+    q_work = QSpace(symmetries, q.rows,
         ntuple(l -> QIndex(internal_tags[l], q.inds[l].dir,
                            q.inds[l].plev, 1, q.inds[l].green), QD),
         q.spaces)  # reuse existing spaces since rows unchanged
@@ -989,7 +989,7 @@ function svd_old(q::QSpace{T, QD, N, RD},
         present_sectors = Set(values(row_sector_map))
         for (sector, dimL) in M.spaces[1]
             sector in present_sectors && continue
-            dimR = get(right_space_dims, _svd_dual_sector(symm, sector), 0)
+            dimR = get(right_space_dims, _svd_dual_sector(symmetries, sector), 0)
             for j in 1:min(dimL, dimR)
                 push!(selected_entries, (0.0, 0, sector, j))
             end
@@ -1045,25 +1045,25 @@ function svd_old(q::QSpace{T, QD, N, RD},
         cgrs_U  = ntuple(N) do n
             cgr_M   = r.cgrs[n]
             left_ql = cgr_M.qlabels[cgr_M.cgp[1]]
-            dim_n   = dimension(symm[n], left_ql)
+            dim_n   = dimension(symmetries[n], left_ql)
             wmat_n  = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], (left_ql, left_ql), wmat_n, (2, 1), (1, 1))
+            CGR(symmetries[n], (left_ql, left_ql), wmat_n, (2, 1), (1, 1))
         end
         # S: same qlabels and legdir as M (both legs outgoing)
         cgrs_S  = ntuple(N) do n
             cgr_M    = r.cgrs[n]
             left_ql  = cgr_M.qlabels[cgr_M.cgp[1]]
-            dim_n    = dimension(symm[n], left_ql)
+            dim_n    = dimension(symmetries[n], left_ql)
             wmat_n   = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], cgr_M.qlabels, wmat_n, cgr_M.cgp, (0, 2))
+            CGR(symmetries[n], cgr_M.qlabels, wmat_n, cgr_M.cgp, (0, 2))
         end
         # Vd: identity CGT on right_ql, legdir=(1,1)
         cgrs_Vd = ntuple(N) do n
             cgr_M    = r.cgrs[n]
             right_ql = cgr_M.qlabels[cgr_M.cgp[2]]
-            dim_n    = dimension(symm[n], right_ql)
+            dim_n    = dimension(symmetries[n], right_ql)
             wmat_n   = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], (right_ql, right_ql), wmat_n, (2, 1), (1, 1))
+            CGR(symmetries[n], (right_ql, right_ql), wmat_n, (2, 1), (1, 1))
         end
 
         push!(rows_U,  row(cgrs_U,  rmt_U))
@@ -1073,7 +1073,7 @@ function svd_old(q::QSpace{T, QD, N, RD},
 
     for (sector, chi) in sort(collect(keep_missing); by = x -> x[1])
         sL = left_space_dims[sector]
-        right_sector = _svd_dual_sector(symm, sector)
+        right_sector = _svd_dual_sector(symmetries, sector)
         sR = right_space_dims[right_sector]
 
         Umat = Matrix{Float64}(I, sL, sL)[:, 1:chi]
@@ -1084,16 +1084,16 @@ function svd_old(q::QSpace{T, QD, N, RD},
 
         cgrs_U = ntuple(N) do n
             left_ql = sector[n]
-            dim_n = dimension(symm[n], left_ql)
+            dim_n = dimension(symmetries[n], left_ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], (left_ql, left_ql), wmat_n, (2, 1), (1, 1))
+            CGR(symmetries[n], (left_ql, left_ql), wmat_n, (2, 1), (1, 1))
         end
 
         cgrs_Vd = ntuple(N) do n
             right_ql = right_sector[n]
-            dim_n = dimension(symm[n], right_ql)
+            dim_n = dimension(symmetries[n], right_ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], (right_ql, right_ql), wmat_n, (2, 1), (1, 1))
+            CGR(symmetries[n], (right_ql, right_ql), wmat_n, (2, 1), (1, 1))
         end
 
         push!(rows_U, row(cgrs_U, rmt_U))
@@ -1107,7 +1107,7 @@ function svd_old(q::QSpace{T, QD, N, RD},
         push!(bond_splist, (qlabels, count))
     end
     dual_bond_splist = eltype(M.spaces[2])[
-        (_svd_dual_sector(symm, qlabels), count) for (qlabels, count) in bond_splist
+        (_svd_dual_sector(symmetries, qlabels), count) for (qlabels, count) in bond_splist
     ]
     sort!(dual_bond_splist; by = x -> x[1])
 
@@ -1119,9 +1119,9 @@ function svd_old(q::QSpace{T, QD, N, RD},
     spaces_S  = (bond_splist, dual_bond_splist)
     spaces_Vd = (M.spaces[2], dual_bond_splist)
 
-    U_rank2  = QSpace(symm, rows_U,  inds_U,  spaces_U)
-    S        = QSpace(symm, rows_S,  inds_S,  spaces_S)
-    Vd_rank2 = QSpace(symm, rows_Vd, inds_Vd, spaces_Vd)
+    U_rank2  = QSpace(symmetries, rows_U,  inds_U,  spaces_U)
+    S        = QSpace(symmetries, rows_S,  inds_S,  spaces_S)
+    Vd_rank2 = QSpace(symmetries, rows_Vd, inds_Vd, spaces_Vd)
 
     # ── Step 6: split fused legs of U and Vd ──────────────────────────────────
     # Contract U_rank2's fused left leg (leg 1) with aL's fused output leg (leg NL+1)
@@ -1182,8 +1182,8 @@ function svd_old(q::QSpace{T, QD, N, RD},
     end
     
     # Reconstruct QSpaces with final indices (spaces already permuted correctly)
-    U  = QSpace(symm, U_final.rows,  u_inds_final,  U_final.spaces)
-    Vd = QSpace(symm, Vd_final.rows, vd_inds_final, Vd_final.spaces)
+    U  = QSpace(symmetries, U_final.rows,  u_inds_final,  U_final.spaces)
+    Vd = QSpace(symmetries, Vd_final.rows, vd_inds_final, Vd_final.spaces)
     
     return U, S, Vd
 end

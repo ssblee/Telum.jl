@@ -1,4 +1,4 @@
-﻿# ─── eigen ────────────────────────────────────────────────────────────────────
+# ─── eigen ────────────────────────────────────────────────────────────────────
 #
 # Perform symmetry-adapted eigendecomposition of a rank-2 QSpace object.
 #
@@ -178,7 +178,7 @@ function _select_eig_rows(template::QSpace{T, 2, N, RD},
         error("Unknown eig row selection mode: $mode")
     end
 
-    return QSpace(template.symm, rows_out, template.inds, spaces_out)
+    return QSpace(symm(template), rows_out, template.inds, spaces_out)
 end
 
 function _effective_eigen_keep_count(eig_entries,
@@ -215,7 +215,7 @@ function _split_eigen_result(result::EigenResult,
     kept_entries = eig_entries[1:nkeep_eff]
     discarded_entries = eig_entries[nkeep_eff+1:end]
 
-    N = length(result.D.symm)
+    N = length(symm(result.D))
     kept_picks = Dict{NTuple{N, Tuple{Vararg{Int}}}, Vector{Int}}()
     for entry in kept_entries
         push!(get!(kept_picks, entry[3], Int[]), entry[4])
@@ -243,7 +243,7 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
                              eig_tag::AbstractString = "eig";
                              hermitian::Bool = true) where {T, N, RD}
 
-    symm = q.symm
+    symmetries = symm(q)
 
     # ── Validate input ───────────────────────────────────────────────────────
     @assert length(q.inds) == 2 "eigen requires a rank-2 QSpace"
@@ -283,7 +283,7 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
 
         # Degeneracy = product of irrep dims across all symmetries for this sector
         cgt_dim = prod(
-            dimension(symm[n], r.cgrs[n].qlabels[r.cgrs[n].cgp[1]])
+            dimension(symmetries[n], r.cgrs[n].qlabels[r.cgrs[n].cgp[1]])
             for n in 1:N)
         for (j, ev) in enumerate(eigenvalues)
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
@@ -295,17 +295,17 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
         cgrs_D = ntuple(N) do n
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
-            dim_n = dimension(symm[n], ql)
+            dim_n = dimension(symmetries[n], ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
+            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
         cgrs_V = ntuple(N) do n
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
-            dim_n = dimension(symm[n], ql)
+            dim_n = dimension(symmetries[n], ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
+            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
         push!(rows_D, row(cgrs_D, rmt_D))
@@ -313,7 +313,7 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
     end
 
     covered = Set(_eig_sector_qlabels(r, N) for r in q.rows)
-    _append_missing_eig_sectors!(symm, q.spaces[1], covered, rows_D, rows_V, nothing, eig_list, cgp, T_out)
+    _append_missing_eig_sectors!(symmetries, q.spaces[1], covered, rows_D, rows_V, nothing, eig_list, cgp, T_out)
 
     # Sort eig_list ascending (real part for Hermitian, absolute value otherwise)
     sort!(eig_list; by = x -> _eig_sort_value(x[1], hermitian))
@@ -330,8 +330,8 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
     inds_V = (QIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.green),
               QIndex(eig_tag, dirs[2]))
 
-    D = QSpace(symm, rows_D, inds_D, spaces_D)
-    V = QSpace(symm, rows_V, inds_V, spaces_V)
+    D = QSpace(symmetries, rows_D, inds_D, spaces_D)
+    V = QSpace(symmetries, rows_V, inds_V, spaces_V)
 
     return EigenResult(V, D, nothing, eig_list)
 end
@@ -353,7 +353,7 @@ end
 function eigen_full(q::QSpace{T, 2, N, RD},
                     eig_tag::AbstractString = "eig") where {T, N, RD}
 
-    symm = q.symm
+    symmetries = symm(q)
 
     @assert length(q.inds) == 2 "eigen_full requires a rank-2 QSpace"
     dirs = (q.inds[1].dir, q.inds[2].dir)
@@ -386,7 +386,7 @@ function eigen_full(q::QSpace{T, 2, N, RD},
         sector_qlabels = _eig_sector_qlabels(r, N)
 
         cgt_dim = prod(
-            dimension(symm[n], r.cgrs[n].qlabels[r.cgrs[n].cgp[1]])
+            dimension(symmetries[n], r.cgrs[n].qlabels[r.cgrs[n].cgp[1]])
             for n in 1:N)
         for (j, ev) in enumerate(eigenvalues)
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
@@ -399,25 +399,25 @@ function eigen_full(q::QSpace{T, 2, N, RD},
         cgrs_D = ntuple(N) do n
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
-            dim_n = dimension(symm[n], ql)
+            dim_n = dimension(symmetries[n], ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
+            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
         cgrs_V = ntuple(N) do n
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
-            dim_n = dimension(symm[n], ql)
+            dim_n = dimension(symmetries[n], ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
+            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
         cgrs_Vinv = ntuple(N) do n
             cgr_orig = r.cgrs[n]
             ql = cgr_orig.qlabels[1]
-            dim_n = dimension(symm[n], ql)
+            dim_n = dimension(symmetries[n], ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
+            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
         end
 
         push!(rows_D,    row(cgrs_D,    rmt_D))
@@ -426,7 +426,7 @@ function eigen_full(q::QSpace{T, 2, N, RD},
     end
 
     covered = Set(_eig_sector_qlabels(r, N) for r in q.rows)
-    _append_missing_eig_sectors!(symm, q.spaces[1], covered, rows_D, rows_V, rows_Vinv, eig_list, cgp, T_out)
+    _append_missing_eig_sectors!(symmetries, q.spaces[1], covered, rows_D, rows_V, rows_Vinv, eig_list, cgp, T_out)
 
     # Sort by ascending |eigenvalue|
     sort!(eig_list; by = x -> _eig_sort_value(x[1], false))
@@ -449,9 +449,9 @@ function eigen_full(q::QSpace{T, 2, N, RD},
     inds_Vinv = (QIndex(eig_tag, dirs[1]),
                  QIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.green))
 
-    D    = QSpace(symm, rows_D,    inds_D,    spaces_D)
-    V    = QSpace(symm, rows_V,    inds_V,    spaces_V)
-    Vinv = QSpace(symm, rows_Vinv, inds_Vinv, spaces_Vinv)
+    D    = QSpace(symmetries, rows_D,    inds_D,    spaces_D)
+    V    = QSpace(symmetries, rows_V,    inds_V,    spaces_V)
+    Vinv = QSpace(symmetries, rows_Vinv, inds_Vinv, spaces_Vinv)
 
     return EigenResult(V, D, Vinv, eig_list)
 end
