@@ -1,4 +1,4 @@
-﻿# ─── Helpers ─────────────────────────────────────────────────────────────────
+# ─── Helpers ─────────────────────────────────────────────────────────────────
 
 # Physical qlabel of leg l in row r: an N-tuple of qlabels, one per symmetry.
 function _row_qlabel(r::row{T, QD, N}, l::Int) where {T, QD, N}
@@ -560,10 +560,6 @@ function _row_qlabel(::Type{QT}, r::row{T, QD, N}, l::Int) where {QT, T, QD, N}
     return ntuple(n -> r.cgrs[n].qlabels[r.cgrs[n].cgp[l]], Val(N))::QT
 end
 
-function _row_qlabels(::Type{QT}, r::row{T, QD, N}) where {QT, T, QD, N}
-    return ntuple(l -> _row_qlabel(QT, r, l), Val(QD))::NTuple{QD, QT}
-end
-
 _contracted_qlabel_type(::Type{QT}, ::Val{1}) where {QT} = QT
 _contracted_qlabel_type(::Type{QT}, ::Val{CN}) where {QT, CN} = NTuple{CN, QT}
 
@@ -573,92 +569,259 @@ _contracted_qlabel(::Type{QT}, r::row, legs::NTuple{1, Int}) where {QT} =
 _contracted_qlabel(::Type{QT}, r::row, legs::NTuple{CN, Int}) where {QT, CN} =
     ntuple(i -> _row_qlabel(QT, r, legs[i]), Val(CN))
 
-_contracted_qlabel(qlabels::NTuple{QD, QT}, legs::NTuple{1, Int}) where {QD, QT} =
-    qlabels[legs[1]]
-
-_contracted_qlabel(qlabels::NTuple{QD, QT}, legs::NTuple{CN, Int}) where {QD, QT, CN} =
-    ntuple(i -> qlabels[legs[i]], Val(CN))
-
-function _free_qlabels(qlabels::NTuple{QD, QT},
-                       free_legs::NTuple{NF, Int}) where {QD, QT, NF}
-    return ntuple(k -> qlabels[free_legs[k]], Val(NF))::NTuple{NF, QT}
-end
-
-struct ContractRowInfo{QD, QT, CQT}
+struct ContractRowInfo{NF, QT, CQT}
     row_index::Int
-    qlabels::NTuple{QD, QT}
-    ckey::CQT
+    free_qlabels::NTuple{NF, QT}
+    contracted_qlabels::CQT
 end
 
 function _contract_row_infos(::Type{QT}, rows::AbstractVector{<:row{T, QD, N}},
-                             legs::NTuple{CN, Int}) where {QT, T, QD, N, CN}
+                             free_legs::NTuple{NF, Int},
+                             legs::NTuple{CN, Int}) where {QT, T, QD, N, NF, CN}
     CQT = _contracted_qlabel_type(QT, Val(CN))
-    Info = ContractRowInfo{QD, QT, CQT}
+    Info = ContractRowInfo{NF, QT, CQT}
     infos = Vector{Info}(undef, length(rows))
     for i in eachindex(rows)
-        qlabels = _row_qlabels(QT, rows[i])
-        infos[i] = Info(i, qlabels, _contracted_qlabel(qlabels, legs)::CQT)
+        infos[i] = Info(
+            i,
+            ntuple(k -> _row_qlabel(QT, rows[i], free_legs[k]), Val(NF)),
+            _contracted_qlabel(QT, rows[i], legs)::CQT,
+        )
     end
-    return sort!(infos; by = info -> info.ckey, alg=MergeSort)
+    return sort!(infos; by = info -> info.contracted_qlabels, alg=MergeSort)
 end
 
-function _contracted_qlabel_entries(::Type{QT}, rows::AbstractVector{<:row},
-                                    legs::NTuple{CN, Int}) where {QT, CN}
-    infos = _contract_row_infos(QT, rows, legs)
-    return [(info.row_index, info.ckey) for info in infos]
+function _contracted_qlabel_entries(::Type{QT}, rows::AbstractVector{<:row{T, QD, N}},
+                                    legs::NTuple{CN, Int}) where {QT, T, QD, N, CN}
+    infos = _contract_row_infos(QT, rows, _free_legs(Val(QD), legs), legs)
+    return [(info.row_index, info.contracted_qlabels) for info in infos]
 end
 
-function _contracted_qlabel_run(infos::AbstractVector{<:ContractRowInfo{QD, QT, CQT}},
-                                first_pos::Int) where {QD, QT, CQT}
-    key = infos[first_pos].ckey
+function _contracted_qlabel_run(infos::AbstractVector{<:ContractRowInfo{NF, QT, CQT}},
+                                first_pos::Int) where {NF, QT, CQT}
+    key = infos[first_pos].contracted_qlabels
     next_pos = first_pos + 1
-    while next_pos <= lastindex(infos) && infos[next_pos].ckey == key
+    while next_pos <= lastindex(infos) && infos[next_pos].contracted_qlabels == key
         next_pos += 1
     end
     return key, first_pos:(next_pos - 1), next_pos
 end
 
-function _contract_wmat_for_symmetry(::Type{PS}, ::Val{n},
-                                     r1::row, r2::row,
-                                     legs1::NTuple{CN, Int},
-                                     legs2::NTuple{CN, Int}) where {PS<:ProductSymm, n, CN}
-    S = _symmetry_type(PS, Val(n))
-    cgr1n = r1.cgrs[n];  cgr2n = r2.cgrs[n]
-    wm1 = cgr1n.wmat.data
-    wm2 = cgr2n.wmat.data
-    info = get_cgt_contr_info(S, r1, r2, legs1, legs2, Val(n))
+@inline function _contract_xsym_wmat(wm1::AbstractMatrix{T1},
+                                     xarr::AbstractArray{T2, 3},
+                                     wm2::AbstractMatrix{T3}) where {T1, T2, T3}
+    OM1, OM2, OM3 = size(xarr)
+    d1 = size(wm1, 2)
+    d2 = size(wm2, 2)
+    WT = promote_type(T1, T2, T3)
 
-    if info === nothing
-        @assert size(wm1) == (1, 1) "Abelian contraction expects q1 w-matrix to be 1x1, got size $(size(wm1))"
-        @assert size(wm2) == (1, 1) "Abelian contraction expects q2 w-matrix to be 1x1, got size $(size(wm2))"
-        @assert isapprox(wm1[1, 1], 1.0; atol=1e-12, rtol=1e-12) "Abelian contraction expects q1 w-matrix ≈ [1;;], got $(wm1)"
-        @assert isapprox(wm2[1, 1], 1.0; atol=1e-12, rtol=1e-12) "Abelian contraction expects q2 w-matrix ≈ [1;;], got $(wm2)"
-        return LurTensor([1.0;;])
-    end
+    left_input = reshape(permutedims(xarr, (1, 3, 2)), OM1, OM3 * OM2)
+    left = Matrix{WT}(undef, d1, OM3 * OM2)
+    mul!(left, adjoint(wm1), left_input)
 
-    xsym_obj = getNsave_Xsymbol(S,
-                                info.up1sp, info.dn1sp,
-                                info.up2sp, info.dn2sp,
-                                info.ctlegs1, info.ctlegs2)
-    isnothing(xsym_obj) && return nothing
-    xarr = xsym_obj.xsym_arr
-    OM3, d1, d2 = size(xarr, 3), size(wm1, 2), size(wm2, 2)
-    result_w = zeros(Float64, OM3, d1, d2)
-    for a in 1:OM3
-        result_w[a, :, :] = wm1' * xarr[:, :, a] * wm2
-    end
-    return LurTensor(reshape(result_w, size(result_w, 1), :))
+    right_input = reshape(permutedims(reshape(left, d1, OM3, OM2), (2, 1, 3)), OM3 * d1, OM2)
+    result = Matrix{WT}(undef, OM3 * d1, d2)
+    mul!(result, right_input, wm2)
+
+    return LurTensor(reshape(result, OM3, d1 * d2))
 end
 
-function _contract_wmats(::Type{PS}, r1::row{T1, QD1, N}, r2::row{T2, QD2, N},
-                         legs1::NTuple{CN, Int},
-                         legs2::NTuple{CN, Int}) where {PS<:ProductSymm, T1, QD1, T2, QD2, N, CN}
-    maybe_wmats = ntuple(n -> _contract_wmat_for_symmetry(PS, Val(n), r1, r2,
-                                                          legs1, legs2), Val(N))
+@inline _symmetry_qlabels(qlabels::NTuple{NF, QT}, ::Val{n}) where {NF, QT, n} =
+    ntuple(k -> qlabels[k][n], Val(NF))
+
+@inline _symmetry_contracted_qlabel(qlabel, ::Val{n}, ::Val{1}) where {n} = qlabel[n]
+
+@inline _symmetry_contracted_qlabel(qlabels::NTuple{CN, QT}, ::Val{n}, ::Val{CN}) where {CN, QT, n} =
+    ntuple(k -> qlabels[k][n], Val(CN))
+
+@inline function _xsym_cache_key_type(::Type{QT}, ::Val{CN}, ::Val{NF1}, ::Val{NF2},
+                                      ::Val{n}) where {QT, CN, NF1, NF2, n}
+    SQT = QT.parameters[n]
+    return Tuple{_contracted_qlabel_type(SQT, Val(CN)), NTuple{NF1, SQT}, NTuple{NF2, SQT}}
+end
+
+@inline function _xsym_cache_key(::Type{QT}, contracted_qlabels,
+                                 free_qlabels1::NTuple{NF1, QT},
+                                 free_qlabels2::NTuple{NF2, QT},
+                                 ::Val{n}, ::Val{CN}) where {QT, NF1, NF2, n, CN}
+    return (_symmetry_contracted_qlabel(contracted_qlabels, Val(n), Val(CN)),
+            _symmetry_qlabels(free_qlabels1, Val(n)),
+            _symmetry_qlabels(free_qlabels2, Val(n)))
+end
+
+@inline _cgr_up_qlabels(cgr::CGR{QD, NZ, S}, ::Val{M}) where {QD, NZ, S, M} =
+    ntuple(i -> cgr.qlabels[i], Val(M))
+
+@inline _cgr_dn_qlabels(cgr::CGR{QD, NZ, S}, ::Val{M}) where {QD, NZ, S, M} =
+    ntuple(i -> cgr.qlabels[M + i], Val(QD - M))
+
+@inline _stored_contract_legs(cgr::CGR{QD, NZ, S}, legs::NTuple{CN, Int}) where {QD, NZ, S, CN} =
+    ntuple(k -> cgr.cgp[legs[k]], Val(CN))
+
+@generated function _load_nonabelian_xarr(::Type{S},
+                                          cgr1::CGR{QD1, NZ, S},
+                                          cgr2::CGR{QD2, NZ, S},
+                                          legs1::NTuple{CN, Int},
+                                          legs2::NTuple{CN, Int}) where {S<:NonabelianSymm, QD1, QD2, NZ, CN}
+    branches = Expr[]
+    for m1 in 0:QD1
+        for m2 in 0:QD2
+            push!(branches, quote
+                if cgr1.legdir[1] == $m1 && cgr2.legdir[1] == $m2
+                    up1sp = _cgr_up_qlabels(cgr1, Val($m1))
+                    dn1sp = _cgr_dn_qlabels(cgr1, Val($m1))
+                    up2sp = _cgr_up_qlabels(cgr2, Val($m2))
+                    dn2sp = _cgr_dn_qlabels(cgr2, Val($m2))
+                    ctlegs1 = _stored_contract_legs(cgr1, legs1)
+                    ctlegs2 = _stored_contract_legs(cgr2, legs2)
+                    xsym_obj = getNsave_Xsymbol(S, up1sp, dn1sp, up2sp, dn2sp, ctlegs1, ctlegs2)
+                    isnothing(xsym_obj) && return nothing
+                    return xsym_obj.xsym_arr::Array{Float64, 3}
+                end
+            end)
+        end
+    end
+    return quote
+        $(branches...)
+        throw(ArgumentError("invalid CGR leg directions"))
+    end
+end
+
+_build_xsym_cache_for_symmetry(::Type{S}, ::Type{QT}, ::Val{n},
+                               row_infos1, row_infos2, rows1, rows2,
+                               legs1::NTuple{CN, Int},
+                               legs2::NTuple{CN, Int}) where {S<:AbelianSymm, QT, n, CN} = nothing
+
+function _build_xsym_cache_for_symmetry(::Type{S}, ::Type{QT}, ::Val{n},
+                                        row_infos1::AbstractVector{<:ContractRowInfo{NF1, QT, CQT}},
+                                        row_infos2::AbstractVector{<:ContractRowInfo{NF2, QT, CQT}},
+                                        rows1::AbstractVector{<:row{T1, QD1, N, RD1, CGRS1}},
+                                        rows2::AbstractVector{<:row{T2, QD2, N, RD2, CGRS2}},
+                                        legs1::NTuple{CN, Int},
+                                        legs2::NTuple{CN, Int}) where {S<:NonabelianSymm, QT, n, NF1, NF2, CQT,
+                                                                        T1, T2, QD1, QD2, N, RD1, RD2, CGRS1, CGRS2, CN}
+    XKey = _xsym_cache_key_type(QT, Val(CN), Val(NF1), Val(NF2), Val(n))
+    cache = Dict{XKey, Array{Float64, 3}}()
+
+    pos1 = firstindex(row_infos1)
+    pos2 = firstindex(row_infos2)
+    while pos1 <= lastindex(row_infos1) && pos2 <= lastindex(row_infos2)
+        ckey1 = row_infos1[pos1].contracted_qlabels
+        ckey2 = row_infos2[pos2].contracted_qlabels
+
+        if isless(ckey1, ckey2)
+            _, _, pos1 = _contracted_qlabel_run(row_infos1, pos1)
+            continue
+        elseif isless(ckey2, ckey1)
+            _, _, pos2 = _contracted_qlabel_run(row_infos2, pos2)
+            continue
+        end
+
+        _, run1, next_pos1 = _contracted_qlabel_run(row_infos1, pos1)
+        _, run2, next_pos2 = _contracted_qlabel_run(row_infos2, pos2)
+
+        for p1 in run1
+            info1 = row_infos1[p1]
+            cgr1n = rows1[info1.row_index].cgrs[n]
+            for p2 in run2
+                info2 = row_infos2[p2]
+                xkey = _xsym_cache_key(QT, info1.contracted_qlabels,
+                                       info1.free_qlabels,
+                                       info2.free_qlabels,
+                                       Val(n), Val(CN))::XKey
+                haskey(cache, xkey) && continue
+                xarr = _load_nonabelian_xarr(S, cgr1n, rows2[info2.row_index].cgrs[n], legs1, legs2)
+                isnothing(xarr) || (cache[xkey] = xarr)
+            end
+        end
+
+        pos1 = next_pos1
+        pos2 = next_pos2
+    end
+
+    return cache
+end
+
+function _build_xsym_caches(::Type{PS}, ::Type{QT},
+                            row_infos1::AbstractVector{<:ContractRowInfo{NF1, QT, CQT}},
+                            row_infos2::AbstractVector{<:ContractRowInfo{NF2, QT, CQT}},
+                            rows1::AbstractVector{<:row{T1, QD1, N, RD1, CGRS1}},
+                            rows2::AbstractVector{<:row{T2, QD2, N, RD2, CGRS2}},
+                            legs1::NTuple{CN, Int},
+                            legs2::NTuple{CN, Int}) where {PS<:ProductSymm, QT, NF1, NF2, CQT,
+                                                            T1, T2, QD1, QD2, N, RD1, RD2, CGRS1, CGRS2, CN}
+    return ntuple(n -> _build_xsym_cache_for_symmetry(_symmetry_type(PS, Val(n)), QT, Val(n),
+                                                      row_infos1, row_infos2, rows1, rows2,
+                                                      legs1, legs2), Val(N))
+end
+
+@inline function _contract_wmat_for_symmetry(::Type{S}, ::Type{QT},
+                                             r1::row{T1, QD1, N, RD1, CGRS1},
+                                             r2::row{T2, QD2, N, RD2, CGRS2},
+                                             contracted_qlabels,
+                                             free_qlabels1::NTuple{NF1, QT},
+                                             free_qlabels2::NTuple{NF2, QT},
+                                             ::Nothing,
+                                             ::Val{CN},
+                                             ::Val{n}) where {S<:AbelianSymm, QT, NF1, NF2, CN,
+                                                              T1, QD1, T2, QD2, N, RD1, RD2, CGRS1, CGRS2, n}
+    cgr1n = r1.cgrs[n]
+    cgr2n = r2.cgrs[n]
+    wm1 = cgr1n.wmat.data
+    wm2 = cgr2n.wmat.data
+    @assert size(wm1) == (1, 1) "Abelian contraction expects q1 w-matrix to be 1x1, got size $(size(wm1))"
+    @assert size(wm2) == (1, 1) "Abelian contraction expects q2 w-matrix to be 1x1, got size $(size(wm2))"
+    @assert isapprox(wm1[1, 1], 1.0; atol=1e-12, rtol=1e-12) "Abelian contraction expects q1 w-matrix ≈ [1;;], got $(wm1)"
+    @assert isapprox(wm2[1, 1], 1.0; atol=1e-12, rtol=1e-12) "Abelian contraction expects q2 w-matrix ≈ [1;;], got $(wm2)"
+    return LurTensor([1.0;;])
+end
+
+@inline function _contract_wmat_for_symmetry(::Type{S}, ::Type{QT},
+                                             r1::row{T1, QD1, N, RD1, CGRS1},
+                                             r2::row{T2, QD2, N, RD2, CGRS2},
+                                             contracted_qlabels,
+                                             free_qlabels1::NTuple{NF1, QT},
+                                             free_qlabels2::NTuple{NF2, QT},
+                                             xsym_cache::Dict{XKey, Array{Float64, 3}},
+                                             ::Val{CN},
+                                             ::Val{n}) where {S<:NonabelianSymm, QT, NF1, NF2, XKey, CN,
+                                                              T1, QD1, T2, QD2, N, RD1, RD2, CGRS1, CGRS2, n}
+    xkey = _xsym_cache_key(QT, contracted_qlabels, free_qlabels1, free_qlabels2, Val(n), Val(CN))::XKey
+    xarr = get(xsym_cache, xkey, nothing)
+    isnothing(xarr) && return nothing
+    return _contract_xsym_wmat(r1.cgrs[n].wmat.data, xarr, r2.cgrs[n].wmat.data)
+end
+
+@inline function _contract_wmat_for_symmetry(::Type{PS}, ::Type{QT}, ::Val{n},
+                                             r1::row{T1, QD1, N, RD1, CGRS1},
+                                             r2::row{T2, QD2, N, RD2, CGRS2},
+                                             contracted_qlabels,
+                                             free_qlabels1::NTuple{NF1, QT},
+                                             free_qlabels2::NTuple{NF2, QT},
+                                             xsym_cache,
+                                             ::Val{CN}) where {PS<:ProductSymm, QT, NF1, NF2, CN,
+                                                                T1, QD1, T2, QD2, N, RD1, RD2, CGRS1, CGRS2, n}
+    return _contract_wmat_for_symmetry(_symmetry_type(PS, Val(n)), QT, r1, r2,
+                                       contracted_qlabels, free_qlabels1, free_qlabels2,
+                                       xsym_cache, Val(CN), Val(n))
+end
+
+function _contract_wmats(::Type{PS}, ::Type{QT},
+                         r1::row{T1, QD1, N, RD1, CGRS1},
+                         r2::row{T2, QD2, N, RD2, CGRS2},
+                         contracted_qlabels,
+                         free_qlabels1::NTuple{NF1, QT},
+                         free_qlabels2::NTuple{NF2, QT},
+                         xsym_caches,
+                         ::Val{CN}) where {PS<:ProductSymm, QT, NF1, NF2, CN,
+                                             T1, QD1, T2, QD2, N, RD1, RD2, CGRS1, CGRS2}
+    maybe_wmats = ntuple(n -> _contract_wmat_for_symmetry(PS, QT, Val(n), r1, r2,
+                                                          contracted_qlabels,
+                                                          free_qlabels1, free_qlabels2,
+                                                          xsym_caches[n], Val(CN)), Val(N))
     any(isnothing, maybe_wmats) && return nothing
     return ntuple(n -> maybe_wmats[n]::LurTensor{Float64, 2}, Val(N))
 end
-
 # ── Post-process helper ──────────────────────────────────────────────────────
 # Reshape a (F1·OM1, F2·OM2) block from the batched matmul back to the
 # standard contracted-RMT layout (f1…, f2…, om12_1, …, om12_N).
@@ -724,10 +887,10 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS1},
 
     T    = promote_type(T1, T2)
 
-    free1  = _free_legs(Val(QD1), legs1)
-    free2  = _free_legs(Val(QD2), legs2)
     nf1 = QD1 - CN
     nf2 = QD2 - CN
+    free1::NTuple{nf1, Int}  = _free_legs(Val(QD1), legs1)
+    free2::NTuple{nf2, Int}  = _free_legs(Val(QD2), legs2)
     QD_out = QD1 + QD2 - 2CN
     RD_out = QD_out + N
 
@@ -742,14 +905,17 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS1},
     rows2 = q2.rows
 
     # ── 1. Build sorted row-info vectors keyed by contracted qlabels ─────────
-    row_infos1 = _contract_row_infos(QT, rows1, legs1)
-    row_infos2 = _contract_row_infos(QT, rows2, legs2)
+    row_infos1 = _contract_row_infos(QT, rows1, free1, legs1)
+    row_infos2 = _contract_row_infos(QT, rows2, free2, legs2)
 
     # ── 2. Output-sector accumulator ─────────────────────────────────────────
     FreeKey1  = NTuple{nf1, QT}
     FreeKey2  = NTuple{nf2, QT}
     OutKey    = Tuple{FreeKey1, FreeKey2}
     WmatVec   = Vector{LurTensor{Float64, 2}}
+
+    xsym_caches = _build_xsym_caches(PS1, QT, row_infos1, row_infos2,
+                                     rows1, rows2, legs1, legs2)
 
     sector_wmats = Dict{OutKey, NTuple{N, WmatVec}}()
     sector_rmts  = Dict{OutKey, Vector{LurTensor{T, RD_out}}}()
@@ -759,8 +925,8 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS1},
     pos1 = firstindex(row_infos1)
     pos2 = firstindex(row_infos2)
     while pos1 <= lastindex(row_infos1) && pos2 <= lastindex(row_infos2)
-        ckey1 = row_infos1[pos1].ckey
-        ckey2 = row_infos2[pos2].ckey
+        ckey1 = row_infos1[pos1].contracted_qlabels
+        ckey2 = row_infos2[pos2].contracted_qlabels
 
         if isless(ckey1, ckey2)
             _, _, pos1 = _contracted_qlabel_run(row_infos1, pos1)
@@ -827,17 +993,17 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS1},
         for (ii, p1) in enumerate(run1)
             i = row_infos1[p1].row_index
             r1  = rows1[i]
-            fq1 = _free_qlabels(row_infos1[p1].qlabels, free1)::FreeKey1
+            fq1 = row_infos1[p1].free_qlabels::FreeKey1
             sz_f1, sz_om1 = szinfo1[ii]
 
             for (jj, p2) in enumerate(run2)
                 j = row_infos2[p2].row_index
                 r2  = rows2[j]
-                fq2 = _free_qlabels(row_infos2[p2].qlabels, free2)::FreeKey2
+                fq2 = row_infos2[p2].free_qlabels::FreeKey2
                 sz_f2, sz_om2 = szinfo2[jj]
 
                 # ── W-matrix contraction (per symmetry) ──────────────────────
-                wmats = _contract_wmats(PS1, r1, r2, legs1, legs2)
+                wmats = _contract_wmats(PS1, QT, r1, r2, ckey1, fq1, fq2, xsym_caches, Val(CN))
                 isnothing(wmats) && continue
 
                 # ── Extract block & post-process ─────────────────────────────
