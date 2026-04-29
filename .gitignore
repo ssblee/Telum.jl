@@ -5,3 +5,4 @@ Manifest.toml
 .DS_Store
 SESSION_NOTES.md
 scratch_julia_worker.jl
+*.txt

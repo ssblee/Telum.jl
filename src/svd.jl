@@ -905,7 +905,7 @@ function svd_old(q::QSpace{T, QD, N, RD},
     internal_tags = ntuple(l -> "__svd_leg_$(l)__", QD)
     q_work = QSpace(symmetries, q.rows,
         ntuple(l -> QIndex(internal_tags[l], q.inds[l].dir,
-                           q.inds[l].plev, 1, q.inds[l].green), QD),
+                           q.inds[l].plev, 1, q.inds[l].dual), QD),
         q.spaces)  # reuse existing spaces since rows unchanged
 
     # ── Step 2: build fusing isometries ──────────────────────────────────────

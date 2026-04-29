@@ -1,15 +1,20 @@
-# ─── eigen ────────────────────────────────────────────────────────────────────
+﻿# ─── eigen ────────────────────────────────────────────────────────────────────
 #
 # Perform symmetry-adapted eigendecomposition of a rank-2 QSpace object.
 #
 # Arguments:
 #   q          : QSpace{T, 2, N, RD} to decompose (rank 2, one incoming and one outgoing leg)
 #   eig_tag    : itag for the new eigenvector bond leg (default "eig")
-#   hermitian  : if true (default), treat each RMT block as Hermitian
+#   hermitian  : if true, assume each RMT block is Hermitian and skip the
+#                Hermiticity check. If false (default), compute
+#                norm(q - q') / norm(q) and dispatch to the Hermitian or
+#                general eigensolver automatically.
 #
-# Returns `EigenResult(V, D, nothing, eig_list)` where:
-#   D        : diagonal QSpace with eigenvalues, legs (eig_tag '-', eig_tag '+')
-#   V        : eigenvector QSpace, legs (original outgoing leg, eig_tag '+')
+# Returns `EigenResult(V, D, V_inv, eig_list)` where:
+#   D        : diagonal QSpace with legs normalized to ('+', '-')
+#   V        : eigenvector QSpace with legs normalized to ('+', '-')
+#   V_inv    : `nothing` on the Hermitian path, inverse eigenvector QSpace on
+#              the general path
 #   eig_list : Vector{Tuple{eigenval_type, Int, sector_qlabels, sector_index}}
 #              — (eigenvalue, degeneracy, sector, in-sector index) entries
 #              sorted by ascending eigenvalue (real for Hermitian, abs for non-Hermitian).
@@ -24,6 +29,7 @@ _eig_sector_qlabels(r, N) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1
 
 _eig_sort_value(ev::Real, hermitian::Bool) = hermitian ? real(ev) : abs(ev)
 _eig_sort_value(ev::Complex, hermitian::Bool) = hermitian ? real(ev) : abs(ev)
+const _EIG_HERMITIAN_RTOL = sqrt(eps(Float64))
 
 struct EigenResult{TV, TD, TVI, TL}
     V::TV
@@ -96,7 +102,7 @@ function _renumber_eig_entries(eig_entries)
     return out
 end
 
-_retag_qindex(idx::QIndex, tag::AbstractString) = QIndex(tag, idx.dir, idx.plev, idx.lock, idx.green)
+_retag_qindex(idx::QIndex, tag::AbstractString) = QIndex(tag, idx.dir, idx.plev, idx.lock, idx.dual)
 
 function _retag_eigen_result(result::EigenResult, eig_tag::AbstractString)
     d_inds = (_retag_qindex(result.D.inds[1], eig_tag), _retag_qindex(result.D.inds[2], eig_tag))
@@ -113,6 +119,38 @@ function _retag_eigen_result(result::EigenResult, eig_tag::AbstractString)
     end
 
     return EigenResult(V, D, V_inv, result.eig_list)
+end
+
+function _prepare_eigen_input(q::QSpace{T, 2, N, RD},
+                              opname::AbstractString) where {T, N, RD}
+    dirs = (q.inds[1].dir, q.inds[2].dir)
+    @assert (dirs == ('+', '-') || dirs == ('-', '+')) "$opname requires one incoming ('+') and one outgoing ('-') leg"
+
+    q_work = dirs == ('+', '-') ? q : permutedims(q, (2, 1))
+    @assert q_work.spaces[1] == q_work.spaces[2] "$opname: both legs of input QSpace must have the same space list (same sectors and dimensions)"
+    return q_work
+end
+
+function _check_hermitian_eigen_legs(q::QSpace,
+                                     opname::AbstractString)
+    idx1, idx2 = q.inds
+    @assert idx1.itags == idx2.itags "$opname: Hermitian eigendecomposition requires both legs to have the same itag"
+    @assert idx1.plev == idx2.plev "$opname: Hermitian eigendecomposition requires both legs to have the same plev"
+    @assert idx1.lock == idx2.lock "$opname: Hermitian eigendecomposition requires both legs to have the same lock"
+    @assert idx1.dual == idx2.dual "$opname: Hermitian eigendecomposition requires both legs to have the same dual flag"
+    return nothing
+end
+
+function _hermiticity_ratio(q::QSpace{T, 2, N, RD}) where {T, N, RD}
+    q_adj = permutedims(q', (2, 1))
+    q_adj = QSpace(symm(q_adj), q_adj.rows, q.inds, q_adj.spaces)
+
+    qnorm = norm(q)
+    diffnorm = norm(q - q_adj)
+    if iszero(qnorm)
+        return iszero(diffnorm) ? 0.0 : Inf
+    end
+    return diffnorm / qnorm
 end
 
 function _select_eig_rows(template::QSpace{T, 2, N, RD},
@@ -239,22 +277,18 @@ function _split_eigen_result(result::EigenResult,
     return kept, discarded
 end
 
-function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
-                             eig_tag::AbstractString = "eig";
-                             hermitian::Bool = true) where {T, N, RD}
+function _eigen_hermitian(q::QSpace{T, 2, N, RD},
+                          eig_tag::AbstractString = "eig") where {T, N, RD}
+
+    _check_hermitian_eigen_legs(q, "eigen")
 
     symmetries = symm(q)
-
-    # ── Validate input ───────────────────────────────────────────────────────
-    @assert length(q.inds) == 2 "eigen requires a rank-2 QSpace"
     dirs = (q.inds[1].dir, q.inds[2].dir)
-    @assert (dirs == ('+', '-') || dirs == ('-', '+')) "eigen requires one incoming ('+') and one outgoing ('-') leg"
-    @assert q.spaces[1] == q.spaces[2] "eigen: both legs of input QSpace must have the same space list (same sectors and dimensions)"
-    out_leg = dirs[1] == '-' ? 1 : 2
-    cgp = dirs == ('+', '-') ? (1, 2) : (2, 1)
+    out_leg = 2
+    cgp = (1, 2)
 
     # ── Decompose each row ───────────────────────────────────────────────────
-    T_out    = hermitian ? Float64 : Complex{Float64}
+    T_out    = promote_type(T, Float64)
     rows_D   = row{T_out, 2, N, 2 + N}[]
     rows_V   = row{T_out, 2, N, 2 + N}[]
     # Eigenvalue, degeneracy, sector qlabels, in-sector index
@@ -267,16 +301,9 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
 
         mat = reshape(rmt, sL, sR)
 
-        # TODO: Need to fix it. Hermitian matrix can have complex entries
-        if hermitian
-            F = eigen(Hermitian(mat))
-            eigenvalues  = T_out.(F.values)
-            eigenvectors = T_out.(F.vectors)
-        else
-            F = eigen(mat)
-            eigenvalues  = T_out.(F.values)
-            eigenvectors = T_out.(F.vectors)
-        end
+        F = eigen(Hermitian(mat))
+        eigenvalues  = T_out.(F.values)
+        eigenvectors = T_out.(F.vectors)
 
         chi = length(eigenvalues)
         sector_qlabels = _eig_sector_qlabels(r, N)
@@ -315,11 +342,10 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
     covered = Set(_eig_sector_qlabels(r, N) for r in q.rows)
     _append_missing_eig_sectors!(symmetries, q.spaces[1], covered, rows_D, rows_V, nothing, eig_list, cgp, T_out)
 
-    # Sort eig_list ascending (real part for Hermitian, absolute value otherwise)
-    sort!(eig_list; by = x -> _eig_sort_value(x[1], hermitian))
+    # Sort eig_list ascending by eigenvalue.
+    sort!(eig_list; by = x -> _eig_sort_value(x[1], true))
 
     # ── Inherit spaces from original q ──────────────────────────────────────
-    # Both legs share the same space (asserted above).
     spaces_D = (q.spaces[1], q.spaces[1])
     spaces_V = (q.spaces[1], q.spaces[1])
 
@@ -327,7 +353,7 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
     inds_D = (QIndex(eig_tag, dirs[1]), QIndex(eig_tag, dirs[2]))
 
     orig_out_ind = q.inds[out_leg]
-    inds_V = (QIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.green),
+    inds_V = (QIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
               QIndex(eig_tag, dirs[2]))
 
     D = QSpace(symmetries, rows_D, inds_D, spaces_D)
@@ -336,35 +362,17 @@ function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
     return EigenResult(V, D, nothing, eig_list)
 end
 
-# ─── eigen_full ───────────────────────────────────────────────────────────────
-#
-# Non-Hermitian eigendecomposition that also returns V_inv.
-#
-# Returns `EigenResult(V, D, Vinv, eig_list)` where:
-#   D        : diagonal QSpace of eigenvalues (complex), legs (eig_tag '-', eig_tag '+')
-#   V        : right-eigenvector QSpace, legs (original outgoing leg, eig_tag '+')
-#   Vinv     : inverse of V, legs (eig_tag '-', original incoming leg)
-#   eig_list : Vector{Tuple{ComplexF64, Int, sector_qlabels, sector_index}}
-#              — (eigenvalue, degeneracy, sector, in-sector index) entries
-#              sorted ascending by |eigenvalue|.
-#
-# Satisfies A = V * D * Vinv row-by-row.
-# ────────────────────────────────────────────────────────────────────────────
-function eigen_full(q::QSpace{T, 2, N, RD},
-                    eig_tag::AbstractString = "eig") where {T, N, RD}
+function _eigen_general(q::QSpace{T, 2, N, RD},
+                        eig_tag::AbstractString = "eig") where {T, N, RD}
 
     symmetries = symm(q)
-
-    @assert length(q.inds) == 2 "eigen_full requires a rank-2 QSpace"
     dirs = (q.inds[1].dir, q.inds[2].dir)
-    @assert (dirs == ('+', '-') || dirs == ('-', '+')) "eigen_full requires one incoming ('+') and one outgoing ('-') leg"
-    @assert q.spaces[1] == q.spaces[2] "eigen_full: both legs of input QSpace must have the same space list (same sectors and dimensions)"
-    cgp = dirs == ('+', '-') ? (1, 2) : (2, 1)
+    cgp = (1, 2)
 
-    in_leg  = dirs[1] == '+' ? 1 : 2
-    out_leg = dirs[1] == '-' ? 1 : 2
+    in_leg  = 1
+    out_leg = 2
 
-    T_out     = ComplexF64
+    T_out     = promote_type(T, ComplexF64)
     rows_D    = row{T_out, 2, N, 2 + N}[]
     rows_V    = row{T_out, 2, N, 2 + N}[]
     rows_Vinv = row{T_out, 2, N, 2 + N}[]
@@ -428,32 +436,40 @@ function eigen_full(q::QSpace{T, 2, N, RD},
     covered = Set(_eig_sector_qlabels(r, N) for r in q.rows)
     _append_missing_eig_sectors!(symmetries, q.spaces[1], covered, rows_D, rows_V, rows_Vinv, eig_list, cgp, T_out)
 
-    # Sort by ascending |eigenvalue|
     sort!(eig_list; by = x -> _eig_sort_value(x[1], false))
 
-    # ── Inherit spaces from original q ──────────────────────────────────────
-    # Both legs have the same space (asserted above), so q.spaces[1] is used
-    # throughout.
     spaces_D    = (q.spaces[1], q.spaces[1])
     spaces_V    = (q.spaces[1], q.spaces[1])
     spaces_Vinv = (q.spaces[1], q.spaces[1])
 
-    # ── Build QIndex tuples ───────────────────────────────────────
     inds_D = (QIndex(eig_tag, dirs[1]), QIndex(eig_tag, dirs[2]))
 
     orig_out_ind = q.inds[out_leg]
-    inds_V = (QIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.green),
+    inds_V = (QIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
               QIndex(eig_tag, dirs[2]))
 
     orig_in_ind = q.inds[in_leg]
     inds_Vinv = (QIndex(eig_tag, dirs[1]),
-                 QIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.green))
+                 QIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.dual))
 
     D    = QSpace(symmetries, rows_D,    inds_D,    spaces_D)
     V    = QSpace(symmetries, rows_V,    inds_V,    spaces_V)
     Vinv = QSpace(symmetries, rows_Vinv, inds_Vinv, spaces_Vinv)
 
     return EigenResult(V, D, Vinv, eig_list)
+end
+
+function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
+                             eig_tag::AbstractString = "eig";
+                             hermitian::Bool = false) where {T, N, RD}
+    q_work = _prepare_eigen_input(q, "eigen")
+
+    use_hermitian = hermitian
+    if !use_hermitian
+        use_hermitian = _hermiticity_ratio(q_work) <= _EIG_HERMITIAN_RTOL
+    end
+
+    return use_hermitian ? _eigen_hermitian(q_work, eig_tag) : _eigen_general(q_work, eig_tag)
 end
 
 """
@@ -485,5 +501,7 @@ function discard_eigen(result::EigenResult,
                        hermitian::Bool = isnothing(result.V_inv))
     return discard_eigen(result, Nkeep, tol, kept_tag, discarded_tag; hermitian=hermitian)
 end
+
+
 
 

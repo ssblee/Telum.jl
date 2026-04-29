@@ -1,4 +1,4 @@
-﻿# N: the number of symmetries
+# N: the number of symmetries
 # QT: the concrete qlabel type for one sector
 # PS: the product symmetry type
 struct leginfo{N, QT<:Tuple, PS<:ProductSymm}
@@ -40,6 +40,27 @@ function getIdentity(legs::Vararg{Tuple{QSpace, Int}};
                      itag::AbstractString="", plev::Int=0, lock::Int=0)
     leginfos = Tuple(leginfo(q, i) for (q, i) in legs)
     return getIdentity(leginfos; itag=itag, plev=plev, lock=lock)
+end
+
+function _normalize_getIdentity_legs(q::QSpace{T, QD}, legs) where {T, QD}
+    positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
+    isempty(positions) && throw(ArgumentError("getIdentity requires at least one leg"))
+    all(1 <= leg <= QD for leg in positions) || throw(ArgumentError(
+        "getIdentity legs must lie in 1:$QD, got $positions"))
+    length(unique(positions)) == length(positions) || throw(ArgumentError(
+        "getIdentity legs must be unique, got $positions"))
+    return Tuple(positions)
+end
+
+function getIdentity(q::QSpace{T, QD}, legs::LegList;
+                     itag::AbstractString="", plev::Int=0, lock::Int=0) where {T, QD}
+    positions = _normalize_getIdentity_legs(q, legs)
+    return getIdentity(((q, leg) for leg in positions)...; itag=itag, plev=plev, lock=lock)
+end
+
+function getIdentity(q::QSpace{T, QD}, leg::Integer, morelegs::Vararg{Integer};
+                     itag::AbstractString="", plev::Int=0, lock::Int=0) where {T, QD}
+    return getIdentity(q, (Int(leg), (Int(l) for l in morelegs)...); itag=itag, plev=plev, lock=lock)
 end
     
 # For abelian symmetries: unique outcome is the sum of all qlabels; OM is always 1
@@ -179,7 +200,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     # we can contract a 1j tensor and recover a directly-contractable external leg.
     fused_ind = QIndex(itag, '-', plev, lock)
     inds = (ntuple(d -> begin
-        idx = leginfos[d].ind.dir == '+' ? change_green(leginfos[d].ind) : leginfos[d].ind
+        idx = leginfos[d].ind.dir == '+' ? change_dual(leginfos[d].ind) : leginfos[d].ind
         to_incoming(idx)
     end, D)..., fused_ind)
     

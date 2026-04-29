@@ -7,8 +7,8 @@ function build_MPO(qss::Matrix{<:QSpace}, N::Int)
         tags = ("S,$i", "S,$i", i>1 ? "OB,$(i-1)" : "OLeft", 
         i<N ? "OB,$i" : "ORight")
 
-        if i == 1 MPO[i] = QSpace(getsub(t, 3, [(zq, -1)]), tags)
-        elseif i == N MPO[i] = QSpace(getsub(t, 4, [(zq, 1)]), tags)
+        if i == 1 MPO[i] = QSpace(getsub(t, 3, x->x==zq ? -1 : nothing), tags)
+        elseif i == N MPO[i] = QSpace(getsub(t, 4, x->x==zq ? 1 : nothing), tags)
         else MPO[i] = QSpace(t, tags) end
     end
     return MPO

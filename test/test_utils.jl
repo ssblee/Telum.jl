@@ -403,9 +403,13 @@ end
 function test_getIdentity_direct_contract(option::LocalSpaceOptions)
     q = getLocalSpace(option)
     qi = QSpace(q.I, ("lur", "lur"))
-    a = getIdentity((qi, 1); itag="fused")
+    a_pairs = getIdentity((qi, 1); itag="fused")
+    a = getIdentity(qi, 1; itag="fused")
 
-    @test a.inds[1] == QIndex(qi.inds[1].itags, '-', qi.inds[1].plev, qi.inds[1].lock, qi.inds[1].green)
+    @test a.inds == a_pairs.inds
+    @test a.spaces == a_pairs.spaces
+    @test _rows_equal(a.rows, a_pairs.rows)
+    @test a.inds[1] == QIndex(qi.inds[1].itags, '-', qi.inds[1].plev, qi.inds[1].lock, qi.inds[1].dual)
     @test a.spaces[1] == qi.spaces[1]
     @test a.inds[2] == QIndex("fused", '-')
 
@@ -827,6 +831,103 @@ function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
             @test idx <= sector_dims[sector]
         end
     end
+end
+
+function test_eigen_autodetect(option::LocalSpaceOptions; tol::Float64 = 1e-9)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
+
+    A = copy(q.I)
+    rng = Random.MersenneTwister(7)
+    for r in A.rows
+        sz = size(r.RMT.data)
+        n  = sz[1]
+        M  = randn(rng, n, n)
+        H  = M' * M + I(n) * 0.1
+        r.RMT.data .= reshape(Float64.(H), sz)
+    end
+
+    hermitian_result = eigen(A)
+    @test isnothing(hermitian_result.V_inv)
+    hermitian_rec = lock(hermitian_result.V, 1) * (hermitian_result.D * hermitian_result.V')
+    arr_A = Array(to_sparse_array(A))
+    arr_hermitian_rec = Array(to_sparse_array(hermitian_rec))
+    hermitian_diff = norm(arr_A - arr_hermitian_rec) / max(norm(arr_A), 1.0)
+    @test hermitian_diff < tol
+
+    B = copy(q.I)
+    rng = Random.MersenneTwister(8)
+    made_nonsymmetric = false
+    for r in B.rows
+        sz = size(r.RMT.data)
+        n  = sz[1]
+        M  = randn(rng, n, n)
+        if n > 1
+            M[1, 2] += 1.0
+            M[2, 1] -= 0.5
+            made_nonsymmetric = true
+        end
+        r.RMT.data .= reshape(Float64.(M + I(n) * 0.1), sz)
+    end
+    made_nonsymmetric || return
+
+    general_result = eigen(B)
+    @test !isnothing(general_result.V_inv)
+    general_rec = lock(general_result.V, 1) * (general_result.D * general_result.V_inv)
+    arr_B = Array(to_sparse_array(B))
+    arr_general_rec = Array(to_sparse_array(general_rec))
+    general_diff = norm(arr_B - arr_general_rec) / max(norm(arr_B), 1.0)
+    @test general_diff < tol
+end
+
+function test_eigen_permuted_input(option::LocalSpaceOptions; tol::Float64 = 1e-9)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
+
+    A = copy(q.I)
+    rng = Random.MersenneTwister(11)
+    for r in A.rows
+        sz = size(r.RMT.data)
+        n  = sz[1]
+        M  = randn(rng, n, n)
+        H  = M' * M + I(n) * 0.1
+        r.RMT.data .= reshape(Float64.(H), sz)
+    end
+
+    A_perm = permutedims(A, (2, 1))
+    result = eigen(A_perm; hermitian = true)
+
+    @test (result.D.inds[1].dir, result.D.inds[2].dir) == ('+', '-')
+    @test (result.V.inds[1].dir, result.V.inds[2].dir) == ('+', '-')
+    @test isnothing(result.V_inv)
+
+    rec = lock(result.V, 1) * (result.D * result.V')
+    arr_A = Array(to_sparse_array(A))
+    arr_rec = Array(to_sparse_array(rec))
+    diff = norm(arr_A - arr_rec) / max(norm(arr_A), 1.0)
+    @test diff < tol
+end
+
+function test_eigen_hermitian_leg_guard(option::LocalSpaceOptions)
+    q = getLocalSpace(option, ("lur", "lur", "op"))
+
+    A = copy(q.I)
+    rng = Random.MersenneTwister(13)
+    for r in A.rows
+        sz = size(r.RMT.data)
+        n  = sz[1]
+        M  = randn(rng, n, n)
+        H  = M' * M + I(n) * 0.1
+        r.RMT.data .= reshape(Float64.(H), sz)
+    end
+
+    idx1, idx2 = A.inds
+    bad_inds = (
+        QIndex("eigL", idx1.dir, idx1.plev, idx1.lock, idx1.dual),
+        QIndex("eigR", idx2.dir, idx2.plev, idx2.lock, idx2.dual),
+    )
+    A_bad = QSpace(A, bad_inds)
+
+    @test_throws AssertionError eigen(A_bad; hermitian = true)
+    @test_throws AssertionError eigen(A_bad)
 end
 
 # ─── test_spaces_eigen ───────────────────────────────────────────────────────
@@ -1983,9 +2084,6 @@ function test_contract_default(option::LocalSpaceOptions; tol::Float64 = 1e-10)
 
     println("test_contract_default passed (all cases).")
 end
-
-
-
 
 
 

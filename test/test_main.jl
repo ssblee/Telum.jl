@@ -157,6 +157,21 @@ end
     test_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
 end
 
+@testset "eig autodetect of QSpace" begin
+    test_eigen_autodetect(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_eigen_autodetect(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
+@testset "eig permuted input of QSpace" begin
+    test_eigen_permuted_input(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_eigen_permuted_input(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
+@testset "eig Hermitian leg guard of QSpace" begin
+    test_eigen_hermitian_leg_guard(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_eigen_hermitian_leg_guard(FermionSOptions(U1, SU{2}, SU{3}, 3))
+end
+
 @testset "eig truncation of QSpace" begin
     test_discard_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
     test_discard_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
@@ -809,6 +824,29 @@ end
         @test q2.inds[3].itags == "op"
         @test q2.inds[1].itags == "extra,site1"   # unchanged
 
+        # tuple/vector tag queries only remove fully matched groups
+        q_grouped = QSpace(q, ("aaa,bbb", "aaa,bbb,ccc", "bbb,ccc"))
+        q2 = removeitag(q_grouped, ("aaa,bbb", "ccc"))
+        @test q2.inds[1].itags == ""
+        @test q2.inds[2].itags == ""
+        @test q2.inds[3].itags == "bbb"
+
+        q2 = removeitag(q_grouped, 2, ["aaa,bbb", "ccc"])
+        @test q2.inds[1].itags == "aaa,bbb"
+        @test q2.inds[2].itags == ""
+        @test q2.inds[3].itags == "bbb,ccc"
+
+        # collection tags also support keyword leg selection
+        q2 = removeitag(q_grouped, ("aaa,bbb", "ccc"); dir='-')
+        @test q2.inds[1].itags == "aaa,bbb"
+        @test q2.inds[2].itags == ""
+        @test q2.inds[3].itags == "bbb"
+
+        q2 = removeitag(q_grouped, ["aaa,bbb", "ccc"]; dir='-', rev=true)
+        @test q2.inds[1].itags == ""
+        @test q2.inds[2].itags == "aaa,bbb,ccc"
+        @test q2.inds[3].itags == "bbb,ccc"
+
         # criteria with selector: leg 1
         q2 = removeitag(q_extra, "extra"; dir='+')
         @test q2.inds[1].itags == "site1"
@@ -819,39 +857,6 @@ end
         @test q2.inds[1].itags == "extra,site1"
         @test q2.inds[2].itags == "site2"
         @test q2.inds[3].itags == "op"
-    end
-
-    # ── replaceitag ───────────────────────────────────────────────────────────
-    @testset "replaceitag" begin
-        # criteria form (all legs): removes "site1", adds "link" to EVERY selected leg,
-        # regardless of whether "site1" was present.
-        q2 = replaceitag(q, "site1", "link")
-        @test q2.inds[1].itags == "link"          # "site1" removed, "link" added
-        @test q2.inds[2].itags == "link,site2"    # "site1" absent; "link" added to "site2"
-        @test q2.inds[3].itags == "link,op"       # "site1" absent; "link" added to "op"
-
-        # single leg: clean targeted replacement
-        q2 = replaceitag(q, 1, "site1", "link")
-        @test q2.inds[1].itags == "link"
-        @test q2.inds[2].itags == "site2"   # unchanged
-
-        # LegList: vector
-        q2 = replaceitag(q, [1, 2], "site1", "link")
-        @test q2.inds[1].itags == "link"
-        @test q2.inds[2].itags == "link,site2"   # "site1" absent; "link" added
-        @test q2.inds[3].itags == "op"            # unchanged
-
-        # use the itag selector to restrict to legs that actually carry the old tag
-        q2 = replaceitag(q, "site1", "link"; itag="site1")
-        @test q2.inds[1].itags == "link"
-        @test q2.inds[2].itags == "site2"   # skipped (no "site1")
-        @test q2.inds[3].itags == "op"      # skipped
-
-        # rev: applies only to leg 1 (not dir='-' → leg 1 only)
-        q2 = replaceitag(q, "site1", "link"; dir='-', rev=true)
-        @test q2.inds[1].itags == "link"    # "site1" removed, "link" added
-        @test q2.inds[2].itags == "site2"   # excluded by rev
-        @test q2.inds[3].itags == "op"      # excluded by rev
     end
 
     # ── setitag ───────────────────────────────────────────────────────────────
@@ -979,7 +984,7 @@ end
         @test additag(q, "x").inds[1].itags           == "a,x"
         @test removeitag(q, "a").inds[1].itags        == ""
         @test setitag(q, "new"; dir='+').inds[1].itags == "new"
-        @test replaceitag(q, "a", "z").inds[1].itags  == "z"
+        @test !isdefined(QSpaces, :replaceitag)
 
         # findlegs / findleg
         @test findlegs(q; dir='+') == [1]
@@ -1111,14 +1116,11 @@ end
 
     row_sector(qs::QSpace, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(qs)))
     rows_for_sector(qs::QSpace, sector) = [r for r in qs.rows if row_sector(qs, r) == sector]
-    original_sectors = Set(first.(q.spaces[leg]))
-    bad_sector = ntuple(n -> ntuple(_ -> 999, length(sector_full[n])), length(symm(q)))
 
-    @test bad_sector ∉ original_sectors
-
-    selector_pairs = [sector_full => :, sector_reorder => [dim_reorder, 1]]
-    q_pairs = QSpaces.getsub(q, leg, selector_pairs)
-    q_tuples = QSpaces.getsub(q, leg, [(sector_full, :), (sector_reorder, [dim_reorder, 1])])
+    q_pred_pairs = QSpaces.getsub(q, leg,
+                                  sector -> sector == sector_full ? Colon() :
+                                            sector == sector_reorder ? (dim_reorder, 1) :
+                                            nothing)
 
     expected_spaces_leg = [
         (sector, sector == sector_full ? dim_full : 2)
@@ -1126,21 +1128,21 @@ end
         if sector == sector_full || sector == sector_reorder
     ]
 
-    @test q_pairs.spaces[leg] == expected_spaces_leg
+    @test q_pred_pairs.spaces[leg] == expected_spaces_leg
     for other_leg in 1:length(q.spaces)
         other_leg == leg && continue
-        @test q_pairs.spaces[other_leg] == q.spaces[other_leg]
+        @test q_pred_pairs.spaces[other_leg] == q.spaces[other_leg]
     end
-    @test Set(row_sector(q_pairs, r) for r in q_pairs.rows) == Set([sector_full, sector_reorder])
+    @test Set(row_sector(q_pred_pairs, r) for r in q_pred_pairs.rows) == Set([sector_full, sector_reorder])
 
-    full_rows = rows_for_sector(q_pairs, sector_full)
+    full_rows = rows_for_sector(q_pred_pairs, sector_full)
     orig_full_rows = rows_for_sector(q, sector_full)
     @test length(full_rows) == length(orig_full_rows)
     for (full_row, orig_full_row) in zip(full_rows, orig_full_rows)
         @test full_row.RMT.data == orig_full_row.RMT.data
     end
 
-    reorder_rows = rows_for_sector(q_pairs, sector_reorder)
+    reorder_rows = rows_for_sector(q_pred_pairs, sector_reorder)
     orig_reorder_rows = rows_for_sector(q, sector_reorder)
     @test length(reorder_rows) == length(orig_reorder_rows)
     reorder_inds = [dim_reorder, 1]
@@ -1149,18 +1151,7 @@ end
         @test reorder_row.RMT.data == orig_reorder_row.RMT.data[reorder_selector...]
     end
 
-    @test q_tuples.spaces == q_pairs.spaces
-    @test length(q_tuples.rows) == length(q_pairs.rows)
-    for sector in (sector_full, sector_reorder)
-        tuple_rows = rows_for_sector(q_tuples, sector)
-        pair_rows = rows_for_sector(q_pairs, sector)
-        @test length(tuple_rows) == length(pair_rows)
-        for (tuple_row, pair_row) in zip(tuple_rows, pair_rows)
-            @test tuple_row.RMT.data == pair_row.RMT.data
-        end
-    end
-
-    q_single = QSpaces.getsub(q, leg, [sector_reorder => 2])
+    q_single = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? 2 : nothing)
     single_rows = rows_for_sector(q_single, sector_reorder)
     @test q_single.spaces[leg] == [(sector_reorder, 1)]
     for other_leg in 1:length(q.spaces)
@@ -1173,7 +1164,7 @@ end
         @test single_row.RMT.data == orig_reorder_row.RMT.data[single_selector...]
     end
 
-    q_range = QSpaces.getsub(q, leg, [sector_reorder => 1:2])
+    q_range = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? (1:2) : nothing)
     @test q_range.spaces[leg] == [(sector_reorder, 2)]
     range_rows = rows_for_sector(q_range, sector_reorder)
     @test length(range_rows) == length(orig_reorder_rows)
@@ -1182,7 +1173,7 @@ end
         @test range_row.RMT.data == orig_reorder_row.RMT.data[range_selector...]
     end
 
-    q_negative = QSpaces.getsub(q, leg, [sector_reorder => -1])
+    q_negative = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? -1 : nothing)
     negative_rows = rows_for_sector(q_negative, sector_reorder)
     @test q_negative.spaces[leg] == [(sector_reorder, 1)]
     @test length(negative_rows) == length(orig_reorder_rows)
@@ -1191,7 +1182,7 @@ end
         @test negative_row.RMT.data == orig_reorder_row.RMT.data[negative_selector...]
     end
 
-    q_negative_range = QSpaces.getsub(q, leg, [sector_reorder => -2:-1])
+    q_negative_range = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? (-2:-1) : nothing)
     negative_range_rows = rows_for_sector(q_negative_range, sector_reorder)
     @test q_negative_range.spaces[leg] == [(sector_reorder, 2)]
     @test length(negative_range_rows) == length(orig_reorder_rows)
@@ -1200,7 +1191,7 @@ end
         @test negative_range_row.RMT.data == orig_reorder_row.RMT.data[negative_range_selector...]
     end
 
-    q_mixed = QSpaces.getsub(q, leg, [sector_reorder => [-1, 1]])
+    q_mixed = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? [-1, 1] : nothing)
     mixed_rows = rows_for_sector(q_mixed, sector_reorder)
     @test q_mixed.spaces[leg] == [(sector_reorder, 2)]
     @test length(mixed_rows) == length(orig_reorder_rows)
@@ -1209,7 +1200,15 @@ end
         @test mixed_row.RMT.data == orig_reorder_row.RMT.data[mixed_selector...]
     end
 
-    q_empty = QSpaces.getsub(q, leg, Any[])
+    q_tuple_pick = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? (dim_reorder, 1) : nothing)
+    @test q_tuple_pick.spaces == q_mixed.spaces
+    tuple_pick_rows = rows_for_sector(q_tuple_pick, sector_reorder)
+    @test length(tuple_pick_rows) == length(mixed_rows)
+    for (tuple_pick_row, mixed_row) in zip(tuple_pick_rows, mixed_rows)
+        @test tuple_pick_row.RMT.data == mixed_row.RMT.data
+    end
+
+    q_empty = QSpaces.getsub(q, leg, _ -> nothing)
     @test isempty(q_empty.rows)
     @test isempty(q_empty.spaces[leg])
     for other_leg in 1:length(q.spaces)
@@ -1217,17 +1216,15 @@ end
         @test q_empty.spaces[other_leg] == q.spaces[other_leg]
     end
 
-    @test_throws ArgumentError QSpaces.getsub(q, 0, selector_pairs)
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [bad_sector => :])
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [bad_sector => 1])
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => [1, 1]])
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => [1, -dim_reorder]])
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => Int[]])
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => 0])
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => (dim_reorder + 1)])
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => -(dim_reorder + 1)])
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => :, sector_reorder => 1])
-    @test_throws ArgumentError QSpaces.getsub(q, leg, [sector_reorder => :, (sector_full, :)])
+    @test_throws ArgumentError QSpaces.getsub(q, 0, _ -> Colon())
+    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? [1, 1] : nothing)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? [1, -dim_reorder] : nothing)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? Int[] : nothing)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? 0 : nothing)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? (dim_reorder + 1) : nothing)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? -(dim_reorder + 1) : nothing)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? "bad" : nothing)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? 1 : nothing; preserve_space=true)
 end
 
 @testset "getsub sector predicate" begin
@@ -1254,7 +1251,7 @@ end
     expected_rows = [r for r in q.rows if row_sector(q, r) == target_sector]
     expected_leg_spaces = [entry for entry in q.spaces[leg] if entry[1] == target_sector]
 
-    q_exact = QSpaces.getsub(q, leg, sector -> sector == target_sector)
+    q_exact = QSpaces.getsub(q, leg, sector -> sector == target_sector ? Colon() : nothing)
     @test _rows_equal(q_exact.rows, expected_rows)
     @test q_exact.spaces[leg] == expected_leg_spaces
     for other_leg in 1:length(q.spaces)
@@ -1262,18 +1259,18 @@ end
         @test q_exact.spaces[other_leg] == q.spaces[other_leg]
     end
 
-    q_component = QSpaces.getsub(q, leg, sector -> sector[1] == target_sector[1])
+    q_component = QSpaces.getsub(q, leg, sector -> sector[1] == target_sector[1] ? Colon() : nothing)
     expected_component_rows = [r for r in q.rows if row_sector(q, r)[1] == target_sector[1]]
     expected_component_spaces = [entry for entry in q.spaces[leg] if entry[1][1] == target_sector[1]]
     @test _rows_equal(q_component.rows, expected_component_rows)
     @test q_component.spaces[leg] == expected_component_spaces
 
-    q_preserved = QSpaces.getsub(q, leg, sector -> sector == target_sector; preserve_space=true)
+    q_preserved = QSpaces.getsub(q, leg, sector -> sector == target_sector ? Colon() : nothing; preserve_space=true)
     @test _rows_equal(q_preserved.rows, expected_rows)
     @test q_preserved.spaces == q.spaces
     @test all(q_preserved.spaces[legidx] !== q.spaces[legidx] for legidx in 1:length(q.spaces))
 
-    q_none = QSpaces.getsub(q, leg, _ -> false)
+    q_none = QSpaces.getsub(q, leg, _ -> nothing)
     @test isempty(q_none.rows)
     @test isempty(q_none.spaces[leg])
     for other_leg in 1:length(q.spaces)
@@ -1281,11 +1278,13 @@ end
         @test q_none.spaces[other_leg] == q.spaces[other_leg]
     end
 
-    q_none_preserved = QSpaces.getsub(q, leg, _ -> false; preserve_space=true)
+    q_none_preserved = QSpaces.getsub(q, leg, _ -> nothing; preserve_space=true)
     @test isempty(q_none_preserved.rows)
     @test q_none_preserved.spaces == q.spaces
 
-    @test_throws ArgumentError QSpaces.getsub(q, 0, _ -> true)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, _ -> false)
+    @test_throws ArgumentError QSpaces.getsub(q, leg, _ -> true)
+    @test_throws ArgumentError QSpaces.getsub(q, 0, _ -> Colon())
 end
 
 @testset "getsub multi-leg sector predicate" begin
@@ -1300,7 +1299,7 @@ end
 
     row_sector_at(r, leg) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(q)))
     allowed = Set{Any}([row_sector_at(q.rows[1], 1), row_sector_at(q.rows[1], 2)])
-    pred = sector -> sector in allowed
+    pred = sector -> sector in allowed ? Colon() : nothing
 
     expected_rows = [
         r for r in q.rows
@@ -1313,7 +1312,24 @@ end
     @test _rows_equal(q_multi.rows, expected_rows)
     @test q_multi.spaces[1] == expected_spaces_1
     @test q_multi.spaces[2] == expected_spaces_2
-    @test q_multi.spaces[3] == q.spaces[3]
+    for other_leg in 1:length(q.spaces)
+        other_leg in legs && continue
+        @test q_multi.spaces[other_leg] == q.spaces[other_leg]
+    end
+
+    pred_slice = sector -> sector in allowed ? 1 : nothing
+    q_multi_sliced = QSpaces.getsub(q, legs, pred_slice)
+    @test q_multi_sliced.spaces[1] == [(entry[1], 1) for entry in q.spaces[1] if entry[1] in allowed]
+    @test q_multi_sliced.spaces[2] == [(entry[1], 1) for entry in q.spaces[2] if entry[1] in allowed]
+    for other_leg in 1:length(q.spaces)
+        other_leg in legs && continue
+        @test q_multi_sliced.spaces[other_leg] == q.spaces[other_leg]
+    end
+    @test length(q_multi_sliced.rows) == length(expected_rows)
+    for (sliced_row, orig_row) in zip(q_multi_sliced.rows, expected_rows)
+        slice_selector = ntuple(d -> d in legs ? [1] : Colon(), ndims(orig_row.RMT.data))
+        @test sliced_row.RMT.data == orig_row.RMT.data[slice_selector...]
+    end
 
     q_multi_range = QSpaces.getsub(q, 1:2, pred)
     @test _rows_equal(q_multi_range.rows, q_multi.rows)
@@ -1334,6 +1350,7 @@ end
     @test_throws ArgumentError QSpaces.getsub(q, Int[], pred)
     @test_throws ArgumentError QSpaces.getsub(q, (1, 1), pred)
     @test_throws ArgumentError QSpaces.getsub(q, (0, 1), pred)
+    @test_throws ArgumentError QSpaces.getsub(q, legs, pred_slice; preserve_space=true)
     @test_throws ArgumentError QSpaces.getsub(q, pred; itag="missing")
 end
 
@@ -1526,7 +1543,11 @@ end
     q0 = getLocalSpace(option)
     q = QSpace(q0.I, ("left", "right"))
 
-    idq = getIdentity((q, 2); itag=q.inds[2].itags)
+    idq_pairs = getIdentity((q, 2); itag=q.inds[2].itags)
+    idq = getIdentity(q, 2; itag=q.inds[2].itags)
+    @test idq.inds == idq_pairs.inds
+    @test idq.spaces == idq_pairs.spaces
+    @test _rows_equal(idq.rows, idq_pairs.rows)
     idq = QSpace(idq, q.inds)
 
     @test norm((q + 2.5) - (q + 2.5 * idq)) < 1e-10
@@ -1537,7 +1558,7 @@ end
     q_bad_rank = _make_test_qspace_rank4()
     @test_throws AssertionError q_bad_rank + 1.0
 
-    q_bad_dirs = getIdentity((q, 1), (q, 2); itag="fused")
+    q_bad_dirs = getIdentity(q, 1, 2; itag="fused")
     @test_throws AssertionError q_bad_dirs + 1.0
 end
 
@@ -1679,8 +1700,4 @@ end
         @test occursin("4D QSpace", out)
     end
 end
-
-
-
-
 

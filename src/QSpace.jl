@@ -98,14 +98,21 @@ function _remove_itag(base::AbstractString, rmtags::AbstractString)
     return Itag(join(filter(t -> t ∉ rm, _parse_itag(base)), ','))
 end
 
-# Remove tags listed in `old` and add tags listed in `new` to `base`.
-# (Applied regardless of whether `old` tags are present — use the
-#  `itag` selector to restrict which legs are affected.)
-function _replace_itag(base::AbstractString, old::AbstractString, new_tags::AbstractString)
-    rm = Set(_parse_itag(old))
-    remaining = filter(t -> t ∉ rm, _parse_itag(base))
-    append!(remaining, _parse_itag(new_tags))
-    return Itag(join(sort!(unique!(remaining)), ','))
+# Remove tags from `base` using one or more ITensor-style tag queries.
+# Each query is applied independently, and its tags are removed only if all
+# tags in that query are present in `base`.
+function _remove_itag(base::AbstractString,
+                      rmtags::Union{Tuple{Vararg{AbstractString}},
+                                    AbstractVector{<:AbstractString}})
+    base_tags = _parse_itag(base)
+    base_set = Set(base_tags)
+    rm = Set{String}()
+    for query in rmtags
+        parsed = _parse_itag(query)
+        all(tag -> tag ∈ base_set, parsed) || continue
+        union!(rm, parsed)
+    end
+    return Itag(join(filter(tag -> tag ∉ rm, base_tags), ','))
 end
 
 struct QIndex
@@ -118,25 +125,27 @@ struct QIndex
     # Lock level. Cannot cntracted if lock > 0. 
     # Decrease lock level by 1 after contraction.
     lock::Int
-    # If true, print the tag in green when displaying a QSpace.
-    green::Bool
+    # If true, this leg represents the dual space.
+    dual::Bool
 
-    QIndex(itags::AbstractString, dir::Char, plev::Int=0, lock::Int=0, green::Bool=false) = new(_normalize_itag(itags), dir, plev, lock, green)
+    QIndex(itags::AbstractString, dir::Char, plev::Int=0, lock::Int=0, dual::Bool=false) = new(_normalize_itag(itags), dir, plev, lock, dual)
 end
 
 QIndex(dir::Char, plev::Int=0, lock::Int=0) = QIndex("", dir, plev, lock)
 
-# Two QIndex objects are equal if they share the same itags, dir, plev, and green
+# Two QIndex objects are equal if they share the same itags, dir, plev, and dual
 # (lock is intentionally ignored — it is a transient contraction counter).
-Base.:(==)(a::QIndex, b::QIndex) = a.itags == b.itags && a.dir == b.dir && a.plev == b.plev && a.green == b.green
+Base.:(==)(a::QIndex, b::QIndex) = a.itags == b.itags && a.dir == b.dir && a.plev == b.plev && a.dual == b.dual
 Base.isequal(a::QIndex, b::QIndex) = (a == b)
-Base.hash(a::QIndex, h::UInt) = hash((a.itags, a.dir, a.plev, a.green), h)
+Base.hash(a::QIndex, h::UInt) = hash((a.itags, a.dir, a.plev, a.dual), h)
 
-to_incoming(idx::QIndex) = QIndex(idx.itags, '+', idx.plev, idx.lock, idx.green)
-to_outgoing(idx::QIndex) = QIndex(idx.itags, '-', idx.plev, idx.lock, idx.green)
-change_dir(idx::QIndex)  = QIndex(idx.itags, idx.dir == '+' ? '-' : '+', idx.plev, idx.lock, idx.green)
-green(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, true)
-change_green(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, !idx.green)
+to_incoming(idx::QIndex) = QIndex(idx.itags, '+', idx.plev, idx.lock, idx.dual)
+to_outgoing(idx::QIndex) = QIndex(idx.itags, '-', idx.plev, idx.lock, idx.dual)
+change_dir(idx::QIndex)  = QIndex(idx.itags, idx.dir == '+' ? '-' : '+', idx.plev, idx.lock, idx.dual)
+dual(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, true)
+change_dual(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, !idx.dual)
+green(idx::QIndex) = dual(idx)
+change_green(idx::QIndex) = change_dual(idx)
 
 struct CGR{QD, NZ, S<:Symmetry}
     qlabels::NTuple{QD, NTuple{NZ, Int}}
@@ -410,7 +419,7 @@ function _check_empty_tag_lock(inds::NTuple{QD, QIndex}) where QD
 end
 
 # Condition 2: no two QIndex objects with non-empty itags in the inds tuple
-# may be equal (as determined by ==, which compares itags, dir, plev, green).
+# may be equal (as determined by ==, which compares itags, dir, plev, dual).
 function _check_unique_inds(inds::NTuple{QD, QIndex}) where QD
     tagged = [idx for idx in inds if !isempty(idx.itags)]
     for i in 1:length(tagged), j in i+1:length(tagged)
@@ -527,14 +536,14 @@ end
 # fields are preserved.
 function QSpace(q::QSpace{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) where {T, QD, N, RD}
     new_inds = ntuple(l -> QIndex(itags[l], q.inds[l].dir, q.inds[l].plev,
-                                  q.inds[l].lock, q.inds[l].green), QD)
+                                  q.inds[l].lock, q.inds[l].dual), QD)
     # spaces remain the same since rows didn't change
     return QSpace(symm(q), q.rows, new_inds, q.spaces)
 end
 
 # Construct a QSpace with the same rows but with all QIndex fields replaced.
 # inds: NTuple{QD, QIndex} — one full QIndex per leg.
-# Arrow directions must match the original QSpace (only itags/lock/plev/green may differ).
+# Arrow directions must match the original QSpace (only itags/lock/plev/dual may differ).
 function QSpace(q::QSpace{T, QD, N, RD}, inds::NTuple{QD, QIndex}) where {T, QD, N, RD}
     @assert ntuple(l -> inds[l].dir, QD) == ntuple(l -> q.inds[l].dir, QD) "QSpace(q, inds): arrow directions must match the original QSpace on all legs"
     return QSpace(symm(q), q.rows, inds, q.spaces)
@@ -731,7 +740,7 @@ end
 
 Return all leg indices of `a` that have at least one matching leg in `b`.
 
-A leg matches when it has the same `itags`, `plev`, and `green` flag as a leg
+A leg matches when it has the same `itags`, `plev`, and `dual` flag as a leg
 of `b`, but with opposite direction. Lock is ignored for the cross-tensor
 match test. Keyword arguments filter the returned legs of `a` using the same
 rules as `findlegs`.
@@ -765,7 +774,7 @@ end
 Return all leg indices of `a` that do not have any matching leg in `b`.
 
 The match test uses the same rule as `matchings`: same `itags`, `plev`, and
-`green`, opposite direction, and lock ignored between tensors. Keyword
+`dual`, opposite direction, and lock ignored between tensors. Keyword
 arguments filter the returned legs of `a` using the same rules as `findlegs`.
 """
 function unmatchings(a::QSpace{T, QD}, b::QSpace;
@@ -782,7 +791,7 @@ Return the first leg index of `a` that does not have any matching leg in `b`,
 or `nothing` if every leg is matched.
 
 The match test uses the same rule as `matchings`: same `itags`, `plev`, and
-`green`, opposite direction, and lock ignored between tensors. Keyword
+`dual`, opposite direction, and lock ignored between tensors. Keyword
 arguments filter the returned leg of `a` using the same rules as `findleg`.
 """
 function unmatching(a::QSpace{T, QD}, b::QSpace;
@@ -874,7 +883,7 @@ function _modify_lock(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where 
     for i in legs
         idx = new_inds[i]
         new_lock = modify_fn(idx.lock)
-        new_inds[i] = QIndex(idx.itags, idx.dir, idx.plev, new_lock, idx.green)
+        new_inds[i] = QIndex(idx.itags, idx.dir, idx.plev, new_lock, idx.dual)
     end
     return QSpace(symm(q), q.rows, Tuple(new_inds), q.spaces)
 end
@@ -1050,7 +1059,7 @@ function _modify_plev(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where 
     new_inds = collect(q.inds)
     for i in legs
         idx = new_inds[i]
-        new_inds[i] = QIndex(idx.itags, idx.dir, modify_fn(idx.plev), idx.lock, idx.green)
+        new_inds[i] = QIndex(idx.itags, idx.dir, modify_fn(idx.plev), idx.lock, idx.dual)
     end
     return QSpace(symm(q), q.rows, Tuple(new_inds), q.spaces)
 end
@@ -1222,17 +1231,20 @@ end
 #
 #   additag(q, newtags; kw...)     – add tag(s) to matching legs
 #   removeitag(q, tags; kw...)     – remove tag(s) from matching legs
-#   replaceitag(q, old, new; kw…)  – swap tag(s) old → new on matching legs
 #   setitag(q, tags; kw...)        – replace entire tag string of matching legs
 #
 # Keyword selectors (all optional): dir, itag, plev, lock
 # ─────────────────────────────────────────────────────────────────────────────
 
+const ITagQuerySpec = Union{AbstractString,
+                            Tuple{Vararg{AbstractString}},
+                            AbstractVector{<:AbstractString}}
+
 function _modify_itag(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
     new_inds = collect(q.inds)
     for i in legs
         idx = new_inds[i]
-        new_inds[i] = QIndex(modify_fn(idx.itags), idx.dir, idx.plev, idx.lock, idx.green)
+        new_inds[i] = QIndex(modify_fn(idx.itags), idx.dir, idx.plev, idx.lock, idx.dual)
     end
     return QSpace(symm(q), q.rows, Tuple(new_inds), q.spaces)
 end
@@ -1285,16 +1297,21 @@ end
     removeitag(q::QSpace, tags; dir, itag, plev, lock, rev=false)
 
 Remove one or more tags from matching legs.
+
+`tags` may be either a single comma-separated tag string or a tuple/vector of
+such strings. For tuple/vector input, each query is applied independently and
+its tags are removed only from legs that contain all tags in that query.
 Use `rev=true` to act on legs that do *not* match the criteria.
 
 # Examples
 ```julia
-removeitag(q, "site")             # remove "site" from all legs
-removeitag(q, "phys"; dir='-')    # remove "phys" from outgoing legs
+removeitag(q, "site")                     # remove "site" from all legs
+removeitag(q, ("aaa,bbb", "ccc"))       # remove aaa+bbb together, and ccc independently
+removeitag(q, "phys"; dir='-')           # remove "phys" from outgoing legs
 removeitag(q, "aux"; dir='-', rev=true)  # remove "aux" from all non-outgoing legs
 ```
 """
-function removeitag(q::QSpace{T, QD}, tags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function removeitag(q::QSpace{T, QD}, tags::ITagQuerySpec; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_itag(q, legs, base -> _remove_itag(base, tags))
 end
@@ -1303,7 +1320,7 @@ end
 
 Remove tags from a single specified leg.
 """
-function removeitag(q::QSpace{T, QD}, leg::Integer, tags::AbstractString) where {T, QD}
+function removeitag(q::QSpace{T, QD}, leg::Integer, tags::ITagQuerySpec) where {T, QD}
     return _modify_itag(q, (leg,), base -> _remove_itag(base, tags))
 end
 
@@ -1311,7 +1328,7 @@ end
 
 Remove tags from the specified legs. `legs` can be any vector, range, or tuple.
 """
-function removeitag(q::QSpace{T, QD}, legs::LegList, tags::AbstractString) where {T, QD}
+function removeitag(q::QSpace{T, QD}, legs::LegList, tags::ITagQuerySpec) where {T, QD}
     return _modify_itag(q, legs, base -> _remove_itag(base, tags))
 end
 
@@ -1319,53 +1336,8 @@ end
 
 Remove tags from legs satisfying predicate.
 """
-function removeitag(q::QSpace{T, QD}, pred::Function, tags::AbstractString) where {T, QD}
+function removeitag(q::QSpace{T, QD}, pred::Function, tags::ITagQuerySpec) where {T, QD}
     return _modify_itag(q, findlegs(q, pred), base -> _remove_itag(base, tags))
-end
-
-# TODO: Define the behavior of replaceitag function more precisely,
-# then implement and test
-"""
-    replaceitag(q::QSpace, old, new; dir, itag, plev, lock, rev=false)
-
-On matching legs, remove the tag(s) in `old` and add the tag(s) in `new`.
-Use `rev=true` to act on legs that do *not* match the criteria.
-
-# Examples
-```julia
-replaceitag(q, "bond", "link")           # rename "bond" → "link" on all legs
-replaceitag(q, "a", "b"; dir='+')        # only on incoming legs
-replaceitag(q, "phys", "site"; itag="phys")   # only if leg already has "phys"
-replaceitag(q, "a", "b"; dir='+', rev=true)  # on all non-incoming legs
-```
-"""
-function replaceitag(q::QSpace{T, QD}, old::AbstractString, new_tags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
-    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
-    return _modify_itag(q, legs, base -> _replace_itag(base, old, new_tags))
-end
-
-"""    replaceitag(q::QSpace, leg::Integer, old, new)
-
-Replace tags on a single specified leg.
-"""
-function replaceitag(q::QSpace{T, QD}, leg::Integer, old::AbstractString, new_tags::AbstractString) where {T, QD}
-    return _modify_itag(q, (leg,), base -> _replace_itag(base, old, new_tags))
-end
-
-"""    replaceitag(q::QSpace, legs::LegList, old, new)
-
-Replace tags on the specified legs. `legs` can be any vector, range, or tuple.
-"""
-function replaceitag(q::QSpace{T, QD}, legs::LegList, old::AbstractString, new_tags::AbstractString) where {T, QD}
-    return _modify_itag(q, legs, base -> _replace_itag(base, old, new_tags))
-end
-
-"""    replaceitag(q::QSpace, pred::Function, old, new)
-
-Replace tags on legs satisfying predicate.
-"""
-function replaceitag(q::QSpace{T, QD}, pred::Function, old::AbstractString, new_tags::AbstractString) where {T, QD}
-    return _modify_itag(q, findlegs(q, pred), base -> _replace_itag(base, old, new_tags))
 end
 
 """
@@ -1437,6 +1409,15 @@ const QSPACE_DISPLAY_TAIL = Ref(5)   # number of last rows to show
 
 Base.show(io::IO, qs::QSpace) = show(io, MIME"text/plain"(), qs)
 
+_qindex_plev_string(plev::Int) =
+    plev == 0 ? "" : "p$(plev)"
+
+_qindex_lock_string(lock::Int) = lock == 0 ? "" : "🔒$(lock)"
+
+function _format_qindex(idx::QIndex)
+    return "\"$(idx.itags)$(idx.dir)\"$(_qindex_plev_string(idx.plev))$(_qindex_lock_string(idx.lock))"
+end
+
 # Special pretty-printing for 0-dimensional QSpace (scalar result of full contraction).
 function Base.show(io::IO, ::MIME"text/plain", qs::QSpace{T, 0, N, N}) where {T, N}
     symm_names = join((totxt(s) for s in symm(qs)), ", ")
@@ -1445,14 +1426,12 @@ end
 
 function Base.show(io::IO, ::MIME"text/plain", qs::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
     # --- Header: symmetries and leg dirs/tags on one line ---
-    # Format:  QSpace{...}  [Sym1, Sym2]  ["tag1+", "tag2-", ...]
+    # Format:  QSpace{...}  [Sym1, Sym2]  ["tag1"+, "tag2"-', ...]
     symm_names = join((totxt(s) for s in symm(qs)), ", ")
     print(io, "$(QD)D QSpace, $N symmetries [$symm_names]")
     leg_strs = map(qs.inds) do idx
-        tag  = isempty(idx.itags) ? "" : idx.itags
-        plev = idx.plev != 0 ? "[$(idx.plev)]" : ""
-        raw  = "\"$(tag)$(idx.dir)$plev\""
-        idx.green ? "\e[32m$(raw)\e[0m" : raw
+        raw = _format_qindex(idx)
+        idx.dual ? "\e[32m$(raw)\e[0m" : raw
     end
     println(io, "  [", join(leg_strs, ", "), "]")
 
@@ -2174,13 +2153,15 @@ end
 function _normalize_getsub_indices(raw, dim::Int, sector, leg::Int)
     inds = if raw isa Integer
         [Int(raw)]
+    elseif raw isa Tuple && all(i -> i isa Integer, raw)
+        Int[Int(i) for i in raw]
     elseif raw isa AbstractRange{<:Integer}
         Int[i for i in raw]
     elseif raw isa AbstractVector{<:Integer}
         Int[i for i in raw]
     else
         throw(ArgumentError(
-            "selector for sector $sector on leg $leg must be :, Int, AbstractRange, or AbstractVector{<:Integer}"))
+            "selector for sector $sector on leg $leg must be :, Int, integer tuple, AbstractRange, or AbstractVector{<:Integer}"))
     end
 
     isempty(inds) && throw(ArgumentError(
@@ -2192,77 +2173,80 @@ function _normalize_getsub_indices(raw, dim::Int, sector, leg::Int)
         "selector for sector $sector on leg $leg contains out-of-bounds indices for dimension $dim"))
     return inds
 end
-
-function _normalize_getsub_selector(q::QSpace{T, QD}, leg::Int, selector::AbstractVector) where {T, QD}
-    1 <= leg <= QD || throw(ArgumentError("leg must lie in 1:$QD, got $leg"))
-
-    dims_by_sector = Dict{Any, Int}(sector => dim for (sector, dim) in q.spaces[leg])
-    isempty(selector) && return Dict{Any, Any}(), dims_by_sector
-
-    pair_form = all(item -> item isa Pair, selector)
-    tuple_form = all(item -> item isa Tuple && length(item) == 2, selector)
-    (pair_form || tuple_form) || throw(ArgumentError(
-        "selector must be a vector of either sector=>pick pairs or (sector, pick) tuples"))
-
-    normalized = Dict{Any, Any}()
-    for item in selector
-        sector, raw = pair_form ? (item.first, item.second) : item
-        haskey(dims_by_sector, sector) || throw(ArgumentError(
-            "selector sector $sector does not exist in q.spaces[$leg]"))
-        haskey(normalized, sector) && throw(ArgumentError(
-            "selector contains duplicate entries for sector $sector on leg $leg"))
-
-        normalized[sector] = raw isa Colon ? Colon() :
-            _normalize_getsub_indices(raw, dims_by_sector[sector], sector, leg)
-    end
-
-    return normalized, dims_by_sector
-end
-
-function _slice_qspace_row_leg(r::row{T, QD, N, RD}, leg::Int, inds::Vector{Int}) where {T, QD, N, RD}
-    selectors = ntuple(d -> d == leg ? inds : Colon(), RD)
+function _slice_qspace_row_legs(r::row{T, QD, N, RD}, picks_by_leg::Dict{Int, Any}) where {T, QD, N, RD}
+    all(pick -> pick isa Colon, values(picks_by_leg)) && return r
+    selectors = ntuple(d -> get(picks_by_leg, d, Colon()), RD)
     return row(r.cgrs, LurTensor(r.RMT.data[selectors...]))
 end
 
-"""
-    getsub(q::QSpace, leg::Int, selector::AbstractVector) -> QSpace
+function _normalize_getsub_predicate_pick(raw, dim::Int, sector, leg::Int)
+    raw isa Bool && throw(ArgumentError("getsub predicate for sector $sector on leg $leg must not return Bool; use Colon() or nothing explicitly"))
+    raw === nothing && return nothing
+    raw isa Colon && return Colon()
+    return _normalize_getsub_indices(raw, dim, sector, leg)
+end
 
-Return a new `QSpace` containing only rows whose sector on `leg` appears in
-`selector`. Each selector entry must be either `sector => pick` or
-`(sector, pick)`, where `pick` is `:`, an `Int`, an integer range, or a vector
-of integer indices. `:` keeps the full RMT extent for that sector; other values
-slice the selected leg of each matching row's RMT.
-"""
+function _collect_getsub_predicate_picks(q::QSpace, positions, pred::Function)
+    selected_picks = Dict{Int, Dict{Any, Any}}()
+    for leg in positions
+        picks = Dict{Any, Any}()
+        for (sector, dim) in q.spaces[leg]
+            pick = _normalize_getsub_predicate_pick(pred(sector), dim, sector, leg)
+            isnothing(pick) && continue
+            picks[sector] = pick
+        end
+        selected_picks[leg] = picks
+    end
+    return selected_picks
+end
 
-function getsub(q::QSpace{T, QD, N, RD}, leg::Int, selector::AbstractVector) where {T, QD, N, RD}
-    normalized, _ = _normalize_getsub_selector(q, leg, selector)
-
-    rows_out = eltype(q.rows)[]
-    for r in q.rows
-        sector = _oplus_row_qlabel(r, leg)
-        haskey(normalized, sector) || continue
-
-        pick = normalized[sector]
-        if pick isa Colon
-            push!(rows_out, r)
-        else
-            push!(rows_out, _slice_qspace_row_leg(r, leg, pick))
+function _apply_getsub_picks(q::QSpace{T, QD, N, RD},
+                             positions,
+                             selected_picks::Dict{Int, Dict{Any, Any}};
+                             preserve_space::Bool=false) where {T, QD, N, RD}
+    if preserve_space
+        for leg in positions
+            for (sector, pick) in selected_picks[leg]
+                pick isa Colon && continue
+                throw(ArgumentError(
+                    "preserve_space=true is incompatible with slicing sector $sector on leg $leg; return Colon() or nothing instead"))
+            end
         end
     end
 
-    spaces_out = ntuple(l -> begin
-        if l == leg
-            out = eltype(q.spaces[l])[]
-            for (sector, dim) in q.spaces[l]
-                haskey(normalized, sector) || continue
-                pick = normalized[sector]
-                push!(out, (sector, pick isa Colon ? dim : length(pick)))
-            end
-            out
-        else
-            copy(q.spaces[l])
+    selected_leg_set = Set(positions)
+    rows_out = eltype(q.rows)[]
+    for r in q.rows
+        picks_by_leg = Dict{Int, Any}()
+        keep = true
+        for leg in positions
+            sector = _oplus_row_qlabel(r, leg)
+            picks = selected_picks[leg]
+            haskey(picks, sector) || (keep = false; break)
+            picks_by_leg[leg] = picks[sector]
         end
-    end, QD)
+        keep || continue
+        push!(rows_out, _slice_qspace_row_legs(r, picks_by_leg))
+    end
+
+    spaces_out = if preserve_space
+        _copy_spaces_tuple(q.spaces)
+    else
+        ntuple(l -> begin
+            if l in selected_leg_set
+                out = eltype(q.spaces[l])[]
+                picks = selected_picks[l]
+                for (sector, dim) in q.spaces[l]
+                    haskey(picks, sector) || continue
+                    pick = picks[sector]
+                    push!(out, (sector, pick isa Colon ? dim : length(pick)))
+                end
+                out
+            else
+                copy(q.spaces[l])
+            end
+        end, QD)
+    end
 
     return QSpace(symm(q), rows_out, q.inds, spaces_out)
 end
@@ -2283,10 +2267,14 @@ end
 Return a new `QSpace` containing only rows whose sector on `leg` satisfies
 `pred`.
 
+`pred(sector)` may return `nothing` to drop that sector, `Colon()` to keep the full
+sector, or an integer / integer range / integer tuple / integer vector to keep
+
 If `preserve_space=false` (the default), only `q.spaces[leg]` is truncated to
 the retained sectors and all other leg-space lists are copied unchanged. If
 `preserve_space=true`, all cached leg-space lists are preserved exactly and only
-the rows are filtered.
+the rows are filtered. This requires `pred` to keep whole sectors, so any
+index-selection return value is rejected when `preserve_space=true`.
 """
 function getsub(q::QSpace{T, QD, N, RD}, leg::Integer, pred::Function; preserve_space::Bool=false) where {T, QD, N, RD}
     return getsub(q, (Int(leg),), pred; preserve_space=preserve_space)
@@ -2298,49 +2286,20 @@ end
 Return a new `QSpace` containing only rows whose sectors on every selected leg
 satisfy `pred`.
 
+`pred(sector)` may return `nothing` to drop that sector, `Colon()` to keep the full
+sector, or an integer / integer range / integer tuple / integer vector to keep
+
 If `preserve_space=false` (the default), each selected leg keeps only the
 matching entries in its space list, while unselected legs keep copies of their
 original space lists. If `preserve_space=true`, all cached leg-space lists are
-preserved exactly and only the rows are filtered.
+preserved exactly and only the rows are filtered. This requires `pred` to keep
+whole sectors, so any index-selection return value is rejected when
+`preserve_space=true`.
 """
 function getsub(q::QSpace{T, QD, N, RD}, legs::LegList, pred::Function; preserve_space::Bool=false) where {T, QD, N, RD}
     positions = _normalize_getsub_predicate_legs(q, legs)
-    selected_leg_set = Set(positions)
-    selected_sectors = Dict{Int, Set{Any}}()
-
-    for leg in positions
-        sectors = Set{Any}()
-        for (sector, _) in q.spaces[leg]
-            pred(sector) && push!(sectors, sector)
-        end
-        selected_sectors[leg] = sectors
-    end
-
-    keepinds = Int[]
-    for (i, r) in pairs(q.rows)
-        all(_oplus_row_qlabel(r, leg) in selected_sectors[leg] for leg in positions) || continue
-        push!(keepinds, i)
-    end
-    rows_out = deepcopy(q.rows[keepinds])
-
-    spaces_out = if preserve_space
-        _copy_spaces_tuple(q.spaces)
-    else
-        ntuple(l -> begin
-            if l in selected_leg_set
-                out = eltype(q.spaces[l])[]
-                for entry in q.spaces[l]
-                    entry[1] in selected_sectors[l] || continue
-                    push!(out, entry)
-                end
-                out
-            else
-                copy(q.spaces[l])
-            end
-        end, QD)
-    end
-
-    return QSpace(symm(q), rows_out, q.inds, spaces_out)
+    selected_picks = _collect_getsub_predicate_picks(q, positions, pred)
+    return _apply_getsub_picks(q, positions, selected_picks; preserve_space=preserve_space)
 end
 
 """

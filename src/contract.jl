@@ -387,8 +387,8 @@ function contract_old(q1::QSpace{T1, QD1, N, RD1},
                 "q1 leg $(legs1[i]) has dir='$(idx1.dir)', q2 leg $(legs2[i]) has dir='$(idx2.dir)'"
             @assert idx1.itags == idx2.itags "Contracted legs must have matching itags: " *
                 "q1 leg $(legs1[i]) has itag='$(idx1.itags)', q2 leg $(legs2[i]) has itag='$(idx2.itags)'"
-            @assert idx1.green == idx2.green "Contracted legs must have matching green flags: " *
-                "q1 leg $(legs1[i]) has green=$(idx1.green), q2 leg $(legs2[i]) has green=$(idx2.green)"
+            @assert idx1.dual == idx2.dual "Contracted legs must have matching dual flags: " *
+                "q1 leg $(legs1[i]) has dual=$(idx1.dual), q2 leg $(legs2[i]) has dual=$(idx2.dual)"
             @assert q1.spaces[legs1[i]] == q2.spaces[legs2[i]] "Contracted legs must have matching space info: " *
                 "q1 leg $(legs1[i]) spaces != q2 leg $(legs2[i]) spaces"
         end
@@ -510,7 +510,7 @@ function contract_old(q1::QSpace{T1, QD1, N, RD1},
             idx = inds_out[l]
             has_match = l <= nf1 ? (idx ∈ changed_inds2) : (idx ∈ changed_inds1)
             (idx.lock > 0 && has_match) ?
-                QIndex(idx.itags, idx.dir, idx.plev, idx.lock - 1, idx.green) : idx
+                QIndex(idx.itags, idx.dir, idx.plev, idx.lock - 1, idx.dual) : idx
         end
     else
         inds_out
@@ -560,11 +560,7 @@ function _row_qlabel(::Type{QT}, r::row{T, QD, N}, l::Int) where {QT, T, QD, N}
     return ntuple(n -> r.cgrs[n].qlabels[r.cgrs[n].cgp[l]], Val(N))::QT
 end
 
-_contracted_qlabel_type(::Type{QT}, ::Val{1}) where {QT} = QT
 _contracted_qlabel_type(::Type{QT}, ::Val{CN}) where {QT, CN} = NTuple{CN, QT}
-
-_contracted_qlabel(::Type{QT}, r::row, legs::NTuple{1, Int}) where {QT} =
-    _row_qlabel(QT, r, legs[1])
 
 _contracted_qlabel(::Type{QT}, r::row, legs::NTuple{CN, Int}) where {QT, CN} =
     ntuple(i -> _row_qlabel(QT, r, legs[i]), Val(CN))
@@ -628,8 +624,6 @@ end
 
 @inline _symmetry_qlabels(qlabels::NTuple{NF, QT}, ::Val{n}) where {NF, QT, n} =
     ntuple(k -> qlabels[k][n], Val(NF))
-
-@inline _symmetry_contracted_qlabel(qlabel, ::Val{n}, ::Val{1}) where {n} = qlabel[n]
 
 @inline _symmetry_contracted_qlabel(qlabels::NTuple{CN, QT}, ::Val{n}, ::Val{CN}) where {CN, QT, n} =
     ntuple(k -> qlabels[k][n], Val(CN))
@@ -878,8 +872,8 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS1},
                 "q1 leg $(legs1[i]) has dir='$(idx1.dir)', q2 leg $(legs2[i]) has dir='$(idx2.dir)'"
             @assert idx1.itags == idx2.itags "Contracted legs must have matching itags: " *
                 "q1 leg $(legs1[i]) has itag='$(idx1.itags)', q2 leg $(legs2[i]) has itag='$(idx2.itags)'"
-            @assert idx1.green == idx2.green "Contracted legs must have matching green flags: " *
-                "q1 leg $(legs1[i]) has green=$(idx1.green), q2 leg $(legs2[i]) has green=$(idx2.green)"
+            @assert idx1.dual == idx2.dual "Contracted legs must have matching dual flags: " *
+                "q1 leg $(legs1[i]) has dual=$(idx1.dual), q2 leg $(legs2[i]) has dual=$(idx2.dual)"
             @assert q1.spaces[legs1[i]] == q2.spaces[legs2[i]] "Contracted legs must have matching space info: " *
                 "q1 leg $(legs1[i]) spaces != q2 leg $(legs2[i]) spaces"
         end
@@ -1047,7 +1041,7 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS1},
             idx = inds_out[l]
             has_match = l <= nf1 ? (idx ∈ changed_inds2) : (idx ∈ changed_inds1)
             (idx.lock > 0 && has_match) ?
-                QIndex(idx.itags, idx.dir, idx.plev, idx.lock - 1, idx.green) : idx
+                QIndex(idx.itags, idx.dir, idx.plev, idx.lock - 1, idx.dual) : idx
         end
     else
         inds_out

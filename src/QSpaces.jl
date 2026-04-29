@@ -1,4 +1,4 @@
-﻿module QSpaces
+module QSpaces
 
 using LinearAlgebra
 using SparseArrays
@@ -33,7 +33,7 @@ export findlegs, findleg, matchings, matching, unmatchings, unmatching
 export contractables, contractable, uncontractables, uncontractable
 export prime, setprime, noprime
 export lock, lockp, unlock
-export additag, removeitag, replaceitag, setitag
+export additag, removeitag, setitag
 
 end
 

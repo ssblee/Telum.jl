@@ -1,4 +1,4 @@
-﻿get1jtensor(q::QSpace{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
+get1jtensor(q::QSpace{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
 get1jtensor(leginfo(q, leg))
 
 function _resolve_unique_leg(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
@@ -42,7 +42,7 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
     rows1 = row{Float64, 2, N, 2+N}[]
 
     symm, ind = product_symms(PS), info.ind
-    inds1 = (change_dir(ind), change_dir(change_green(ind)))
+    inds1 = (change_dir(ind), change_dir(change_dual(ind)))
     dir1 = inds1[1].dir
     for (qlabels, RMTd) in info.splist
         RMT1 = LurTensor(reshape(Matrix{Float64}(I, RMTd, RMTd), RMTd, RMTd, (1 for _=1:N)...))
