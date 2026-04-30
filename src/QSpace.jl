@@ -374,10 +374,8 @@ end
 function _check_cgr_qlabel_order(cgr::CGR{QD}) where QD
     m, k = cgr.legdir
     # Build cgp_inv: cgp_inv[si] = physical leg l with cgp[l] == si.
-    cgp_inv = zeros(Int, QD)
-    for l in 1:QD
-        cgp_inv[cgr.cgp[l]] = l
-    end
+    cgp_inv = invperm(cgr.cgp)
+
     # Incoming stored positions: 1:m
     for i in 1:m, j in i+1:m
         if cgr.qlabels[i] == cgr.qlabels[j]
@@ -503,8 +501,7 @@ Base.ndims(q::QSpace{T, QD}) where {T, QD} = QD
 function _orient_wmats!(q::QSpace{T, QD, N}) where {T, QD, N}
     for r in q.rows
         for cgr in r.cgrs
-            first_entry = cgr.wmat[1]
-            if first_entry < 0
+            if length(cgr.wmat.data) == 1 && cgr.wmat.data[1] < 0
                 cgr.wmat[:] .*= -1
                 r.RMT[:] .*= -one(T)
             end
@@ -1737,11 +1734,12 @@ function Base.:+(qs1::QSpace{T1, QD, N, RD, QT, PS, CGRS},
             end
 
             # Pool w-matrices and RMTs as two contributions, then compress.
+            # TODO: When GPU support is added, 'Array{Float64, 2}' here can be generalized
             new_wmats = ntuple(Val(N)) do n
-                [r1.cgrs[n].wmat, r2.cgrs[n].wmat]
+                LurTensor{Float64, 2, Array{Float64, 2}}[r1.cgrs[n].wmat, r2.cgrs[n].wmat]
             end
-            new_RMTs  = LurTensor{T, RD}[LurTensor(T.(r1.RMT.data)),
-                                         LurTensor(T.(r2.RMT.data))]
+            new_RMTs  = LurTensor{T, RD, Array{T, RD}}[LurTensor(T.(r1.RMT.data)),
+                                                       LurTensor(T.(r2.RMT.data))]
             new_qlabs = ntuple(Val(N)) do n
                 (r1.cgrs[n].qlabels, r1.cgrs[n].cgp, r1.cgrs[n].legdir)
             end

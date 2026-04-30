@@ -188,29 +188,52 @@ function _reconstruct_reduced_svd_cgr_block(block::_ReducedSVDCGRBlock)
     return permutedims(right_applied, (2, 1, 3))
 end
 
-function _qr_shared_isometry(mats::Vector{<:AbstractMatrix}; tol::Float64 = 1e-12)
+# Concatenate w-matrices, so the element type is always Float64
+# TODO: When GPU support is added, other version should be implemented
+function _copy_hcat_mats(mats::Vector{LurTensor{Float64, 2, Array{Float64, 2}}}) 
+    nrows = size(first(mats), 1)
+    ncols = sum(size(mat, 2) for mat in mats)
+    concat = similar(first(mats), Float64, (nrows, ncols))
+
+    col = 1
+    @views for mat in mats
+        width = size(mat, 2)
+        copyto!(view(concat, :, col:col+width-1), mat)
+        col += width
+    end
+    @assert col == ncols + 1
+    return LurTensor(concat)
+end
+
+function _qr_shared_isometry(mats::Vector{LurTensor{Float64, 2, AW}}; tol::Float64 = 1e-12
+    ) where {AW<:AbstractArray{Float64, 2}}
     nrows = size(first(mats), 1)
     @assert all(size(mat, 1) == nrows for mat in mats) "_qr_shared_isometry requires a common row dimension"
 
-    if nrows == 1 return [1.0;;], mats end
+    if nrows == 1
+        Q = similar(first(mats), Float64, (1, 1))
+        fill!(Q, 0.0)
+        Q[1, 1] = 1.0
+        return Q, mats
+    end
 
-    concat = hcat(mats...)
+    concat = _copy_hcat_mats(mats)
     F = qr(concat)
-    Q = Matrix(F.Q)
-    R = Matrix(F.R)
-    row_norms = [norm(@view R[i, :]) for i in 1:size(R, 1)]
+    Q = AW(F.Q)
+    R = AW(F.R)
+
+    row_norms::Vector{Float64} = [norm(@view R[i, :]) for i in 1:size(R, 1)]
     max_norm = maximum(row_norms; init=0.0)
-    used = max_norm == 0.0 ? 0 : something(findlast(x -> x > tol * max_norm, row_norms), 0)
+    max_norm == 0.0 && return nothing
+    used = something(findlast(x -> x > tol * max_norm, row_norms), 1)
+    Q = LurTensor(Q[:, 1:used])
+    R = LurTensor(R[1:used, :])
 
-    used > 0 || error("_qr_shared_isometry received only unused columns")
-    Q = Q[:, 1:used]
-    R = R[1:used, :]
-
-    factors = Matrix{Float64}[]
+    factors = Vector{LurTensor{Float64, 2, AW}}(undef, length(mats))
     col = 0
-    for mat in mats
+    for (i, mat) in pairs(mats)
         width = size(mat, 2)
-        push!(factors, R[:, col+1:col+width])
+        factors[i] = LurTensor(R[:, col+1:col+width])
         col += width
     end
     @assert col == size(concat, 2)
@@ -236,23 +259,24 @@ function _share_svd_row_side_isometries!(blocks::Vector{<:_ReducedSVDCGRBlock},
 
         inds = pos:nextpos-1
         if length(inds) > 1
-            mats = [
-                side === :left ?
-                    blocks[i].left_iso :
-                    blocks[i].right_iso
+            # TODO: When GPU support is added, 'Array{Float64, 2}' here can be generalized
+            mats::Vector{LurTensor{Float64, 2, Array{Float64, 2}}} = [
+                LurTensor(side === :left ?  blocks[i].left_iso : blocks[i].right_iso)
                 for i in inds
             ]
-            common_iso, factors = _qr_shared_isometry(mats; tol=tol)
+            shared = _qr_shared_isometry(mats; tol=tol)
+            @assert !isnothing(shared) "_qr_shared_isometry returned zero rank for reduced SVD blocks"
+            common_iso, factors = shared
 
             for (i, factor) in zip(inds, factors)
                 block = blocks[i]
                 if side === :left
-                    new_core = _contract_om_axis(block.core, factor, 1)
+                    new_core = _contract_om_axis(LurTensor(block.core), factor, 1)
                     blocks[i] = _ReducedSVDCGRBlock{length(block.q)}(
                         block.row_index, block.left_spaces, block.right_spaces,
                         block.q, common_iso, block.right_iso, new_core)
                 else
-                    new_core = _contract_om_axis(block.core, factor, 2)
+                    new_core = _contract_om_axis(LurTensor(block.core), factor, 2)
                     blocks[i] = _ReducedSVDCGRBlock{length(block.q)}(
                         block.row_index, block.left_spaces, block.right_spaces,
                         block.q, block.left_iso, common_iso, new_core)
@@ -487,7 +511,7 @@ end
 
 function _svd_expand_core_axis(A::AbstractArray{T}, core::Array{Float64, 3}, axis::Int) where {T}
     omLr, omRr, omM = size(core)
-    merged = _contract_om_axis(A, reshape(core, omLr * omRr, omM), axis)
+    merged = _contract_om_axis(LurTensor(A), LurTensor(reshape(core, omLr * omRr, omM)), axis)
     dims = size(merged)
     return reshape(merged, dims[1:axis-1]..., omLr, omRr, dims[axis+1:end]...)
 end

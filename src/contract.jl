@@ -1,4 +1,4 @@
-# ─── Helpers ─────────────────────────────────────────────────────────────────
+﻿# ─── Helpers ─────────────────────────────────────────────────────────────────
 
 # Physical qlabel of leg l in row r: an N-tuple of qlabels, one per symmetry.
 function _row_qlabel(r::row{T, QD, N}, l::Int) where {T, QD, N}
@@ -203,11 +203,11 @@ end
 # Mode-product: replace axis `axis` of array A (size k) with the output of
 # multiplying matrix M (shape r×k) along that axis.
 # Equivalent to: result[..., j, ...] = Σ_l M[j,l] * A[...,l,...] at `axis`.
-function _contract_om_axis(A::AbstractArray{T}, M::AbstractMatrix, axis::Int) where T
+function _contract_om_axis_data(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, axis::Int) where {T1, T2, D}
     dims  = size(A)
     k     = dims[axis]
     r     = size(M, 1)
-    @assert size(M, 2) == k "axis size $(k) ≠ M columns $(size(M, 2))"
+    @assert size(M, 2) == k "axis size $(k) != M columns $(size(M, 2))"
 
     prod_before = prod(dims[1:axis-1]; init = 1)
     prod_after  = prod(dims[axis+1:end]; init = 1)
@@ -217,7 +217,12 @@ function _contract_om_axis(A::AbstractArray{T}, M::AbstractMatrix, axis::Int) wh
     A_km = reshape(permutedims(A_3, (2, 1, 3)), k, prod_before * prod_after)
     R_km = M * A_km                                       # (r, prod_before * prod_after)
     R_3  = permutedims(reshape(R_km, r, prod_before, prod_after), (2, 1, 3))
-    return reshape(R_3, dims[1:axis-1]..., r, dims[axis+1:end]...)
+    findim = Base.setindex(dims, r, axis)
+    return LurTensor(reshape(R_3, findim))
+end
+
+function _contract_om_axis(A::LurTensor{T1, D, A1}, M::LurTensor{T2, 2, A2}, axis::Int) where {T1, T2, D, A1, A2}
+    return _contract_om_axis_data(A.data, M.data, axis)
 end
 
 # ─── _compress_sector ────────────────────────────────────────────────────────
@@ -231,46 +236,49 @@ end
 # Returns:
 #   U_mats[n]  : LurTensor{Float64,2} (OM3_n, r_n)  — new CGR wmat per symmetry
 #   result_RMT : LurTensor{T} (sz_free..., r_1,...,r_N)  — compressed RMT
-#   nothing    : when any symmetry contributes only zero w-matrices, so the
-#                whole merged row is identically zero and can be skipped
+#   nothing    : when QR reveals that any symmetry contributes no usable
+#                columns, so the whole merged row is identically zero
 #
 # We use QR-based shared isometries for every sector, including K == 1, so the
 # resulting basis is normalized consistently with the multi-contribution case.
 function _compress_sector(
-    new_wmats ::NTuple{N, Vector{<:LurTensor{Float64, 2}}},
-    new_RMTs  ::Vector{<:LurTensor{T, RD}},
+    new_wmats ::NTuple{N, Vector{LurTensor{Float64, 2, AW}}},
+    new_RMTs  ::Vector{LurTensor{T, RD, AR}},
     QD_out    ::Int,
     tol       ::Float64 = 1e-12,
-) where {T, N, RD}
+) where {T, N, RD, AW<:AbstractArray{Float64, 2}, AR<:AbstractArray{T, RD}}
     K = length(new_RMTs)
 
-    # ── Shared QR basis per symmetry ─────────────────────────────────────────
-    U_mats   = Vector{LurTensor{Float64, 2}}(undef, N)
-    SV_split = [Vector{Matrix{Float64}}(undef, K) for _ in 1:N]
+    # Shared QR basis per symmetry
+    U_mats   = Vector{LurTensor{Float64, 2, AW}}(undef, N)
+    # SV pieces per symmetry and pair
+    SV_split = Matrix{LurTensor{Float64, 2, AW}}(undef, N, K)  
 
     for n in 1:N
-        mats = [w.data for w in new_wmats[n]]
-        if all(mat -> all(iszero, mat), mats) return nothing end
+        shared = _qr_shared_isometry(new_wmats[n]; tol=tol)
+        isnothing(shared) && return nothing
+        common_iso::LurTensor{Float64, 2, AW}, 
+        factors::Vector{LurTensor{Float64, 2, AW}} = shared
 
-        common_iso, factors = _qr_shared_isometry(mats; tol=tol)
-        U_mats[n] = LurTensor(common_iso)
+        U_mats[n] = common_iso
         for i in 1:K
-            SV_split[n][i] = factors[i]
+            SV_split[n, i] = factors[i]
         end
     end
 
-    # ── Preallocate output RMT as LurTensor (sz_free..., r_1,...,r_N) ──────────
+    # Preallocate output RMT as LurTensor (sz_free..., r_1,...,r_N)
     sz_free    = size(new_RMTs[1])[1:QD_out]
     r_sizes    = ntuple(n -> size(U_mats[n], 2), N)
-    result_RMT = LurTensor{T}(sz_free..., r_sizes...)
+    result_RMT = similar(new_RMTs[1], T, (sz_free..., r_sizes...))
+    fill!(result_RMT, zero(T))
 
-    # ── Contract SV pieces into each RMT and accumulate ─────────────────────
+    # Contract SV pieces into each RMT and accumulate
     for i in 1:K
-        contrib = new_RMTs[i].data          # plain Array{T, RD} for _contract_om_axis
+        contrib = new_RMTs[i]
         for n in 1:N
-            contrib = _contract_om_axis(contrib, SV_split[n][i], QD_out + n)
+            contrib = _contract_om_axis(contrib, SV_split[n, i], QD_out + n)
         end
-        result_RMT .+= contrib
+        result_RMT += contrib
     end
 
     return U_mats, result_RMT
@@ -279,13 +287,13 @@ end
 # ─── merge_new_row ────────────────────────────────────────────────────────────
 # Wraps _compress_sector and assembles the output row struct.
 function merge_new_row(
-    new_wmats        ::NTuple{N, Vector{<:LurTensor{Float64, 2}}},
-    new_RMTs         ::Vector{<:LurTensor{T, RD}},
+    new_wmats        ::NTuple{N, Vector{LurTensor{Float64, 2, AW}}},
+    new_RMTs         ::Vector{LurTensor{T, RD, AR}},
     new_qlabels_per_n,
     ::Type{ProductSymm{Syms}},
     QD_out           ::Int,
     tol              ::Float64 = 1e-12,
-) where {T, N, RD, Syms}
+) where {T, N, RD, Syms, AW<:AbstractArray{Float64, 2}, AR<:AbstractArray{T, RD}}
     compressed = _compress_sector(new_wmats, new_RMTs, QD_out, tol)
     isnothing(compressed) && return nothing
     U_mats, result_RMT = compressed
@@ -405,11 +413,15 @@ function contract_old(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
     # output_key = (fq1, fq2); accumulate ContrEntry list per output sector.
     CGRS_out = cgrstype(PS, Val(QD_out))
     result_rows = Vector{row{T, QD_out, N, RD_out, CGRS_out}}()
+    sample_wmat = !isempty(rows1) ? rows1[1].cgrs[1].wmat : rows2[1].cgrs[1].wmat
+    sample_rmt  = !isempty(rows1) ? rows1[1].RMT : rows2[1].RMT
+    WMatT = typeof(similar(sample_wmat, Float64, (1, 1)))
+    RMTT  = typeof(similar(sample_rmt, T, ntuple(_ -> 1, RD_out)))
 
     for (fq1, v1) in sm1.data
         for (fq2, v2) in sm2.data
-            new_wmats = ntuple(_ -> Vector{LurTensor{Float64, 2}}(), N)
-            new_RMTs  = Vector{LurTensor{T, RD_out}}()
+            new_wmats = ntuple(_ -> WMatT[], N)
+            new_RMTs  = RMTT[]
             
             # Two-pointer merge on ckey (both v1, v2 sorted by ckey from the sort above).
             i, j = 1, 1
@@ -428,7 +440,7 @@ function contract_old(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
                     #    to get the new w-matrix: result_w[a,b,c] = sum_{bb,cc} X[bb,cc,a] * wmat1[bb,b] * wmat2[cc,c]
                     #    Efficient form: result_w[a,:,:] = wmat1' * X[:,:,a] * wmat2
                     zero_xsym = false
-                    wmats = Vector{LurTensor{Float64, 2}}(undef, N)
+                    wmats = Vector{WMatT}(undef, N)
                     for n in 1:N
                         cgr1n = r1.cgrs[n];  cgr2n = r2.cgrs[n]
                         wm1 = cgr1n.wmat.data   # (OM1, d1)
@@ -665,10 +677,7 @@ end
 @inline _xsym_cache(::Type{<:AbelianSymm}, ::XSymCaches) = nothing
 
 @generated function _xsym_cache(::Type{S}, xsym_caches::XSymCaches{CacheSyms, CacheTuple}) where {S<:NonabelianSymm, CacheSyms, CacheTuple}
-    idx = findfirst(T -> T == S, CacheSyms.parameters)
-    if isnothing(idx)
-        return :(throw(KeyError($(QuoteNode(S)))))
-    end
+    idx = findfirst(T -> T == S, fieldtypes(CacheSyms))
     return :(xsym_caches.caches[$idx])
 end
 
@@ -830,8 +839,8 @@ end
                                              free_qlabels1::NTuple{NF1, QT},
                                              free_qlabels2::NTuple{NF2, QT},
                                              xsym_cache::Dict{XKey, Array{Float64, 3}},
-                                             ::Val{n}) where {S<:NonabelianSymm, QT, NF1, NF2, XKey, CN,
-                                                              T1, QD1, T2, QD2, N, RD1, RD2, CGRS1, CGRS2, n}
+                                             ::Val{n}) where {S<:NonabelianSymm, QT, NF1, NF2, XKey, CN, n,
+                                                              T1, QD1, T2, QD2, N, RD1, RD2, CGRS1, CGRS2}
     xkey = _xsym_cache_key(QT, contracted_qlabels, free_qlabels1, free_qlabels2, Val(n))::XKey
     xarr = get(xsym_cache, xkey, nothing)
     isnothing(xarr) && return nothing
@@ -848,11 +857,12 @@ function _contract_wmats(::Type{ProductSymm{Syms}},
                                                          T1, QD1, T2, QD2, N, RD1, RD2, CGRS1, CGRS2}
     vec_tuple = ntuple(Val(N)) do n
         S = fieldtype(Syms, n)
+        cache = _xsym_cache(S, xsym_caches)
         _contract_wmat_for_symmetry(S, r1, r2,
                                     contracted_qlabels,
                                     free_qlabels1,
                                     free_qlabels2,
-                                    _xsym_cache(S, xsym_caches),
+                                    cache,
                                     Val(n))
     end
     if any(isnothing, vec_tuple)
@@ -860,6 +870,7 @@ function _contract_wmats(::Type{ProductSymm{Syms}},
     end
     return vec_tuple
 end
+
 # ── Post-process helper ──────────────────────────────────────────────────────
 # Reshape a (F1·OM1, F2·OM2) block from the batched matmul back to the
 # standard contracted-RMT layout (f1…, f2…, om12_1, …, om12_N).
@@ -945,11 +956,17 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
     row_infos1 = _contract_row_infos(QT, rows1, free1, legs1)
     row_infos2 = _contract_row_infos(QT, rows2, free2, legs2)
 
-    # ── 2. Output-sector accumulator ─────────────────────────────────────────
+    # ?? 2. Output-sector accumulator ?????????????????????????????????????????
     FreeKey1  = NTuple{nf1, QT}
     FreeKey2  = NTuple{nf2, QT}
     OutKey    = Tuple{FreeKey1, FreeKey2}
-    WmatVec   = Vector{LurTensor{Float64, 2}}
+    sample_wmat = !isempty(rows1) ? rows1[1].cgrs[1].wmat : rows2[1].cgrs[1].wmat
+    sample_rmt  = !isempty(rows1) ? rows1[1].RMT : rows2[1].RMT
+
+    # TODO: When GPU support is added, these should be generalized
+    WMatT = LurTensor{Float64, 2, Array{Float64, 2}}
+    RMTT  = LurTensor{T, RD_out, Array{T, RD_out}}
+    WmatVec   = Vector{WMatT}
 
     # X-symbol cache type
     XCT = _xsym_caches_type(PS, Val(CN), Val(nf1), Val(nf2))
@@ -957,7 +974,7 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
                                      rows1, rows2, legs1, legs2)
 
     sector_wmats = Dict{OutKey, NTuple{N, WmatVec}}()
-    sector_rmts  = Dict{OutKey, Vector{LurTensor{T, RD_out}}}()
+    sector_rmts  = Dict{OutKey, Vector{RMTT}}()
     sector_reps  = Dict{OutKey, Tuple{Int, Int}}()
 
     # ── 3. Main loop: batched matmul per contracted sector ───────────────────
@@ -1054,8 +1071,8 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
                 # ── Accumulate into output sector ────────────────────────────
                 out_key = (fq1, fq2)::OutKey
                 if !haskey(sector_wmats, out_key)
-                    sector_wmats[out_key] = ntuple(_ -> LurTensor{Float64, 2}[], Val(N))
-                    sector_rmts[out_key]  = LurTensor{T, RD_out}[]
+                    sector_wmats[out_key] = ntuple(_ -> WMatT[], Val(N))
+                    sector_rmts[out_key]  = RMTT[]
                     sector_reps[out_key]  = (i, j)
                 end
                 for n in 1:N push!(sector_wmats[out_key][n], wmats[n]) end
