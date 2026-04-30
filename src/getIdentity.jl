@@ -1,4 +1,4 @@
-﻿# N: the number of symmetries
+# N: the number of symmetries
 # QT: the concrete qlabel type for one sector
 # PS: the product symmetry type
 struct leginfo{N, QT<:Tuple, PS<:ProductSymm}
@@ -65,49 +65,56 @@ function combine_qlabels(::Type{S},
     ]
 end
 
+@inline _identity_outcomes(::Type{PS}, qlabels::NTuple{D, QT}) where {D, QT, Syms, PS<:ProductSymm{Syms}} =
+    ntuple(Val(length(Syms.parameters))) do n
+        combine_qlabels(fieldtype(Syms, n), ntuple(d -> qlabels[d][n], Val(D)))
+    end
+
+@inline _identity_cgt_dim(::Type{PS}, fused_qlabels::QT) where {QT, Syms, PS<:ProductSymm{Syms}} =
+    foldl(*, ntuple(Val(length(Syms.parameters))) do n
+        dimension(fieldtype(Syms, n), fused_qlabels[n])
+    end; init=1)
+
 function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
-                     itag::AbstractString="", plev::Int=0, lock::Int=0) where {D, N, QT, PS}
+                     itag::AbstractString="", plev::Int=0, lock::Int=0) where {D, N, QT, Syms, PS<:ProductSymm{Syms}}
 
     for i in 1:D-1 @assert leginfos[i].symm == leginfos[i+1].symm end
     symm = product_symms(PS)
 
     # For incoming legs (dir == '+'), dualize every qlabel so that
     # the fusion rule sees all legs as outgoing (charge conservation: sum = 0).
-    leginfos_adj = Tuple(
+    leginfos_adj = ntuple(Val(D)) do d
         if leginfos[d].ind.dir == '+'
             ET = eltype(leginfos[d].splist)
-            new_splist = ET[(Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N), dim)
+            new_splist = ET[(ntuple(Val(N)) do n
+                                 get_dualq(fieldtype(Syms, n), qlabels[n])
+                             end, dim)
                             for (qlabels, dim) in leginfos[d].splist]
             sort!(new_splist; by = x -> x[1])
             leginfo{N, QT, PS}(leginfos[d].ind, new_splist)
         else
             leginfos[d]
         end
-        for d in 1:D
-    )
-
+    end
     # (row indices into each leginfo's splist..., total RMT dim, oms...,
     # starting index, ending index along fused axis)
     merged_info = Dict{QT, Vector{NTuple{D+N+3, Int}}}()
 
-    nrows = Tuple(length(info.splist) for info in leginfos_adj)
+    nrows = ntuple(d -> length(leginfos_adj[d].splist), Val(D))
 
     for i in CartesianIndices(nrows)
         I = i.I
-        RMT_dims = Tuple(leginfos_adj[d].splist[I[d]][2] for d in 1:D)
+        RMT_dims = ntuple(d -> leginfos_adj[d].splist[I[d]][2], Val(D))
         RMT_dim = prod(RMT_dims)
-        qlabels = Tuple(leginfos_adj[d].splist[I[d]][1] for d in 1:D)
+        qlabels = ntuple(d -> leginfos_adj[d].splist[I[d]][1], Val(D))
 
         # For each symmetry n, fuse the D qlabels to get all valid (qlabel, om) pairs
-        outcomes_per_symm = Tuple(
-            combine_qlabels(symm[n], Tuple(qlabels[d][n] for d in 1:D))
-            for n in 1:N
-        )
-        num_outcomes = Tuple(length(outcomes_per_symm[n]) for n in 1:N)
+        outcomes_per_symm = _identity_outcomes(PS, qlabels)
+        num_outcomes = ntuple(n -> length(outcomes_per_symm[n]), Val(N))
         for j in CartesianIndices(num_outcomes)
             J = j.I
-            fused_qlabels = Tuple(outcomes_per_symm[n][J[n]][1] for n in 1:N)
-            oms = Tuple(outcomes_per_symm[n][J[n]][2] for n in 1:N)
+            fused_qlabels = ntuple(n -> outcomes_per_symm[n][J[n]][1], Val(N))
+            oms = ntuple(n -> outcomes_per_symm[n][J[n]][2], Val(N))
             sti = 1
             if !haskey(merged_info, fused_qlabels)
                 merged_info[fused_qlabels] = Vector{NTuple{D+N+3, Int}}()
@@ -126,14 +133,15 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     # For each entry, the block [:,...,:, sti:edi] is an identity matrix
     # (repeated prod_oms times along the outer-multiplicity sub-blocks).
     # Each CGR has a D+1-leg qlabel tuple and an OM×OM identity wmat.
-    rows = row{Float64, D+1, N, D+1+N}[]
+    CGRS = cgrstype(PS, Val(D + 1))
+    rows = Vector{row{Float64, D+1, N, D+1+N, CGRS}}()
 
     for (fused_qlabels, entries) in merged_info
         #println(fused_qlabels)
         space_cnt = entries[end][end]  # last edi across all entries
 
         # 1. Scale by sqrt of total outgoing CGT dimension
-        cgt_dim_out = prod(dimension(symm[n], fused_qlabels[n]) for n in 1:N)
+        cgt_dim_out = _identity_cgt_dim(PS, fused_qlabels)
 
         for entry in entries
             #println("  ", entry)
@@ -145,7 +153,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
             prod_oms  = prod(oms)
 
             # Dimensions of RMTs of input legs at this sector
-            rmts_dims = Tuple(leginfos_adj[d].splist[orig_ind[d]][2] for d in 1:D)
+            rmts_dims = ntuple(d -> leginfos_adj[d].splist[orig_ind[d]][2], Val(D))
 
             # Build RMT: zeros everywhere, identity blocks at [:,...,:, sti:edi]
             # The block is laid out as prod_oms copies of a RMT_dim×RMT_dim identity.
@@ -159,15 +167,15 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
             RMT_t = LurTensor(reshape(RMT_data, rmts_dims..., space_cnt, oms...))
 
             # Build one CGR per symmetry
-            cgrs_list = ntuple(N) do n
-                input_qls    = Tuple(leginfos_adj[d].splist[orig_ind[d]][1][n] for d in 1:D)
+            cgrs_list = ntuple(Val(N)) do n
+                input_qls    = ntuple(d -> leginfos_adj[d].splist[orig_ind[d]][1][n], Val(D))
                 perm         = sortperm(collect(input_qls))
                 inv_perm     = invperm(perm)
                 cgr_qlabels  = (input_qls[perm]..., fused_qlabels[n])
                 om_n         = oms[n]
                 wmat         = LurTensor(Matrix{Float64}(I, om_n, om_n))
                 cgp          = (inv_perm..., D+1)
-                CGR(symm[n], cgr_qlabels, wmat, cgp, (D, 1))
+                CGR(fieldtype(Syms, n), cgr_qlabels, wmat, cgp, (D, 1))
             end
 
             push!(rows, row(cgrs_list, RMT_t))
@@ -178,10 +186,10 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     # For originally-incoming legs we expose the dualized leg with green=true so
     # we can contract a 1j tensor and recover a directly-contractable external leg.
     fused_ind = QIndex(itag, '-', plev, lock)
-    inds = (ntuple(d -> begin
+    inds = (ntuple(Val(D)) do d
         idx = leginfos[d].ind.dir == '+' ? change_green(leginfos[d].ind) : leginfos[d].ind
         to_incoming(idx)
-    end, D)..., fused_ind)
+    end..., fused_ind)
     
     # Build spaces tuple: first D legs use the adjusted spaces, last leg from merged_info
     # Fused leg space: for each fused_qlabel, RMT dim = total dimension (last edi)
@@ -192,9 +200,9 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     end
     sort!(fused_splist; by = x -> x[1])  # sort by qlabels for consistency
     
-    spaces = (ntuple(d -> leginfos_adj[d].splist, D)..., fused_splist)
+    spaces = (ntuple(d -> leginfos_adj[d].splist, Val(D))..., fused_splist)
 
-    q = QSpace(symm, rows, inds, spaces)
+    q = QSpace(PS, rows, inds, spaces)
 
     # For an originally-incoming selected leg, attach a 1j tensor so the returned
     # leg is directly contractable with the original tensor leg.
@@ -208,4 +216,9 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
 
     return q
 end
+
+
+
+
+
 
