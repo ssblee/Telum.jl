@@ -12,6 +12,15 @@ end
 LurTensor{T}(dims::Int...) where {T} = LurTensor(zeros(T, dims...))
 LurTensor{T}(dims::NTuple{N, Int}) where {T, N} = LurTensor(zeros(T, dims))
 
+_lurtensor_parent(t::LurTensor) = t.data
+_lurtensor_parent(t::AbstractArray) = t
+
+function _lurtensor_wrap_like(::LurTensor, arr::AbstractArray)
+    return arr isa LurTensor ? arr : LurTensor(arr)
+end
+
+_lurtensor_wrap_like(::AbstractArray, arr::AbstractArray) = arr
+
 # Basic array interface
 Base.size(t::LurTensor) = size(t.data)
 Base.size(t::LurTensor, d::Int) = size(t.data, d)
@@ -20,6 +29,7 @@ Base.eltype(::LurTensor{T, N, A}) where {T, N, A} = T
 
 Base.getindex(t::LurTensor, inds...) = getindex(t.data, inds...)
 Base.setindex!(t::LurTensor, v, inds...) = setindex!(t.data, v, inds...)
+Base.copy(t::LurTensor) = LurTensor(copy(t.data))
 
 Base.similar(t::LurTensor{T, N, A}) where {T, N, A} = LurTensor(similar(t.data))
 Base.similar(t::LurTensor, ::Type{S}) where {S} = LurTensor(similar(t.data, S))
@@ -29,6 +39,8 @@ Base.similar(t::LurTensor, ::Type{S}, dims::Dims) where {S} = LurTensor(similar(
 Base.:*(t::LurTensor, fac::Number) = LurTensor(t.data * fac)
 Base.:*(fac::Number, t::LurTensor) = LurTensor(fac * t.data)
 Base.:/(t::LurTensor, fac::Number) = LurTensor(t.data / fac)
+Base.:+(t1::LurTensor, t2::LurTensor) = LurTensor(t1.data + t2.data)
+Base.:-(t1::LurTensor, t2::LurTensor) = LurTensor(t1.data - t2.data)
 
 # Support for Adapt.jl (for GPU compatibility)
 # If you use CUDA.jl or AMDGPU.jl, this allows `cu(lurtensor)` or `roc(lurtensor)`

@@ -1,4 +1,4 @@
-using Printf
+﻿using Printf
 using LinearAlgebra
 include("LurTensor.jl")
 include("utils.jl")
@@ -383,10 +383,8 @@ end
 function _check_cgr_qlabel_order(cgr::CGR{QD}) where QD
     m, k = cgr.legdir
     # Build cgp_inv: cgp_inv[si] = physical leg l with cgp[l] == si.
-    cgp_inv = zeros(Int, QD)
-    for l in 1:QD
-        cgp_inv[cgr.cgp[l]] = l
-    end
+    cgp_inv = invperm(cgr.cgp)
+
     # Incoming stored positions: 1:m
     for i in 1:m, j in i+1:m
         if cgr.qlabels[i] == cgr.qlabels[j]
@@ -487,6 +485,15 @@ struct QSpace{T, QD, N, RD, QT, PS<:ProductSymm, CGRS<:NTuple{N, CGR{QD}}}
     end
 end
 
+function QSpace(::Type{PS},
+    rows::AbstractVector{<:row{T, QD, N, RD}},
+    inds::NTuple{QD, QIndex},
+    spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {T, QD, N, RD, PS<:ProductSymm}
+    QT = qlabeltype(PS)
+    CGRS = cgrstype(PS, Val(QD))
+    return QSpace(product_symms(PS), rows, inds, spaces)::QSpace{T, QD, N, RD, QT, PS, CGRS}
+end
+
 productsymm(::QSpace{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} = PS
 product_symms(q::QSpace) = product_symms(productsymm(q))
 @inline symm(::QSpace{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
@@ -503,8 +510,7 @@ Base.ndims(q::QSpace{T, QD}) where {T, QD} = QD
 function _orient_wmats!(q::QSpace{T, QD, N}) where {T, QD, N}
     for r in q.rows
         for cgr in r.cgrs
-            first_entry = cgr.wmat[1]
-            if first_entry < 0
+            if length(cgr.wmat.data) == 1 && cgr.wmat.data[1] < 0
                 cgr.wmat[:] .*= -1
                 r.RMT[:] .*= -one(T)
             end
@@ -1658,8 +1664,8 @@ function _enum_leg_perms!(results, candidates, current, used, QD)
     end
 end
 
-function Base.:+(qs1::QSpace{T1, QD, N, RD},
-                 qs2::QSpace{T2, QD, N, RD}) where {T1, T2, QD, N, RD}
+function Base.:+(qs1::QSpace{T1, QD, N, RD, QT, PS, CGRS},
+                 qs2::QSpace{T2, QD, N, RD, QT, PS, CGRS}) where {T1, T2, QD, N, RD, QT, PS, CGRS}
     @assert symm(qs1) == symm(qs2) "QSpace objects must share the same symmetry tuple"
 
     if qs1.inds != qs2.inds || qs1.spaces != qs2.spaces
@@ -1667,20 +1673,19 @@ function Base.:+(qs1::QSpace{T1, QD, N, RD},
         qs2  = permutedims(qs2, perm)
     end
 
-    T    = promote_type(T1, T2)
-    symmetries = symm(qs1)
+    T = promote_type(T1, T2)
 
     # Physical q-label key for a row: the cgp-permuted qlabels per symmetry.
     # Two rows belong to the same sector iff these match for every symmetry.
-    row_key(r) = ntuple(N) do n
+    row_key(r) = ntuple(Val(N)) do n
         cgr = r.cgrs[n]
-        ntuple(l -> cgr.qlabels[cgr.cgp[l]], QD)   # q-label on physical leg l
+        ntuple(l -> cgr.qlabels[cgr.cgp[l]], Val(QD))
     end
 
     dict1 = Dict(row_key(r) => r for r in qs1.rows)
     dict2 = Dict(row_key(r) => r for r in qs2.rows)
 
-    new_rows = Vector{row{T, QD, N, RD}}()
+    new_rows = Vector{row{T, QD, N, RD, CGRS}}()
 
     for key in union(keys(dict1), keys(dict2))
         in1 = haskey(dict1, key)
@@ -1708,19 +1713,22 @@ function Base.:+(qs1::QSpace{T1, QD, N, RD},
             end
 
             # Pool w-matrices and RMTs as two contributions, then compress.
-            new_wmats = ntuple(n -> [r1.cgrs[n].wmat, r2.cgrs[n].wmat], N)
-            new_RMTs  = LurTensor{T, RD}[LurTensor(T.(r1.RMT.data)),
-                                        LurTensor(T.(r2.RMT.data))]
-            new_qlabs = ntuple(n -> (r1.cgrs[n].qlabels,
-                                     r1.cgrs[n].cgp,
-                                     r1.cgrs[n].legdir), N)
+            # TODO: When GPU support is added, 'Array{Float64, 2}' here can be generalized
+            new_wmats = ntuple(Val(N)) do n
+                LurTensor{Float64, 2, Array{Float64, 2}}[r1.cgrs[n].wmat, r2.cgrs[n].wmat]
+            end
+            new_RMTs  = LurTensor{T, RD, Array{T, RD}}[LurTensor(T.(r1.RMT.data)),
+                                                       LurTensor(T.(r2.RMT.data))]
+            new_qlabs = ntuple(Val(N)) do n
+                (r1.cgrs[n].qlabels, r1.cgrs[n].cgp, r1.cgrs[n].legdir)
+            end
 
-            new_row = merge_new_row(new_wmats, new_RMTs, new_qlabs, symmetries, QD)
+            new_row = merge_new_row(new_wmats, new_RMTs, new_qlabs, PS, QD)
             isnothing(new_row) || push!(new_rows, new_row)
         end
     end
 
-    return QSpace(symmetries, new_rows, qs1.inds, qs1.spaces)
+    return QSpace(PS, new_rows, qs1.inds, qs1.spaces)
 end
 
 Base.:-(qs1::QSpace, qs2::QSpace) = qs1 + (-1 * qs2)
@@ -2359,6 +2367,9 @@ function qlabeltype(symm::NTuple{N, Any}) where {N}
     return Tuple{ntuple(n -> NTuple{nzops(symm[n]), Int}, N)...}
 end
 
+qlabeltype(::Type{<:ProductSymm{Syms}}) where {Syms} =
+    Tuple{(NTuple{nzops(S), Int} for S in Syms.parameters)...}
+
 qlabeltype(::QSpace{T, QD, N, RD, QT}) where {T, QD, N, RD, QT} = QT
 
 """
@@ -2722,4 +2733,5 @@ include("get1jtensor.jl")
 include("svd.jl")
 include("eig.jl")
 include("permute.jl")
+
 

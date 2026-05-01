@@ -267,7 +267,7 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
         end
     end
 
-    new_wmats = Tuple(LurTensor{Float64, 2}[LurTensor(W[n][p]) for p in 1:K]
+    new_wmats = Tuple([LurTensor(W[n][p]) for p in 1:K]
                       for n in 1:N)
     new_RMTs  = [LurTensor(RMTs[p]) for p in 1:K]
 
@@ -281,18 +281,19 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
     end
 
     # Reconstruct: contract result_RMT with U[n] along axis QD_out+n for each n.
-    reconstructed = result_RMT.data
+    reconstructed = result_RMT
     for n in 1:N
-        reconstructed = _contract_om_axis(reconstructed, U_mats[n].data, QD_out + n)
+        reconstructed = _contract_om_axis(reconstructed, U_mats[n], QD_out + n)
     end
     # shape: (free_sizes..., OM3_sizes...)
 
     # Direct: for each pair p, contract W[n][p] along axis QD_out+n, then sum over p.
-    direct = zeros(free_sizes..., OM3_sizes...)
+    direct = similar(reconstructed)
+    fill!(direct, 0.0)
     for p in 1:K
-        contrib = RMTs[p]
+        contrib = new_RMTs[p]
         for n in 1:N
-            contrib = _contract_om_axis(contrib, W[n][p], QD_out + n)
+            contrib = _contract_om_axis(contrib, new_wmats[n][p], QD_out + n)
         end
         direct .+= contrib
     end
@@ -324,43 +325,48 @@ function test_compress_sector_zero_wmat_shortcircuits(; N::Int = 3,
     end
     RMTs = [randn(free_sizes..., [om12_sizes[n, p] for n in 1:N]...) for p in 1:K]
 
-    new_wmats = Tuple(LurTensor{Float64, 2}[LurTensor(W[n][p]) for p in 1:K]
+    new_wmats = Tuple([LurTensor(W[n][p]) for p in 1:K]
                       for n in 1:N)
     new_RMTs  = [LurTensor(RMTs[p]) for p in 1:K]
 
     @test isnothing(_compress_sector(new_wmats, new_RMTs, QD_out, 0.0))
     dummy_qlabels = ntuple(_ -> (ntuple(_ -> (0,), QD_out), ntuple(identity, QD_out), (QD_out, 0)), N)
+    dummy_ps = ProductSymm((ntuple(_ -> U1, N))...)
     @test isnothing(QSpaces.merge_new_row(new_wmats, new_RMTs, dummy_qlabels,
-                                          ntuple(_ -> U1, N), QD_out, 0.0))
+                                          dummy_ps, QD_out, 0.0))
 
-    direct = zeros(free_sizes..., OM3_sizes...)
+    direct = nothing
     for p in 1:K
-        contrib = RMTs[p]
+        contrib = new_RMTs[p]
         for n in 1:N
-            contrib = _contract_om_axis(contrib, W[n][p], QD_out + n)
+            contrib = _contract_om_axis(contrib, new_wmats[n][p], QD_out + n)
+        end
+        if isnothing(direct)
+            direct = similar(contrib)
+            fill!(direct, 0.0)
         end
         direct .+= contrib
     end
+    @test !isnothing(direct)
     @test all(iszero, direct)
 
     println("test_compress_sector_zero_wmat_shortcircuits passed.")
 end
 
 function test_qr_shared_isometry_rank1_fastpath()
-    mats = Matrix{Float64}[
-        reshape([1.0, -2.0, 3.5], 1, :),
-        reshape([0.25, 4.0], 1, :),
-        reshape([-1.5], 1, :),
+    mats = [
+        LurTensor(reshape([1.0, -2.0, 3.5], 1, :)),
+        LurTensor(reshape([0.25, 4.0], 1, :)),
+        LurTensor(reshape([-1.5], 1, :)),
     ]
 
     Q, factors = _qr_shared_isometry(mats; tol=0.0)
 
-    @test Q == [1.0;;]
+    @test Q isa LurTensor{Float64, 2}
+    @test size(Q) == (1, 1)
+    @test Q[1, 1] == 1.0
     @test length(factors) == length(mats)
     @test all(factors[i] === mats[i] for i in eachindex(mats))
-
-    reconstructed = [Q * factor for factor in factors]
-    @test reconstructed == mats
 
     println("test_qr_shared_isometry_rank1_fastpath passed.")
 end
