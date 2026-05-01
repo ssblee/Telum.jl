@@ -210,7 +210,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     inds = (ntuple(d -> begin
         idx = leginfos[d].ind.dir == '+' ? change_dual(leginfos[d].ind) : leginfos[d].ind
         to_incoming(idx)
-    end..., fused_ind))
+    end, Val(D))..., fused_ind)
     
     # Build spaces tuple: first D legs use the adjusted spaces, last leg from merged_info
     # Fused leg space: for each fused_qlabel, RMT dim = total dimension (last edi)
