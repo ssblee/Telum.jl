@@ -203,25 +203,42 @@ end
 # Mode-product: replace axis `axis` of array A (size k) with the output of
 # multiplying matrix M (shape r×k) along that axis.
 # Equivalent to: result[..., j, ...] = Σ_l M[j,l] * A[...,l,...] at `axis`.
-function _contract_om_axis_data(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, axis::Int) where {T1, T2, D}
+function _contract_om_axis_data(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, axis::Int) where {T1, T2<:Real, D}
     dims  = size(A)
     k     = dims[axis]
     r     = size(M, 1)
     @assert size(M, 2) == k "axis size $(k) != M columns $(size(M, 2))"
 
-    prod_before = prod(dims[1:axis-1]; init = 1)
-    prod_after  = prod(dims[axis+1:end]; init = 1)
-
-    # Reshape A to (prod_before, k, prod_after); move k to front; multiply; restore.
-    A_3  = reshape(A, prod_before, k, prod_after)
-    A_km = reshape(permutedims(A_3, (2, 1, 3)), k, prod_before * prod_after)
-    R_km = M * A_km                                       # (r, prod_before * prod_after)
-    R_3  = permutedims(reshape(R_km, r, prod_before, prod_after), (2, 1, 3))
     findim = Base.setindex(dims, r, axis)
+    if r == 1 && k == 1
+        return LurTensor(reshape(A .* M[1, 1], findim))
+    end
+
+    prod_before = 1
+    for i in 1:axis-1
+        prod_before *= dims[i]
+    end
+    prod_after = 1
+    for i in axis+1:D
+        prod_after *= dims[i]
+    end
+
+    # Reshape A to (prod_before, k, prod_after), move k to the back,
+    # multiply by M', then restore.  If prod_after == 1, k is already last.
+    A_3  = reshape(A, prod_before, k, prod_after)
+    if prod_after == 1
+        A_mk = reshape(A_3, prod_before, k)
+        R_mr = A_mk * transpose(M)
+        return LurTensor(reshape(R_mr, findim))
+    end
+
+    A_mk = reshape(permutedims(A_3, (1, 3, 2)), prod_before * prod_after, k)
+    R_mr = A_mk * transpose(M)
+    R_3  = permutedims(reshape(R_mr, prod_before, prod_after, r), (1, 3, 2))
     return LurTensor(reshape(R_3, findim))
 end
 
-function _contract_om_axis(A::LurTensor{T1, D, A1}, M::LurTensor{T2, 2, A2}, axis::Int) where {T1, T2, D, A1, A2}
+function _contract_om_axis(A::LurTensor{T1, D, A1}, M::LurTensor{T2, 2, A2}, axis::Int) where {T1, T2<:Real, D, A1, A2}
     return _contract_om_axis_data(A.data, M.data, axis)
 end
 
@@ -248,6 +265,7 @@ function _compress_sector(
     tol       ::Float64 = 1e-12,
 ) where {T, N, RD, AW<:AbstractArray{Float64, 2}, AR<:AbstractArray{T, RD}}
     K = length(new_RMTs)
+    @assert K > 0 "_compress_sector requires at least one RMT"
 
     # Shared QR basis per symmetry
     U_mats   = Vector{LurTensor{Float64, 2, AW}}(undef, N)
@@ -266,19 +284,20 @@ function _compress_sector(
         end
     end
 
-    # Preallocate output RMT as LurTensor (sz_free..., r_1,...,r_N)
-    sz_free    = size(new_RMTs[1])[1:QD_out]
-    r_sizes    = ntuple(n -> size(U_mats[n], 2), N)
-    result_RMT = similar(new_RMTs[1], T, (sz_free..., r_sizes...))
-    fill!(result_RMT, zero(T))
+    result_RMT = new_RMTs[1]
+    for n in 1:N
+        result_RMT = _contract_om_axis(result_RMT, SV_split[n, 1], QD_out + n)
+    end
 
-    # Contract SV pieces into each RMT and accumulate
-    for i in 1:K
+    # Reuse the first contracted contribution as the output buffer.  This avoids
+    # allocating a separate zero-filled result, and removes the double allocation
+    # in the K == 1 case.
+    for i in 2:K
         contrib = new_RMTs[i]
         for n in 1:N
             contrib = _contract_om_axis(contrib, SV_split[n, i], QD_out + n)
         end
-        result_RMT += contrib
+        result_RMT .+= contrib
     end
 
     return U_mats, result_RMT
@@ -1063,8 +1082,8 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
                 isnothing(wmats) && continue
 
                 # ── Extract block & post-process ─────────────────────────────
-                block     = big_C[roff1[ii]+1:roff1[ii+1],
-                                  roff2[jj]+1:roff2[jj+1]]
+                block     = @view big_C[roff1[ii]+1:roff1[ii+1],
+                                        roff2[jj]+1:roff2[jj+1]]
                 contr_RMT = _reshape_contract_block(block, sz_f1, sz_om1,
                                                           sz_f2, sz_om2)
 

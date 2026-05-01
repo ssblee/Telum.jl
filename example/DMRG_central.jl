@@ -20,8 +20,8 @@ function init_MPS(MPO::Vector{<:QSpace}, Nkeep::Int, Nkeep_last::Int=1; tol=0.0)
         Hnow = Anow' * lock(Anow * Hprev * MPO[i]; itag="SL,$i")
 
         bli = findleg(Hnow; itag=i==N ? "ORight" : "OB,$i")
-        Hmat = deleteSingleton(getsub(Hnow, bli, [(zq, 1)]), bli)
-        e = eigen((Hmat + Hmat') / 2)
+        Hmat = deleteSingleton(getsub(Hnow, bli, x->x==zq ? 1 : nothing), bli)
+        e = eigen((Hmat + Hmat') / 2; hermitian=true)
 
         ek, _ = discard_eigen(e, i==N ? Nkeep_last : Nkeep, i==N ? "SRight" : "SB,$i", "SD,$i"; tol)
         MPS[i] = Aprev = Anow * ek.V
@@ -31,6 +31,10 @@ function init_MPS(MPO::Vector{<:QSpace}, Nkeep::Int, Nkeep_last::Int=1; tol=0.0)
     return MPS, E, sp
 end
 
+MPO = MajumdarGhoshMPO(1.0, 40)
+#MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
+#MPO = XYMPO(1.0, 40)
+#MPO = XXZMPO(0.3, 0.5, 40)
 
 function do_dmrg(MPO, Nkeep_init=50, Nkeep_DMRG=50, Nsweep=4)
     MPS, E, sp = init_MPS(MPO, Nkeep_init; tol=0.0)
@@ -40,8 +44,8 @@ function do_dmrg(MPO, Nkeep_init=50, Nkeep_DMRG=50, Nsweep=4)
 end
 
 function run()
-    MPO = MajumdarGhoshMPO(1.0, 40)
-    #MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
+    #MPO = MajumdarGhoshMPO(1.0, 40)
+    MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
     #MPO = XYMPO(1.0, 40)
     #MPO = XXZMPO(0.3, 0.5, 40)
     for Nkeep_DMRG = 20:10:70
