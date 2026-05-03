@@ -23,7 +23,7 @@ function init_MPS(MPO::Vector{<:QSpace}, Nkeep::Int)
         Hmat = deleteSingleton(getsub(Hnow, bli, [(zq, 1)]), bli)
         e = eigen((Hmat + Hmat') / 2)
 
-        ek, _ = discard_eigen(e, i==N ? 1 : Nkeep, i==N ? "SRight" : "SB,$i", "SD,$i")
+        ek, _ = discard_eigen(e, i==N ? 1 : Nkeep, 0, i==N ? "SRight" : "SB,$i", "SD,$i")
         MPS[i] = Aprev = Anow * ek.V
         if i < N Hprev = lock(ek.V * Hnow; itag="SB") * ek.V'
         else E, sp = ek.eig_list[1][1], ek.eig_list[1][3] end
@@ -32,7 +32,7 @@ function init_MPS(MPO::Vector{<:QSpace}, Nkeep::Int)
 end
 
 #MPO = MajumdarGhoshMPO(1.0, 40)
-#MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
+MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
 #MPO = XYMPO(1.0, 40)
 #MPO = XXZMPO(0.3, 0.5, 40)
 

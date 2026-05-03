@@ -86,6 +86,7 @@ function FermionS_basicops(N::Int)
 end
 
 # For now, we only implement U1 charge relative to half-filling
+# TODO: Z_N charge symmetry, relative to other fillings, etc.
 function charge_weights(opts::FermionSOptions, basic_ops)
     nchan = opts.nchannels
     charge = Int.(diag(sum(basic_ops.NN)) .- nchan)
@@ -94,7 +95,7 @@ end
 
 function charge_lowering(opts::FermionSOptions, basic_ops)
     if opts.charge_symm == SU{2} return [sum(basic_ops.CC)]
-    elseif opts.charge_symm == U1 return Matrix{Int}[]
+    elseif opts.charge_symm in [U1, nothing] return Matrix{Int}[]
     else error("Unsupported charge symmetry") end
 end
 
@@ -109,8 +110,8 @@ end
 # For SU(2) spin symmetry, the lowering operator is 
 # the sum of all single-channel spin lowering operators.
 function spin_lowering(opts::FermionSOptions, basic_ops)
-    @assert opts.spin_symm in [SU{2}, U1]
-    if opts.spin_symm == SU{2} return [sum(basic_ops.SS)]
+    @assert opts.spin_symm in [SU{2}, U1, nothing]
+    if opts.spin_symm == SU{2} return [-sum(basic_ops.SS)]
     elseif opts.spin_symm == U1 return Matrix{Int}[]
     else error("Unsupported spin symmetry") end
 end
@@ -166,17 +167,27 @@ function getSymmetryInfo(opts::FermionSOptions)
     totalN = diag(sum(basic_ops.NN[i] for i in 1:2*N))
     mwirops = Dict{Symbol, Tuple{AbstractMatrix{Int}, Float64}}()
     if opts.spin_symm == SU{2}
-        mwirops[:S] = (sum(basic_ops.SS[i]' for i in 1:N), 1/sqrt(2))
+        mwirops[:S] = (sum(basic_ops.SS[i]' for i in 1:N), -1/sqrt(2))
     elseif opts.spin_symm == U1 || opts.spin_symm === nothing
-        mwirops[:Sp] = (sum(basic_ops.SS[i]' for i in 1:N), 1/sqrt(2))
+        mwirops[:Sp] = (sum(basic_ops.SS[i]' for i in 1:N), -1/sqrt(2))
         mwirops[:Sz] = (sum(basic_ops.SZ[i] for i in 1:N), 1/2)
         mwirops[:Sm] = (sum(basic_ops.SS[i] for i in 1:N), 1/sqrt(2))
     else error("Unsupported spin symmetry") end
-    if opts.charge_symm == SU{2}
-        mwirops[:F] = (sum(basic_ops.FF[1, i]' for i in 1:N), 1.0)
-    elseif opts.charge_symm == U1
-        mwirops[:F] = (basic_ops.FF[2, N], 1.0)
-    elseif opts.charge_symm === nothing error("Not implemented yet") end
+    if opts.spin_symm == SU{2}
+        if opts.charge_symm == SU{2}
+            mwirops[:F] = (sum(basic_ops.FF[1, i]' for i in 1:N), 1.0)
+        elseif opts.charge_symm == U1 || opts.charge_symm === nothing
+            mwirops[:F] = (basic_ops.FF[2, N], 1.0)
+        else error("Not implemented yet") end
+    else
+        if opts.charge_symm == SU{2}
+            mwirops[:Fu] = (sum(basic_ops.FF[2, i]' for i in 1:N), 1.0)
+            mwirops[:Fd] = (sum(basic_ops.FF[1, i]' for i in 1:N), 1.0)
+        elseif opts.charge_symm == U1 || opts.charge_symm === nothing
+            mwirops[:Fu] = (basic_ops.FF[1, N], 1.0)
+            mwirops[:Fd] = (basic_ops.FF[2, N], 1.0)
+        else error("Not implemented yet") end
+    end
     mwirops[:Z] = (diagm([i%2==0 ? 1 : -1 for i in totalN]), 1.0)
     mwirops[:I] = (sparse(I, 4^N, 4^N), 1.0)
 
