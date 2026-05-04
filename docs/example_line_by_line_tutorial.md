@@ -92,14 +92,21 @@ Purpose:
 Example:
 
 ```julia
-opt = FermionSOptions(U1, SU{2}, nothing, 1)
+opt = FermionSOptions(1, :U1, :SU2, nothing)
 ```
 
 Interpretation:
 
-- `U1` is the charge symmetry
-- `SU{2}` is the spin symmetry
-- the remaining arguments configure the local fermion representation
+- `1` is the number of channels
+- `:U1` is the charge symmetry over all channels
+- `:SU2` is the spin symmetry over all channels
+- `nothing` disables channel/flavor symmetry
+
+For multiple channel groups, pass explicit `(symmetry, channels)` tuples:
+
+```julia
+opt = FermionSOptions(3, :U1, [(:SU2, [1, 2]), (:U1, [3])], :SU3)
+```
 
 ### `getLocalSpace(...)`
 

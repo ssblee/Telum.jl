@@ -31,8 +31,8 @@ function init_MPS(MPO::Vector{<:QSpace}, Nkeep::Int, Nkeep_last::Int=1; tol=0.0)
     return MPS, E, sp
 end
 
-MPO = MajumdarGhoshMPO(1.0, 40)
-#MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
+#MPO = MajumdarGhoshMPO(1.0, 40)
+MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
 #MPO = XYMPO(1.0, 40)
 #MPO = XXZMPO(0.3, 0.5, 40)
 

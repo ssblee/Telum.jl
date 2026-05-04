@@ -77,7 +77,7 @@ end
 
 function _commutator_iszero(A::AbstractMatrix, B::AbstractMatrix)
     comm_res = sparse(comm(A, B))
-    dropzeros!(comm_res)
+    droptol!(comm_res, 1e-12)
     return nnz(comm_res) == 0
 end
 
@@ -196,6 +196,7 @@ end
 
 function getLocalSpace(opts::LocalSpaceOptions,
     tags::Tuple{Vararg{AbstractString, 3}}=("", "", ""))
+
     # Step 1 – symmetry operators that define the local Hilbert space structure
     symm, weights, lowering_ops, mwirops = getSymmetryInfo(opts)
     _validate_cross_symmetry_commutation(symm, weights, lowering_ops)
@@ -213,6 +214,8 @@ function getLocalSpace(opts::LocalSpaceOptions,
         # Step 3 – get full IROP in the symmetry-adapted basis
         irop_full, irop_qlabel = get_IROP(symm, weights, lowering_ops, mwirop)
         transf_basis!(irop_full, ortho_vecs)
+        #println("Tranformed IROP for $name:")
+        #display(Array(irop_full))
 
         # Step 4 – compress each IROP matrix into a QSpace object
         data_full = decompose_irop(symm, irop_full, space_list, irop_qlabel)

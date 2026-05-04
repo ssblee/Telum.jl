@@ -59,20 +59,45 @@ end
 # ── Spinful fermion ───────────────────────────────────────────────────────────
 
 """
-    FermionSOptions(; charge_symm, spin_symm, channel_symm, nchannels)
+    FermionSOptions(N::Int, charge_symm=nothing, spin_symm=nothing, channel_symm=nothing)
 
 Options for a spinful (multi-component) fermionic site.
 
+Each symmetry option is either `nothing`, a `Symbol`, or a vector of
+`(symmetry_symbol, channel_indices)` tuples.  A plain symbol is applied to all
+channels, so `FermionSOptions(3, :U1, :SU2, :SU3)` is equivalent to
+`FermionSOptions(3, [(:U1, [1, 2, 3])], [(:SU2, [1, 2, 3])],
+[(:SU3, [1, 2, 3])])`.
+
 # Fields
-- `charge_symm  :: Type{<:Symmetry}` – symmetry for charge (typically `U1`).
-- `spin_symm    :: Type{<:Symmetry}` – symmetry for spin   (typically `SU{2}`).
-- `channel_symm :: Union{Type{<:Symmetry}, Nothing}` – symmetry for channel /
-  flavor degree of freedom (e.g. `SU{3}` for 3-channel Kondo), or `nothing`.
-- `nchannels    :: Int`              – number of channels / flavours (≥ 1).
+- `nchannels` – number of channels / flavors.  The local Hilbert-space
+  dimension is `4^nchannels`.
+- `charge_symm` – charge symmetries on selected channel groups.  Supported
+  symbols are currently `:U1` and `:SU2`; `nothing` disables charge symmetry.
+- `spin_symm` – spin symmetries on selected channel groups.  Supported symbols
+  are currently `:U1` and `:SU2`; `nothing` disables spin symmetry.
+- `channel_symm` – channel / flavor symmetry groups on selected channels.
+  Symbols of the form `:SU3`, `:SU4`, ... request the corresponding SU(N)
+  channel symmetry; `nothing` disables channel symmetry.
 """
 struct FermionSOptions <: LocalSpaceOptions
-    charge_symm ::Union{Type{<:Symmetry}, Nothing}
-    spin_symm   ::Union{Type{<:Symmetry}, Nothing}
-    channel_symm::Union{Type{<:Symmetry}, Nothing}
     nchannels   ::Int
+    charge_symm ::Union{Vector{Tuple{Symbol, Vector{Int}}}, Nothing}
+    spin_symm   ::Union{Vector{Tuple{Symbol, Vector{Int}}}, Nothing}
+    channel_symm::Union{Vector{Tuple{Symbol, Vector{Int}}}, Nothing}
+end
+
+function standardize_option(opt, N)
+    if opt === nothing return nothing
+    elseif opt isa Symbol return [(Symbol(opt), collect(1:N))]
+    else @assert opt isa Vector{Tuple{Symbol, Vector{Int}}} "Option must be a Symbol or a Vector{Tuple{Symbol, Vector{Int}}}"
+        return opt
+    end
+end
+
+function FermionSOptions(N::Int, charge_symm=nothing, spin_symm=nothing, channel_symm=nothing)
+    charge_symm_ = standardize_option(charge_symm, N)
+    spin_symm_ = standardize_option(spin_symm, N)
+    channel_symm_ = standardize_option(channel_symm, N)
+    return FermionSOptions(N, charge_symm_, spin_symm_, channel_symm_)
 end
