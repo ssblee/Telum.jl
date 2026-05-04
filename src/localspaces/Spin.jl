@@ -9,7 +9,7 @@ function getSymmetryInfo(opts::SpinOptions)
     weights = ([(1,), (-1,)],)
     lowering_ops = opts.symmetry == SU{2} ? ([sparse([0 0; 1 0])],) : (Matrix{Int}[],)
 
-    mwirops = Dict{Symbol, Tuple{AbstractMatrix{Int}, Float64}}()
+    mwirops = Dict{Symbol, Tuple{AbstractMatrix, Float64}}()
     if opts.symmetry == SU{2}
         mwirops[:S] = (sparse([0 1; 0 0]), 1 / sqrt(2))
     elseif opts.symmetry == U1

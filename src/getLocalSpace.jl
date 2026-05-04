@@ -77,7 +77,7 @@ end
 
 function _commutator_iszero(A::AbstractMatrix, B::AbstractMatrix)
     comm_res = sparse(comm(A, B))
-    dropzeros!(comm_res)
+    droptol!(comm_res, 1e-12)
     return nnz(comm_res) == 0
 end
 
@@ -211,11 +211,11 @@ function getLocalSpace(opts::LocalSpaceOptions,
     dir = ['+', '-', '-']
     QSpaces = Dict{Symbol, QSpace}()
     for (name, (mwirop, float_fac)) in mwirops
-        println("Processing operator $name with float factor $float_fac")
         # Step 3 – get full IROP in the symmetry-adapted basis
         irop_full, irop_qlabel = get_IROP(symm, weights, lowering_ops, mwirop)
         transf_basis!(irop_full, ortho_vecs)
-        display(Array(irop_full))
+        #println("Tranformed IROP for $name:")
+        #display(Array(irop_full))
 
         # Step 4 – compress each IROP matrix into a QSpace object
         data_full = decompose_irop(symm, irop_full, space_list, irop_qlabel)

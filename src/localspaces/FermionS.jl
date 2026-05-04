@@ -85,51 +85,435 @@ function FermionS_basicops(N::Int)
     return (; FF, NN, SS, CC, SZ, chan_l, chan_z)
 end
 
+const sym_dict = Dict(:U1 => U1, :SU2 => SU{2})
+
+"""
+    charge_symmops(opts::FermionSOptions, basic_ops)
+
+Build charge-symmetry data for each charge group in `opts.charge_symm`.
+
+Each group is a `(symmetry_symbol, channel_indices)` tuple.  The weight of a
+state is the total occupation on those channels measured relative to
+half-filling.  `:U1` charge symmetry has no lowering operators.  `:SU2` charge
+symmetry uses the channel-summed pair-annihilation operator as the lowering
+operator.
+"""
+
 # For now, we only implement U1 charge relative to half-filling
+# Charge symmetry is not nothing here
 # TODO: Z_N charge symmetry, relative to other fillings, etc.
-function charge_weights(opts::FermionSOptions, basic_ops)
-    nchan = opts.nchannels
-    charge = Int.(diag(sum(basic_ops.NN)) .- nchan)
-    return [(Int(i),) for i in charge]
+function charge_symmops(opts::FermionSOptions, basic_ops)
+    N = opts.nchannels
+    weights, symms, lops = [], [], []
+    for (ssymbol, channs) in opts.charge_symm
+        @assert ssymbol in [:U1, :SU2] "Unsupported charge symmetry: $ssymbol"
+        sym = sym_dict[ssymbol]
+        nchan = length(channs)
+        charge = Int.(diag(sum(basic_ops.NN[1, i] + basic_ops.NN[2, i] for i in channs)) .- nchan)
+
+        lop = if sym == SU{2}
+            [sum(basic_ops.CC[i] for i in channs)]
+        elseif sym == U1
+            Matrix{Int}[]
+        else error("Unsupported charge symmetry") end
+
+        push!(weights, [(Int(i),) for i in charge])
+        push!(symms, sym)
+        push!(lops, lop)
+    end
+    return weights, symms, lops
 end
 
-function charge_lowering(opts::FermionSOptions, basic_ops)
-    if opts.charge_symm == SU{2} return [sum(basic_ops.CC)]
-    elseif opts.charge_symm in [U1, nothing] return Matrix{Int}[]
-    else error("Unsupported charge symmetry") end
-end
+"""
+    spin_symmops(opts::FermionSOptions, basic_ops)
+
+Build spin-symmetry data for each spin group in `opts.spin_symm`.
+
+Each group is a `(symmetry_symbol, channel_indices)` tuple.  The weights are
+the total spin-z values on those channels.  `:U1` spin symmetry has no lowering
+operators.  `:SU2` spin symmetry uses the channel-summed spin-lowering
+operator.
+"""
 
 # This covers U1 and SU(2) spin symmetries since the weights are 
 # just the total spin-z component
-function spin_weights(opts::FermionSOptions, basic_ops)
-    spin_z = Int.(diag(sum(basic_ops.SZ)))
-    return [(Int(i),) for i in spin_z]
+function spin_symmops(opts::FermionSOptions, basic_ops)
+    N = opts.nchannels
+    weights, symms, lops = [], [], []
+    for (ssymbol, channs) in opts.spin_symm
+        @assert ssymbol in [:U1, :SU2] "Unsupported spin symmetry: $ssymbol"
+        sym = sym_dict[ssymbol]
+        nchan = length(channs)
+        spin_z = Int.(diag(sum(basic_ops.SZ[i] for i in channs)))
+
+        lop = if sym == SU{2}
+            [-sum(basic_ops.SS[i] for i in channs)]
+        elseif sym == U1
+            Matrix{Int}[]
+        else error("Unsupported spin symmetry") end
+
+        push!(weights, [(Int(i),) for i in spin_z])
+        push!(symms, sym)
+        push!(lops, lop)
+    end
+    return weights, symms, lops
 end
 
-# For U1 spin symmetry, there is no lowering operator.
-# For SU(2) spin symmetry, the lowering operator is 
-# the sum of all single-channel spin lowering operators.
-function spin_lowering(opts::FermionSOptions, basic_ops)
-    @assert opts.spin_symm in [SU{2}, U1, nothing]
-    if opts.spin_symm == SU{2} return [-sum(basic_ops.SS)]
-    elseif opts.spin_symm == U1 return Matrix{Int}[]
-    else error("Unsupported spin symmetry") end
-end
+"""
+    chan_symmops(opts::FermionSOptions, basic_ops)
+
+Build channel-symmetry data for each channel group in `opts.channel_symm`.
+
+The current implementation supports symbols of the form `:SU2`, `:SU3`, ...
+where the SU(N) rank must match the number of listed channels.  It returns the
+Dynkin-basis channel weights and adjacent channel-lowering operators.
+"""
 
 # For now, we only implement SU(N) channel symmetry
-function chan_weights(opts::FermionSOptions, basic_ops)
-    N = opts.nchannels
-    # TODO: generalize to another channel symmetry
-    @assert opts.channel_symm == SU{N}
-    return collect(zip(basic_ops.chan_z...))
+# TODO: generalize to another channel symmetry
+function chan_symmops(opts::FermionSOptions, basic_ops)
+    N = opts.nchannels; FF = basic_ops.FF
+    weights, symms, lops = [], [], []
+    for (ssymbol, channs) in opts.channel_symm
+
+        # Get symmetry type and number of channels involved
+        str = String(ssymbol)
+        if startswith(str, "SU")
+            num_part = str[3:end]
+            if isempty(num_part) N = length(channs)
+            else N = parse(Int, num_part) end
+            @assert N >= 2 && N == length(channs)
+            push!(symms, SU{N})
+        end
+
+        lop = Vector{SparseMatrixCSC{Int}}(undef, N-1)
+        zvals = Vector{Vector{Int}}(undef, N-1)
+        for i in 1:(N-1)
+            lop[i] = FF[1, channs[i+1]]' * FF[1, channs[i]] +
+                     FF[2, channs[i+1]]' * FF[2, channs[i]]
+
+            zvals[i] = Int.(diag(sum([basic_ops.NN[1, channs[j]] + 
+                                      basic_ops.NN[2, channs[j]] for j=1:i])
+                               - i * (basic_ops.NN[1, channs[i+1]] + 
+                                      basic_ops.NN[2, channs[i+1]])))
+        end
+        push!(lops, lop)
+        push!(weights, collect(zip(zvals...)))
+    end
+    return weights, symms, lops
 end
 
-function chan_lowering(opts::FermionSOptions, basic_ops)
-    N = opts.nchannels
-    # TODO: generalize to another channel symmetry
-    @assert opts.channel_symm == SU{N}
-    return basic_ops.chan_l
+_channel_suffix(channs::AbstractVector{<:Integer}) = join(channs)
+_spin_symbol(channs::AbstractVector{<:Integer}, component::AbstractString="") =
+    Symbol("S", _channel_suffix(channs), component)
+_fermion_symbol(channs::AbstractVector{<:Integer}, component::AbstractString="") =
+    Symbol("F", _channel_suffix(channs), component)
+
+function _check_channels(channs::AbstractVector{<:Integer}, N::Int, label)
+    isempty(channs) && error("$label must contain at least one channel")
+    length(unique(channs)) == length(channs) ||
+        error("$label contains duplicate channels: $channs")
+    all(1 .<= channs .<= N) ||
+        error("$label contains channels outside 1:$N: $channs")
 end
+
+function _check_disjoint_channel_groups(groups, N::Int, label::AbstractString)
+    seen = Set{Int}()
+    for (ssymbol, channs) in groups
+        _check_channels(channs, N, "$label $ssymbol")
+        overlap = intersect(seen, channs)
+        isempty(overlap) ||
+            error("$label groups overlap on channels $(sort!(collect(overlap)))")
+        union!(seen, channs)
+    end
+    return seen
+end
+
+function _add_spin_components!(
+    mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
+    channs::AbstractVector{<:Integer},
+    basic_ops)
+
+    suffix_channs = collect(channs)
+    mwirops[_spin_symbol(suffix_channs, "p")] =
+        (sum(basic_ops.SS[i]' for i in suffix_channs), -1 / sqrt(2))
+    mwirops[_spin_symbol(suffix_channs, "z")] =
+        (sum(basic_ops.SZ[i] for i in suffix_channs), 1 / 2)
+    mwirops[_spin_symbol(suffix_channs, "m")] =
+        (sum(basic_ops.SS[i] for i in suffix_channs), 1 / sqrt(2))
+end
+
+function _add_spin_irop!(
+    mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
+    channs::AbstractVector{<:Integer},
+    basic_ops)
+
+    suffix_channs = collect(channs)
+    mwirops[_spin_symbol(suffix_channs)] =
+        (sum(basic_ops.SS[i]' for i in suffix_channs), -1 / sqrt(2))
+end
+
+"""
+    add_spin_irop!(mwirops, opts::FermionSOptions, basic_ops)
+
+Add spin operators to the maximal-weight IROP dictionary.
+
+Channels that are not selected by any spin or channel symmetry group get
+explicit component operators named `S<idx>p`, `S<idx>z`, and `S<idx>m`.
+Grouped `:U1` spin symmetries and SU(N) channel symmetries add channel-summed
+component operators named `S<indices>p`, `S<indices>z`, and `S<indices>m`,
+where `<indices>` is the juxtaposed channel list.  Grouped `:SU2` spin
+symmetries add one fused IROP named `S<indices>` using the raising operator as
+the maximal-weight component; channel symmetries contained in an SU(2)-spin
+group do not add separate spin components for those channels.
+
+Channel-symmetry groups must either be disjoint from all spin-symmetry groups,
+or be contained in exactly one already selected multi-channel spin group.
+Crossing multiple spin groups is ambiguous and raises an error.
+"""
+function add_spin_irop!(mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}}, 
+                   opts::FermionSOptions, basic_ops)
+    N = opts.nchannels
+
+    spin_groups = opts.spin_symm === nothing ? Tuple{Symbol, Vector{Int}}[] : opts.spin_symm
+    channel_groups = opts.channel_symm === nothing ? Tuple{Symbol, Vector{Int}}[] : opts.channel_symm
+
+    spin_selected = _check_disjoint_channel_groups(spin_groups, N, "Spin symmetry")
+    channel_selected = Set{Int}()
+
+    for (ssymbol, channs) in spin_groups
+        if ssymbol == :SU2
+            _add_spin_irop!(mwirops, channs, basic_ops)
+        elseif ssymbol == :U1
+            _add_spin_components!(mwirops, channs, basic_ops)
+        else
+            error("Unsupported spin symmetry: $ssymbol")
+        end
+    end
+
+    for (ssymbol, channs) in channel_groups
+        _check_channels(channs, N, "Channel symmetry $ssymbol")
+        startswith(String(ssymbol), "SU") ||
+            error("Unsupported channel symmetry for spin IROPs: $ssymbol")
+
+        overlap_with_channel = intersect(channel_selected, channs)
+        isempty(overlap_with_channel) ||
+            error("Channel symmetry groups overlap on channels " *
+                  "$(sort!(collect(overlap_with_channel)))")
+
+        chann_set = Set(channs)
+        overlap_with_spin = intersect(chann_set, spin_selected)
+        contained_in_su2_spin = false
+        if !isempty(overlap_with_spin)
+            containing = [
+                (spin_symm, spin_channs) for (spin_symm, spin_channs) in spin_groups
+                if issubset(chann_set, Set(spin_channs)) && length(spin_channs) > 1
+            ]
+            length(containing) == 1 || error(
+                "Channel symmetry $ssymbol on channels $channs must be disjoint " *
+                "from spin-symmetry groups or contained in one multi-channel " *
+                "spin-symmetry group")
+            contained_in_su2_spin = first(only(containing)) == :SU2
+        end
+
+        if !contained_in_su2_spin
+            _add_spin_components!(mwirops, channs, basic_ops)
+        end
+        union!(channel_selected, channs)
+    end
+
+    selected = union(spin_selected, channel_selected)
+    for i in 1:N
+        if !(i in selected)
+            _add_spin_components!(mwirops, [i], basic_ops)
+        end
+    end
+end
+
+function _annihilation_primary_blocks(opts::FermionSOptions, N::Int)
+    charge_groups = opts.charge_symm === nothing ? Tuple{Symbol, Vector{Int}}[] : opts.charge_symm
+    spin_groups = opts.spin_symm === nothing ? Tuple{Symbol, Vector{Int}}[] : opts.spin_symm
+
+    charge_group_by_channel = fill(0, N)
+    charge_su2_by_group = Bool[]
+    for (group_idx, (ssymbol, channs)) in enumerate(charge_groups)
+        ssymbol in [:U1, :SU2] || error("Unsupported charge symmetry: $ssymbol")
+        _check_channels(channs, N, "Charge symmetry $ssymbol")
+        push!(charge_su2_by_group, ssymbol == :SU2)
+        for ch in channs
+            charge_group_by_channel[ch] == 0 ||
+                error("Charge symmetry groups overlap on channel $ch")
+            charge_group_by_channel[ch] = group_idx
+        end
+    end
+
+    spin_su2_group_by_channel = fill(0, N)
+    spin_su2_group_idx = 0
+    for (ssymbol, channs) in spin_groups
+        ssymbol in [:U1, :SU2] || error("Unsupported spin symmetry: $ssymbol")
+        _check_channels(channs, N, "Spin symmetry $ssymbol")
+        ssymbol == :SU2 || continue
+        spin_su2_group_idx += 1
+        for ch in channs
+            spin_su2_group_by_channel[ch] == 0 ||
+                error("SU(2) spin symmetry groups overlap on channel $ch")
+            spin_su2_group_by_channel[ch] = spin_su2_group_idx
+        end
+    end
+
+    block_by_key = Dict{Tuple{Int, Int}, Int}()
+    blocks = NamedTuple[]
+    for ch in 1:N
+        charge_group = charge_group_by_channel[ch]
+        spin_group = spin_su2_group_by_channel[ch]
+        charge_group == 0 && spin_group == 0 && continue
+
+        key = (charge_group, spin_group)
+        charge_su2 = charge_group == 0 ? false : charge_su2_by_group[charge_group]
+        spin_su2 = spin_group != 0
+        if haskey(block_by_key, key)
+            push!(blocks[block_by_key[key]].channs, ch)
+        else
+            push!(blocks, (;
+                channs = [ch],
+                charge_su2,
+                spin_su2,
+                channel_symm = false,
+            ))
+            block_by_key[key] = length(blocks)
+        end
+    end
+
+    return blocks
+end
+
+function _split_annihilation_blocks_by_channel_symmetry(blocks, opts::FermionSOptions, N::Int)
+    channel_groups = opts.channel_symm === nothing ? Tuple{Symbol, Vector{Int}}[] : opts.channel_symm
+    channel_selected = Set{Int}()
+
+    for (ssymbol, channs) in channel_groups
+        startswith(String(ssymbol), "SU") ||
+            error("Unsupported channel symmetry for annihilation IROPs: $ssymbol")
+        _check_channels(channs, N, "Channel symmetry $ssymbol")
+
+        overlap_with_channel = intersect(channel_selected, channs)
+        isempty(overlap_with_channel) ||
+            error("Channel symmetry groups overlap on channels " *
+                  "$(sort!(collect(overlap_with_channel)))")
+
+        chann_set = Set(channs)
+        containing_idxs = [
+            idx for (idx, block) in pairs(blocks)
+            if issubset(chann_set, Set(block.channs))
+        ]
+        overlapping_idxs = [
+            idx for (idx, block) in pairs(blocks)
+            if !isempty(intersect(chann_set, block.channs))
+        ]
+
+        if isempty(overlapping_idxs)
+            push!(blocks, (;
+                channs = collect(channs),
+                charge_su2 = false,
+                spin_su2 = false,
+                channel_symm = true,
+            ))
+        elseif length(containing_idxs) == 1 && length(blocks[only(containing_idxs)].channs) > 1
+            block_idx = only(containing_idxs)
+            block = blocks[block_idx]
+            remainder = [ch for ch in block.channs if !(ch in chann_set)]
+
+            blocks[block_idx] = (;
+                channs = collect(channs),
+                charge_su2 = block.charge_su2,
+                spin_su2 = block.spin_su2,
+                channel_symm = true,
+            )
+            if !isempty(remainder)
+                push!(blocks, (;
+                    channs = remainder,
+                    charge_su2 = block.charge_su2,
+                    spin_su2 = block.spin_su2,
+                    channel_symm = false,
+                ))
+            end
+        else
+            error("Channel symmetry $ssymbol on channels $channs must contain " *
+                  "only channels with no charge/SU(2)-spin symmetry or be " *
+                  "contained in one already generated multi-channel set")
+        end
+
+        union!(channel_selected, channs)
+    end
+
+    return blocks
+end
+
+function _add_annihilation_block!(
+    mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
+    block,
+    basic_ops)
+
+    channs = block.channs
+    op_channs = block.channel_symm ? [last(channs)] : channs
+
+    if !block.charge_su2 && !block.spin_su2
+        mwirops[_fermion_symbol(channs, "u")] =
+            (sum(basic_ops.FF[1, i] for i in op_channs), 1.0)
+        mwirops[_fermion_symbol(channs, "d")] =
+            (sum(basic_ops.FF[2, i] for i in op_channs), 1.0)
+    elseif block.charge_su2 && !block.spin_su2
+        mwirops[_fermion_symbol(channs, "u")] =
+            (sum(basic_ops.FF[2, i]' for i in op_channs), 1.0)
+        mwirops[_fermion_symbol(channs, "d")] =
+            (sum(basic_ops.FF[1, i]' for i in op_channs), 1.0)
+    elseif !block.charge_su2 && block.spin_su2
+        mwirops[_fermion_symbol(channs)] =
+            (sum(basic_ops.FF[2, i] for i in op_channs), 1.0)
+    else
+        mwirops[_fermion_symbol(channs)] =
+            (sum(basic_ops.FF[1, i]' for i in op_channs), 1.0)
+    end
+end
+
+"""
+    add_annihilation_irop!(mwirops, opts::FermionSOptions, basic_ops)
+
+Add fermion annihilation operators to the maximal-weight IROP dictionary.
+
+Charge symmetries and SU(2) spin symmetries first generate channel sets.  SU(N)
+channel symmetries may either select only otherwise unselected channels, or be
+contained in one existing multi-channel set, in which case that set is split.
+Unselected channels get individual default `F<idx>u` and `F<idx>d` operators.
+
+For each generated set, `F<indices>u`/`F<indices>d` are emitted when charge and
+spin are not both SU(2)-fused.  `F<indices>` is emitted when SU(2) spin fuses
+the spin-up and spin-down annihilation components.  If the set also has channel
+symmetry, the maximal-weight operator is taken only from `last(indices)`.
+"""
+function add_annihilation_irop!(mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}}, 
+                            opts::FermionSOptions, basic_ops)
+    N = opts.nchannels
+
+    blocks = _annihilation_primary_blocks(opts, N)
+    _split_annihilation_blocks_by_channel_symmetry(blocks, opts, N)
+
+    selected = Set{Int}()
+    for block in blocks
+        _add_annihilation_block!(mwirops, block, basic_ops)
+        union!(selected, block.channs)
+    end
+
+    for i in 1:N
+        if !(i in selected)
+            _add_annihilation_block!(
+                mwirops,
+                (; channs = [i], charge_su2 = false, spin_su2 = false, channel_symm = false),
+                basic_ops)
+        end
+    end
+end
+
 
 function getSymmetryInfo(opts::FermionSOptions)
     # For N-channel SU(2)-spin case, local Hilbert space is:
@@ -145,49 +529,32 @@ function getSymmetryInfo(opts::FermionSOptions)
 
     # If charge symmetry is present, add it 
     if opts.charge_symm !== nothing
-        push!(symms, opts.charge_symm)
-        push!(weights, charge_weights(opts, basic_ops))
-        push!(lowering_ops, charge_lowering(opts, basic_ops))
+        ws, ss, ls = charge_symmops(opts, basic_ops)
+        append!(symms, ss)
+        append!(weights, ws)
+        append!(lowering_ops, ls)
     end
 
     # If spin symmetry is present, add it
     if opts.spin_symm !== nothing
-        push!(symms, opts.spin_symm)
-        push!(weights, spin_weights(opts, basic_ops))
-        push!(lowering_ops, spin_lowering(opts, basic_ops))
+        ws, ss, ls = spin_symmops(opts, basic_ops)
+        append!(symms, ss)
+        append!(weights, ws)
+        append!(lowering_ops, ls)
     end
 
     # If channel symmetry is present, add it 
     if opts.channel_symm !== nothing
-        push!(symms, opts.channel_symm)
-        push!(weights, chan_weights(opts, basic_ops))
-        push!(lowering_ops, chan_lowering(opts, basic_ops))
+        ws, ss, ls = chan_symmops(opts, basic_ops)
+        append!(symms, ss)
+        append!(weights, ws)
+        append!(lowering_ops, ls)
     end
 
     totalN = diag(sum(basic_ops.NN[i] for i in 1:2*N))
-    mwirops = Dict{Symbol, Tuple{AbstractMatrix{Int}, Float64}}()
-    if opts.spin_symm == SU{2}
-        mwirops[:S] = (sum(basic_ops.SS[i]' for i in 1:N), -1/sqrt(2))
-    elseif opts.spin_symm == U1 || opts.spin_symm === nothing
-        mwirops[:Sp] = (sum(basic_ops.SS[i]' for i in 1:N), -1/sqrt(2))
-        mwirops[:Sz] = (sum(basic_ops.SZ[i] for i in 1:N), 1/2)
-        mwirops[:Sm] = (sum(basic_ops.SS[i] for i in 1:N), 1/sqrt(2))
-    else error("Unsupported spin symmetry") end
-    if opts.spin_symm == SU{2}
-        if opts.charge_symm == SU{2}
-            mwirops[:F] = (sum(basic_ops.FF[1, i]' for i in 1:N), 1.0)
-        elseif opts.charge_symm == U1 || opts.charge_symm === nothing
-            mwirops[:F] = (basic_ops.FF[2, N], 1.0)
-        else error("Not implemented yet") end
-    else
-        if opts.charge_symm == SU{2}
-            mwirops[:Fu] = (sum(basic_ops.FF[2, i]' for i in 1:N), 1.0)
-            mwirops[:Fd] = (sum(basic_ops.FF[1, i]' for i in 1:N), 1.0)
-        elseif opts.charge_symm == U1 || opts.charge_symm === nothing
-            mwirops[:Fu] = (basic_ops.FF[1, N], 1.0)
-            mwirops[:Fd] = (basic_ops.FF[2, N], 1.0)
-        else error("Not implemented yet") end
-    end
+    mwirops = Dict{Symbol, Tuple{AbstractMatrix, Float64}}()
+    add_spin_irop!(mwirops, opts, basic_ops)
+    add_annihilation_irop!(mwirops, opts, basic_ops)
     mwirops[:Z] = (diagm([i%2==0 ? 1 : -1 for i in totalN]), 1.0)
     mwirops[:I] = (sparse(I, 4^N, 4^N), 1.0)
 
