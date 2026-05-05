@@ -2,21 +2,21 @@
 # QT: the concrete qlabel type for one sector
 # PS: the product symmetry type
 struct leginfo{N, QT<:Tuple, PS<:ProductSymm}
-    ind::QIndex
+    ind::TLIndex
     splist::Vector{Tuple{QT, Int}}
 end
 
-function leginfo(symm::NTuple{N, Any}, ind::QIndex, splist::AbstractVector) where {N}
+function leginfo(symm::NTuple{N, Any}, ind::TLIndex, splist::AbstractVector) where {N}
     QT = qlabeltype(symm)
     PS = productsymm(symm)
     return leginfo{N, QT, PS}(ind, Vector{Tuple{QT, Int}}(splist))
 end
 
-leginfo{N}(symm::NTuple{N, Any}, ind::QIndex, splist::AbstractVector) where {N} =
+leginfo{N}(symm::NTuple{N, Any}, ind::TLIndex, splist::AbstractVector) where {N} =
     leginfo(symm, ind, splist)
 
-# Use precomputed spaces from QSpace
-function leginfo(q::QSpace{T, QD, N, RD, QT, PS}, i::Int) where {T, QD, N, RD, QT, PS}
+# Use precomputed spaces from TLArray
+function leginfo(q::TLArray{T, QD, N, RD, QT, PS}, i::Int) where {T, QD, N, RD, QT, PS}
     return leginfo{N, QT, PS}(q.inds[i], q.spaces[i])
 end
 
@@ -34,15 +34,15 @@ end
 Base.propertynames(::leginfo, private::Bool=false) =
     private ? (:symm, :ind, :splist) : (:symm, :ind, :splist)
 
-# Variadic entry point: accepts multiple (QSpace, Int) pairs as positional arguments
-# Keyword arguments control the fused output leg's QIndex properties
-function getIdentity(legs::Vararg{Tuple{QSpace, Int}};
+# Variadic entry point: accepts multiple (TLArray, Int) pairs as positional arguments
+# Keyword arguments control the fused output leg's TLIndex properties
+function getIdentity(legs::Vararg{Tuple{TLArray, Int}};
                      itag::AbstractString="", plev::Int=0, lock::Int=0)
     leginfos = Tuple(leginfo(q, i) for (q, i) in legs)
     return getIdentity(leginfos; itag=itag, plev=plev, lock=lock)
 end
 
-function _normalize_getIdentity_legs(q::QSpace{T, QD}, legs) where {T, QD}
+function _normalize_getIdentity_legs(q::TLArray{T, QD}, legs) where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
     isempty(positions) && throw(ArgumentError("getIdentity requires at least one leg"))
     all(1 <= leg <= QD for leg in positions) || throw(ArgumentError(
@@ -52,13 +52,13 @@ function _normalize_getIdentity_legs(q::QSpace{T, QD}, legs) where {T, QD}
     return Tuple(positions)
 end
 
-function getIdentity(q::QSpace{T, QD}, legs::LegList;
+function getIdentity(q::TLArray{T, QD}, legs::LegList;
                      itag::AbstractString="", plev::Int=0, lock::Int=0) where {T, QD}
     positions = _normalize_getIdentity_legs(q, legs)
     return getIdentity(((q, leg) for leg in positions)...; itag=itag, plev=plev, lock=lock)
 end
 
-function getIdentity(q::QSpace{T, QD}, leg::Integer, morelegs::Vararg{Integer};
+function getIdentity(q::TLArray{T, QD}, leg::Integer, morelegs::Vararg{Integer};
                      itag::AbstractString="", plev::Int=0, lock::Int=0) where {T, QD}
     return getIdentity(q, (Int(leg), (Int(l) for l in morelegs)...); itag=itag, plev=plev, lock=lock)
 end
@@ -146,7 +146,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
         end
     end
 
-    # Build rows of the internal fused QSpace.
+    # Build rows of the internal fused TLArray.
     # Before the final fixup for originally-incoming legs, the tensor has
     # D selected legs + 1 fused output leg, where selected incoming legs have
     # been dualized so every selected leg can be fused as incoming.
@@ -203,10 +203,10 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
         end
     end
 
-    # Assemble an internal QSpace whose selected legs are ready for fusion.
+    # Assemble an internal TLArray whose selected legs are ready for fusion.
     # For originally-incoming legs we expose the dualized leg with green=true so
     # we can contract a 1j tensor and recover a directly-contractable external leg.
-    fused_ind = QIndex(itag, '-', plev, lock)
+    fused_ind = TLIndex(itag, '-', plev, lock)
     inds = (ntuple(d -> begin
         idx = leginfos[d].ind.dir == '+' ? change_dual(leginfos[d].ind) : leginfos[d].ind
         to_incoming(idx)
@@ -223,7 +223,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     
     spaces = (ntuple(d -> leginfos_adj[d].splist, Val(D))..., fused_splist)
 
-    q = QSpace(PS, rows, inds, spaces)
+    q = TLArray(PS, rows, inds, spaces)
 
     # For an originally-incoming selected leg, attach a 1j tensor so the returned
     # leg is directly contractable with the original tensor leg.

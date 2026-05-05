@@ -13,18 +13,18 @@ function _rows_equal(rows1, rows2)
     end
 end
 
-function _row_sector(qs::QSpace, r, leg::Int)
+function _row_sector(qs::TLArray, r, leg::Int)
     return Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(qs)))
 end
 
-@testset "QSpace row subset selection" begin
-    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+@testset "TLArray row subset selection" begin
+    option = FermionSOptions(3, :U1, :SU2, :SU3)
     q = getLocalSpace(option, ("lur", "lur", "op")).I
     @test length(q.rows) >= 2
 
-    subset = QSpace(q, 2:length(q.rows))
+    subset = TLArray(q, 2:length(q.rows))
     subset_getsub = getsub(q, 2:length(q.rows))
-    subset_mask = QSpace(q, vcat(false, trues(length(q.rows) - 1)))
+    subset_mask = TLArray(q, vcat(false, trues(length(q.rows) - 1)))
     subset_index = q[2:end]
 
     @test symm(subset) == symm(q)
@@ -40,7 +40,7 @@ end
     @test any(qlabels == removed_sector for (qlabels, _) in subset.spaces[1])
     @test all(_row_sector(subset, r, 1) != removed_sector for r in subset.rows)
 
-    clone = QSpace(q, :)
+    clone = TLArray(q, :)
     original_entry = q.rows[1].RMT.data[1]
     clone.rows[1].RMT.data[1] += one(eltype(clone.rows[1].RMT.data))
     @test q.rows[1].RMT.data[1] == original_entry
@@ -49,11 +49,11 @@ end
     clone.spaces[1][1] = (original_space[1], original_space[2] + 1)
     @test q.spaces[1][1] == original_space
 
-    @test isempty(QSpace(q, Int[]).rows)
+    @test isempty(TLArray(q, Int[]).rows)
     @test isempty(q[BitVector(falses(length(q.rows)))].rows)
 
-    @test_throws BoundsError QSpace(q, 0)
-    @test_throws BoundsError QSpace(q, [length(q.rows) + 1])
-    @test_throws ArgumentError QSpace(q, [1, 1])
-    @test_throws DimensionMismatch QSpace(q, trues(length(q.rows) + 1))
+    @test_throws BoundsError TLArray(q, 0)
+    @test_throws BoundsError TLArray(q, [length(q.rows) + 1])
+    @test_throws ArgumentError TLArray(q, [1, 1])
+    @test_throws DimensionMismatch TLArray(q, trues(length(q.rows) + 1))
 end

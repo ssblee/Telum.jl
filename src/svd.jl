@@ -1,9 +1,9 @@
 # ─── svd ───────────────────────────────────────────────────────────────
 #
-# Perform symmetry-adapted SVD of a QSpace object.
+# Perform symmetry-adapted SVD of a TLArray object.
 #
 # Arguments:
-#   q          : QSpace to decompose (any rank QD, N symmetries)
+#   q          : TLArray to decompose (any rank QD, N symmetries)
 #   left_legs  : tuple/vector of leg indices forming the left (U) side
 #   left_tag   : itag for the new bond leg on the U/S side   (default "svdL")
 #   right_tag  : itag for the new bond leg on the S/Vd side  (default "svdR")
@@ -17,12 +17,12 @@
 #   Vd : legs (bond '-', original right legs...)
 #
 # Convention for bond legs:
-#   U  bond =  QIndex(left_tag,  '+')   — incoming (enters U from the right)
-#   S  left  = QIndex(left_tag,  '-')   — outgoing (leaves S to the left)
-#   S  right = QIndex(right_tag, '-')   — outgoing (leaves S to the right)
-#   Vd bond  = QIndex(right_tag, '-')   — outgoing (leaves Vd to the left)
+#   U  bond =  TLIndex(left_tag,  '+')   — incoming (enters U from the right)
+#   S  left  = TLIndex(left_tag,  '-')   — outgoing (leaves S to the left)
+#   S  right = TLIndex(right_tag, '-')   — outgoing (leaves S to the right)
+#   Vd bond  = TLIndex(right_tag, '-')   — outgoing (leaves Vd to the left)
 #
-# Legs of U and Vd that come from the original tensor inherit their QIndex
+# Legs of U and Vd that come from the original tensor inherit their TLIndex
 # properties (itags, lock, plev, green, direction).
 #
 # Algorithm:
@@ -34,12 +34,12 @@
 #      M.spaces are treated as explicit zero singular values.
 #   5. Build rank-2 U, S, Vd from kept singular values.
 #   6. Split fused legs of U and Vd by contracting with conjugate of aL/aR.
-#   7. Permute legs to desired order and restore original QIndex properties.
+#   7. Permute legs to desired order and restore original TLIndex properties.
 # ─────────────────────────────────────────────────────────────────────────────
 # ─────────────────────────────────────────────────────────────────────────────
 
 # TODO: Implement a version that get left_legs by predicates or various keyword arguments
-# TODO: Test svd with trunction for QSpace object (This is not rigorous yet)
+# TODO: Test svd with trunction for TLArray object (This is not rigorous yet)
 _svd_sector_qlabels(r, N::Int) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:N)
 
 _svd_dual_sector(symm, sector) = Tuple(get_dualq(symm[n], sector[n]) for n in 1:length(symm))
@@ -337,7 +337,7 @@ function _get_svd_intermediate_qrow_dict(blocks_by_symm::Tuple{Vararg{<:Abstract
     return qrows
 end
 
-function _get_svd_row_spaces(q::QSpace{T, QD, N, RD}, 
+function _get_svd_row_spaces(q::TLArray{T, QD, N, RD}, 
     left_legs,
     right_legs) where {T, QD, N, RD}
     row_spaces = [begin
@@ -418,7 +418,7 @@ function _get_svd_intermediate_qrow_equivclasses(
 end
 
 function _get_svd_intermediate_qrow_equivclasses(
-    q::QSpace{T, QD, N, RD},
+    q::TLArray{T, QD, N, RD},
     left_legs,
     qrows::Dict{NTuple{N, Tuple{Vararg{Int}}}, Vector{Int}},
 ) where {T, QD, N, RD}
@@ -450,7 +450,7 @@ function _get_svd_row_split_blocks(r::row{T, QD, N, RD},
     return symm_blocks
 end
 
-function _get_svd_cgt_split_rows(q::QSpace{T, QD, N, RD},
+function _get_svd_cgt_split_rows(q::TLArray{T, QD, N, RD},
                                  left_legs,
                                  right_legs;
                                  tol::Float64 = 1e-12) where {T, QD, N, RD}
@@ -465,7 +465,7 @@ function _get_svd_cgt_split_rows(q::QSpace{T, QD, N, RD},
     return blocks_by_symm
 end
 
-function _get_svd_cgt_split_rows(q::QSpace{T, QD, N, RD},
+function _get_svd_cgt_split_rows(q::TLArray{T, QD, N, RD},
                                  left_legs;
                                  tol::Float64 = 1e-12) where {T, QD, N, RD}
     left_legs_ = _normalize_svd_left_legs(left_legs, QD)
@@ -483,7 +483,7 @@ function _build_svd_block_lookup(blocks)
     return lookup
 end
 
-function _preprocess_svd_cgtsvd(q::QSpace{T, QD, N, RD},
+function _preprocess_svd_cgtsvd(q::TLArray{T, QD, N, RD},
                                 left_legs;
                                 tol::Float64 = 1e-12) where {T, QD, N, RD}
     left_legs_ = _normalize_svd_left_legs(left_legs, QD)
@@ -560,7 +560,7 @@ function _svd_ordered_unique_signatures(row_signatures, class_rows::Vector{Int})
     return ordered
 end
 
-function _svd_class_side_infos(q::QSpace{T, QD, N, RD},
+function _svd_class_side_infos(q::TLArray{T, QD, N, RD},
                                prep,
                                sector,
                                class_rows::Vector{Int},
@@ -628,7 +628,7 @@ function _svd_build_side_cgr(symm,
     return CGR(symm, qlabels, wmat, final_cgp, legdir)
 end
 
-function _build_svd_cgtsvd_class(q::QSpace{T, QD, N, RD},
+function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD},
                                  prep,
                                  sector,
                                  class_rows::Vector{Int},
@@ -661,7 +661,7 @@ function _build_svd_cgtsvd_class(q::QSpace{T, QD, N, RD},
         right_infos = right_infos,
         U = F.U .* scale,
         # `get1jtensor` contributes the remaining 1/sqrt(dimq) normalization
-        # when the center bridge is materialized as a rank-2 QSpace row.
+        # when the center bridge is materialized as a rank-2 TLArray row.
         S = F.S ./ scale,
         Vt = F.Vt .* scale,
     )
@@ -727,7 +727,7 @@ function _build_svd_cgtsvd_S(symm,
                              right_tag::AbstractString,
                              sector_values)
     N = length(symm)
-    base = get1jtensor(leginfo(symm, QIndex(left_tag, '-'), bond_splist))
+    base = get1jtensor(leginfo(symm, TLIndex(left_tag, '-'), bond_splist))
     rows_S = row{Float64, 2, N, 2 + N}[]
 
     for r in base.rows
@@ -738,12 +738,12 @@ function _build_svd_cgtsvd_S(symm,
         push!(rows_S, row(r.cgrs, rmt))
     end
 
-    inds_S = (QIndex(left_tag, '+'), QIndex(right_tag, '+'))
+    inds_S = (TLIndex(left_tag, '+'), TLIndex(right_tag, '+'))
     spaces_S = (bond_splist, base.spaces[2])
-    return QSpace(symm, rows_S, inds_S, spaces_S)
+    return TLArray(symm, rows_S, inds_S, spaces_S)
 end
 
-function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
+function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
                               left_legs::NTuple{NL, Int},
                               right_legs::NTuple{NR, Int},
                               left_tag::AbstractString,
@@ -837,22 +837,22 @@ function _assemble_svd_cgtsvd(q::QSpace{T, QD, N, RD},
     ]
     sort!(dual_bond_splist; by = first, alg=MergeSort)
 
-    inds_U = (ntuple(i -> q.inds[left_legs[i]], NL)..., QIndex(left_tag, '-'))
-    inds_Vd = (QIndex(right_tag, '-'), ntuple(i -> q.inds[right_legs[i]], NR)...)
+    inds_U = (ntuple(i -> q.inds[left_legs[i]], NL)..., TLIndex(left_tag, '-'))
+    inds_Vd = (TLIndex(right_tag, '-'), ntuple(i -> q.inds[right_legs[i]], NR)...)
 
     spaces_U = (ntuple(i -> q.spaces[left_legs[i]], NL)..., bond_splist)
     spaces_Vd = (dual_bond_splist, ntuple(i -> q.spaces[right_legs[i]], NR)...)
 
-    U = QSpace(symm(q), rows_U, inds_U, spaces_U)
+    U = TLArray(symm(q), rows_U, inds_U, spaces_U)
     S = _build_svd_cgtsvd_S(symm(q), bond_splist, left_tag, right_tag, sector_values)
-    Vd = QSpace(symm(q), rows_Vd, inds_Vd, spaces_Vd)
+    Vd = TLArray(symm(q), rows_Vd, inds_Vd, spaces_Vd)
     return U, S, Vd
 end
 
 """
     LinearAlgebra.svd(q, left_legs, left_tag="svdL", right_tag="svdR"; cutoff=1e-12, Nkeep=nothing)
 
-CGTSVD-based SVD of a `QSpace`, returning `(U, S, Vd)`.
+CGTSVD-based SVD of a `TLArray`, returning `(U, S, Vd)`.
 
 Unlike `svd`, this path uses the direct split-space class SVD assembly and
 returns the bond convention requested for CGTSVD:
@@ -861,7 +861,7 @@ returns the bond convention requested for CGTSVD:
 - `S` legs: incoming `'+'`, incoming `'+'`
 - `Vd` bond leg: outgoing `'-'`
 """
-function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
+function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
                     left_legs,
                     left_tag::AbstractString = "svdL",
                     right_tag::AbstractString = "svdR";
@@ -874,9 +874,9 @@ function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
         cutoff=cutoff, Nkeep=Nkeep)
 end
 
-svd_cgtsvd(q::QSpace, args...; kwargs...) = svd(q, args...; kwargs...)
+svd_cgtsvd(q::TLArray, args...; kwargs...) = svd(q, args...; kwargs...)
 
-function LinearAlgebra.svd(q::QSpace{T, QD, N, RD},
+function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
                     left_tag::AbstractString = "svdL",
                     right_tag::AbstractString = "svdR";
                     dir=nothing,
@@ -899,7 +899,7 @@ function _normalize_svd_left_legs(left_legs, rank::Int)
     return collect(sort(legs))
 end
 
-function _select_svd_left_legs(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+function _select_svd_left_legs(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
                                lock=nothing, rev::Bool=false)
     if isnothing(dir) && isnothing(itag) && isnothing(plev) && isnothing(lock)
         throw(ArgumentError("keyword-based svd requires at least one of dir, itag, plev, or lock"))
@@ -911,7 +911,7 @@ function _select_svd_left_legs(q::QSpace; dir=nothing, itag=nothing, plev=nothin
     return sort(legs)
 end
 
-function svd_old(q::QSpace{T, QD, N, RD},
+function svd_old(q::TLArray{T, QD, N, RD},
                            left_legs,
                            left_tag ::AbstractString = "svdL",
                            right_tag::AbstractString = "svdR";
@@ -927,8 +927,8 @@ function svd_old(q::QSpace{T, QD, N, RD},
 
     # ── Step 1: stamp unique internal tags on every leg (lock=1) ─────────────
     internal_tags = ntuple(l -> "__svd_leg_$(l)__", QD)
-    q_work = QSpace(symmetries, q.rows,
-        ntuple(l -> QIndex(internal_tags[l], q.inds[l].dir,
+    q_work = TLArray(symmetries, q.rows,
+        ntuple(l -> TLIndex(internal_tags[l], q.inds[l].dir,
                            q.inds[l].plev, 1, q.inds[l].dual), QD),
         q.spaces)  # reuse existing spaces since rows unchanged
 
@@ -1036,7 +1036,7 @@ function svd_old(q::QSpace{T, QD, N, RD},
         end
     end
 
-    # ── Step 5: build rank-2 U, S, Vd QSpaces ─────────────────────────────────
+    # ── Step 5: build rank-2 U, S, Vd Telum ─────────────────────────────────
     # For each kept sector (RMT shape is (sL, sR, 1,...,1)):
     #   U  RMT: (sL, chi, 1,...,1)     legs: (left_tag '-', left_tag '+')
     #   S  RMT: (chi, chi, 1,...,1)    legs: (left_tag '-', right_tag '-')
@@ -1135,31 +1135,31 @@ function svd_old(q::QSpace{T, QD, N, RD},
     ]
     sort!(dual_bond_splist; by = x -> x[1])
 
-    inds_U  = (QIndex(left_tag,  '-'), QIndex(left_tag,  '+'))
-    inds_S  = (QIndex(left_tag,  '-'), QIndex(right_tag, '-'))
-    inds_Vd = (QIndex(right_tag, '-'), QIndex(right_tag, '+'))
+    inds_U  = (TLIndex(left_tag,  '-'), TLIndex(left_tag,  '+'))
+    inds_S  = (TLIndex(left_tag,  '-'), TLIndex(right_tag, '-'))
+    inds_Vd = (TLIndex(right_tag, '-'), TLIndex(right_tag, '+'))
     
     spaces_U  = (M.spaces[1], bond_splist)
     spaces_S  = (bond_splist, dual_bond_splist)
     spaces_Vd = (M.spaces[2], dual_bond_splist)
 
-    U_rank2  = QSpace(symmetries, rows_U,  inds_U,  spaces_U)
-    S        = QSpace(symmetries, rows_S,  inds_S,  spaces_S)
-    Vd_rank2 = QSpace(symmetries, rows_Vd, inds_Vd, spaces_Vd)
+    U_rank2  = TLArray(symmetries, rows_U,  inds_U,  spaces_U)
+    S        = TLArray(symmetries, rows_S,  inds_S,  spaces_S)
+    Vd_rank2 = TLArray(symmetries, rows_Vd, inds_Vd, spaces_Vd)
 
     # ── Step 6: split fused legs of U and Vd ──────────────────────────────────
     # Contract U_rank2's fused left leg (leg 1) with aL's fused output leg (leg NL+1)
     # to recover the NL original left legs.
     # Contract Vd_rank2's fused right leg (leg 2) with aR's fused output leg (leg NR+1)
     # to recover the NR original right legs.
-    # (QIndex direction matching is not enforced by contract; legs are given explicitly.)
+    # (TLIndex direction matching is not enforced by contract; legs are given explicitly.)
     U_split  = contract(U_rank2,  (1,),     aL', (NL + 1,); reduce_lock=false)
     Vd_split = contract(Vd_rank2, (1,),     aR', (NR + 1,); reduce_lock=false)
     # After splitting:
     #   U_split  legs: [bond (left_tag '+'), aL split legs 1..NL]
     #   Vd_split legs: [Vd bond (right_tag '-'), aR split legs 1..NR]
 
-    # ── Step 7: permute legs to desired order and restore original QIndex properties ──
+    # ── Step 7: permute legs to desired order and restore original TLIndex properties ──
     # Desired order:
     #   U  : (left_legs[1], ..., left_legs[NL], bond)
     #   Vd : (bond, right_legs[1], ..., right_legs[NR])
@@ -1184,35 +1184,35 @@ function svd_old(q::QSpace{T, QD, N, RD},
     U_final  = permutedims(U_split, Tuple(u_perm))
     Vd_final = permutedims(Vd_split, Tuple(vd_perm))
     
-    # Restore original QIndex properties (itags, lock, plev, green, dir) for non-bond legs
+    # Restore original TLIndex properties (itags, lock, plev, green, dir) for non-bond legs
     # U legs 1:NL inherit from original left_legs, leg NL+1 is the bond
     u_inds_final = ntuple(NL + 1) do i
         if i <= NL
             orig = left_legs[i]
             q.inds[orig]  # inherit all properties from original
         else
-            QIndex(left_tag, '+')  # bond leg: incoming into U
+            TLIndex(left_tag, '+')  # bond leg: incoming into U
         end
     end
     
     # Vd leg 1 is the bond, legs 2:NR+1 inherit from original right_legs
     vd_inds_final = ntuple(NR + 1) do i
         if i == 1
-            QIndex(right_tag, '+')  # bond leg: outgoing from Vd
+            TLIndex(right_tag, '+')  # bond leg: outgoing from Vd
         else
             orig = right_legs[i - 1]
             q.inds[orig]  # inherit all properties from original
         end
     end
     
-    # Reconstruct QSpaces with final indices (spaces already permuted correctly)
-    U  = QSpace(symmetries, U_final.rows,  u_inds_final,  U_final.spaces)
-    Vd = QSpace(symmetries, Vd_final.rows, vd_inds_final, Vd_final.spaces)
+    # Reconstruct Telum with final indices (spaces already permuted correctly)
+    U  = TLArray(symmetries, U_final.rows,  u_inds_final,  U_final.spaces)
+    Vd = TLArray(symmetries, Vd_final.rows, vd_inds_final, Vd_final.spaces)
     
     return U, S, Vd
 end
 
-function svd_old(q::QSpace{T, QD, N, RD},
+function svd_old(q::TLArray{T, QD, N, RD},
                            left_tag::AbstractString="svdL",
                            right_tag::AbstractString="svdR";
                            dir=nothing,

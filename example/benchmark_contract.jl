@@ -1,16 +1,16 @@
 using Revise
 using LurCGT
-using QSpaces
+using Telum
 using LinearAlgebra
 
 include("DMRG_central.jl")
 
 function benchmark_smallRMT()
-    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    option = FermionSOptions(3, :U1, :SU2, :SU3)
     q = getLocalSpace(option);
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
-    qf = QSpace(q.F, ("lur2", "lur2", "op"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
+    qf = TLArray(q.F123, ("lur2", "lur2", "op"))
     a = getIdentity((qi1, 2), (qi2, 2));
     return qf, a
 end

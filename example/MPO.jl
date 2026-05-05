@@ -1,15 +1,15 @@
-function build_MPO(qss::Matrix{<:QSpace}, N::Int)
+function build_MPO(qss::Matrix{<:TLArray}, N::Int)
     println("Building MPO...")
     t = oplus(qss, (3, 4))
     zq = zero_qlabels(t)
-    MPO = Vector{QSpace{Float64, 4}}(undef, N)
+    MPO = Vector{TLArray{Float64, 4}}(undef, N)
     for i in 1:N
         tags = ("S,$i", "S,$i", i>1 ? "OB,$(i-1)" : "OLeft", 
         i<N ? "OB,$i" : "ORight")
 
-        if i == 1 MPO[i] = QSpace(getsub(t, 3, x->x==zq ? -1 : nothing), tags)
-        elseif i == N MPO[i] = QSpace(getsub(t, 4, x->x==zq ? 1 : nothing), tags)
-        else MPO[i] = QSpace(t, tags) end
+        if i == 1 MPO[i] = TLArray(getsub(t, 3, x->x==zq ? -1 : nothing), tags)
+        elseif i == N MPO[i] = TLArray(getsub(t, 4, x->x==zq ? 1 : nothing), tags)
+        else MPO[i] = TLArray(t, tags) end
     end
     return MPO
 end
@@ -18,14 +18,14 @@ function MajumdarGhoshMPO(J, N)
     option = SpinOptions(SU{2}, 1//2)
     q = getLocalSpace(option, ("site", "site", "op"))
 
-    qss = Matrix{QSpace{Float64, 4, 1, 5}}(undef, 4, 4)
+    qss = Matrix{TLArray{Float64, 4, 1, 5}}(undef, 4, 4)
 
     i4d = addSingleton(q.I, (3, 4); itag=("left", "right"), dir=('+', '-'))
     s4d = addSingleton(q.S, 3; itag="left", dir='+')
     s4d = setitag(s4d, 4, "right")
     sc4d = addSingleton(q.S', 4; itag="right", dir='-')
     sc4d = permutedims(setitag(sc4d, 3, "left"), (2, 1, 3, 4))
-    opid = QSpace(getIdentity((q.S, 3)), ("left", "right"))
+    opid = TLArray(getIdentity((q.S, 3)), ("left", "right"))
 
     qss[1, 1] = qss[4, 4] = i4d
     qss[2, 1] = sc4d
@@ -41,7 +41,7 @@ function HubbardMPO(U, μ, t, N)
     q = getLocalSpace(opt, ("site", "site", "op"))
     nloc = lock(q.F1', 2) * q.F1
 
-    qss = Matrix{QSpace{Float64, 4, 2, 6}}(undef, 4, 4)
+    qss = Matrix{TLArray{Float64, 4, 2, 6}}(undef, 4, 4)
     i4d = addSingleton(q.I, (3, 4); itag=("left", "right"), dir=('+', '-'))
     ZF_flip = setitag(legflip(lock(q.Z, 1) * q.F1, 3), 3, "left")
     FcZ = permutedims(q.F1' * lock(q.Z, 2), (1, 3, 2))
@@ -78,7 +78,7 @@ function XYMPO(J, N)
     spc4d = addSingleton(q.Sp', 4; itag="right", dir='-')
     spc4d = permutedims(setitag(spc4d, 3, "left"), (2, 1, 3, 4))
 
-    qss = Matrix{QSpace{Float64, 4, 1, 5}}(undef, 4, 4)
+    qss = Matrix{TLArray{Float64, 4, 1, 5}}(undef, 4, 4)
 
     qss[1, 1] = qss[4, 4] = i4d
     qss[2, 1] = spc4d
@@ -105,7 +105,7 @@ function XXZMPO(δ, h, N)
     spc4d = addSingleton(q.Sp', 4; itag="right", dir='-')
     spc4d = permutedims(setitag(spc4d, 3, "left"), (2, 1, 3, 4))
 
-    qss = Matrix{QSpace{Float64, 4, 1, 5}}(undef, 5, 5)
+    qss = Matrix{TLArray{Float64, 4, 1, 5}}(undef, 5, 5)
 
     qss[1, 1] = qss[5, 5] = i4d
     qss[2, 1] = spc4d

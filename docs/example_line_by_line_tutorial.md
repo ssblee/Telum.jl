@@ -1,7 +1,7 @@
-# QSpaces Functions Used in `example/`
+# Telum Functions Used in `example/`
 
-This document is a shorter, editable tutorial for the QSpaces examples.  
-Instead of explaining every single line, it explains the main QSpace functions and tensor operations that appear in:
+This document is a shorter, editable tutorial for the Telum examples.  
+Instead of explaining every single line, it explains the main TLArray functions and tensor operations that appear in:
 
 1. `example/MPO.jl`
 2. `example/DMRG_GS.jl`
@@ -13,7 +13,7 @@ Instead of explaining every single line, it explains the main QSpace functions a
 The examples mostly follow the same pattern:
 
 1. Build a local symmetry-adapted space.
-2. Create local operators as `QSpace` tensors.
+2. Create local operators as `TLArray` tensors.
 3. Add or rename legs so those tensors can be contracted into MPOs or MPSs.
 4. Use tensor contractions, decompositions, and truncation helpers to run DMRG or NRG.
 
@@ -21,9 +21,9 @@ Before the function list, here are the three most important ideas.
 
 ## Core Ideas
 
-### 1. `QSpace`
+### 1. `TLArray`
 
-`QSpace` is the symmetry-aware tensor type used everywhere in the examples.  
+`TLArray` is the symmetry-aware tensor type used everywhere in the examples.  
 It stores:
 
 - tensor blocks
@@ -33,14 +33,14 @@ It stores:
 
 You will often see:
 
-- `QSpace(...)` to retag or rebuild a tensor
+- `TLArray(...)` to retag or rebuild a tensor
 - `A * B` for tensor contraction
 - `A'` for conjugation / dagger
 - `A ⊗ B` for tensor-product construction
 
 ### 2. Legs and `itag`
 
-A QSpace tensor is understood through its legs.  
+A TLArray tensor is understood through its legs.  
 The examples identify legs by string tags such as:
 
 - `"site"`
@@ -125,14 +125,14 @@ q0 = getLocalSpace(option, ("s,0", "s,0", "op"))
 
 What it returns:
 
-- a container of local QSpace operators such as `I`, `S`, `Sp`, `Sm`, `Sz`, `F`, `Z`
+- a container of local TLArray operators such as `I`, `S`, `Sp`, `Sm`, `Sz`, `F`, `Z`
 
 Typical fields used in the examples:
 
 - `q.I`: identity
 - `q.S`: spin operator multiplet
 - `q.Sp`, `q.Sm`, `q.Sz`: spin components in `U1` examples
-- `q.F`: fermion operator
+- `q.F1`: fermion operator
 - `q.Z`: fermion parity operator
 
 ## Boundary and Sector Helpers
@@ -155,7 +155,7 @@ zq = zero_qlabels(MPO[1])
 Why it matters:
 
 - MPO boundaries are usually selected in the neutral sector
-- the initialization code also uses it to extract a physical matrix from a QSpace tensor
+- the initialization code also uses it to extract a physical matrix from a TLArray tensor
 
 ### `getvac(...)`
 
@@ -182,7 +182,7 @@ Used in `example/MPO.jl` and `example/DMRG_central.jl`.
 
 Purpose:
 
-- extracts a selected symmetry block or subspace from a QSpace tensor
+- extracts a selected symmetry block or subspace from a TLArray tensor
 
 Examples:
 
@@ -212,7 +212,7 @@ Hmat = deleteSingleton(getsub(Hnow, bli, [(zq, 1)]), bli)
 
 Typical role:
 
-- turn a QSpace object with a dummy boundary leg into an ordinary matrix-like object
+- turn a TLArray object with a dummy boundary leg into an ordinary matrix-like object
 
 ## Leg and Tag Manipulation
 
@@ -307,7 +307,7 @@ Purpose:
 Examples:
 
 ```julia
-opid = QSpace(getIdentity((q.S, 3)), ("left", "right"))
+opid = TLArray(getIdentity((q.S, 3)), ("left", "right"))
 Anow = getIdentity((Aprev, li), (MPO[i], 2); itag="SL,$i")
 left_id = getIdentity((MPS[1]', li); itag="SLeft")
 ```
@@ -324,7 +324,7 @@ Used in `example/MPO.jl`.
 
 Purpose:
 
-- forms a direct sum of QSpace objects along selected legs
+- forms a direct sum of TLArray objects along selected legs
 
 Example:
 
@@ -347,8 +347,8 @@ Purpose:
 Examples:
 
 ```julia
-ZF_flip = setitag(legflip(lock(q.Z, 1) * q.F, 3), 3, "left")
-fc_flip = addSingleton(legflip(q.F', 3), 3; itag="left", dir='+')
+ZF_flip = setitag(legflip(lock(q.Z, 1) * q.F1, 3), 3, "left")
+fc_flip = addSingleton(legflip(q.F1', 3), 3; itag="left", dir='+')
 ```
 
 Typical role:
@@ -389,7 +389,7 @@ Examples:
 ```julia
 Hnow = Anow' * lock(Anow * Hprev * MPO[i]; itag="SL,$i")
 Hlr[i+1] = MPS[i]' * lock(Hlr[i] * MPO[i] * MPS[i]; itag="SB,$i")
-n0 = lock(q0.F', 2) * q0.F
+n0 = lock(q0.F1', 2) * q0.F1
 ```
 
 Why it appears so often:
@@ -397,13 +397,13 @@ Why it appears so often:
 - long contractions can leave temporary leg metadata that should be fixed before the next operation
 - many examples use `lock` just before an adjoint or before reusing an intermediate tensor
 
-### `*` on `QSpace`
+### `*` on `TLArray`
 
 Used in every example.
 
 Purpose:
 
-- contracts compatible legs between QSpace tensors
+- contracts compatible legs between TLArray tensors
 
 Examples:
 
@@ -418,7 +418,7 @@ Interpretation:
 - this is tensor contraction, not plain scalar multiplication
 - scalar prefactors such as `J * s4d` or `-t * f4d` are also supported
 
-### `'` on `QSpace`
+### `'` on `TLArray`
 
 Used in all algorithmic examples.
 
@@ -431,7 +431,7 @@ Examples:
 ```julia
 Anew'
 MPS[i]'
-q.F'
+q.F1'
 ```
 
 Typical role:
@@ -446,7 +446,7 @@ Used in `example/MPO.jl`.
 
 Purpose:
 
-- takes the tensor product of two QSpace objects
+- takes the tensor product of two TLArray objects
 
 Example:
 
@@ -487,7 +487,7 @@ Used in `example/DMRG_central.jl`, `example/DMRG_GS.jl`, and `example/NRG.jl`.
 
 Purpose:
 
-- diagonalizes a matrix-like QSpace object or dense projected matrix
+- diagonalizes a matrix-like TLArray object or dense projected matrix
 
 Examples:
 
@@ -529,11 +529,11 @@ Outputs commonly used:
 - `ek.D`: kept-space effective Hamiltonian
 - `ek.eig_list`: metadata for eigenvalues and symmetry sectors
 
-## QSpace Patterns in Each Example
+## TLArray Patterns in Each Example
 
 ## `example/MPO.jl`
 
-Main QSpace functions:
+Main TLArray functions:
 
 - `getLocalSpace`
 - `addSingleton`
@@ -544,7 +544,7 @@ Main QSpace functions:
 - `oplus`
 - `zero_qlabels`
 - `getsub`
-- `QSpace`
+- `TLArray`
 
 Main idea:
 
@@ -552,7 +552,7 @@ Main idea:
 
 ## `example/DMRG_central.jl`
 
-Main QSpace functions:
+Main TLArray functions:
 
 - `zero_qlabels`
 - `getvac`
@@ -571,7 +571,7 @@ Main idea:
 
 ## `example/DMRG_GS.jl`
 
-Main QSpace functions:
+Main TLArray functions:
 
 - `findleg`
 - `getIdentity`
@@ -586,7 +586,7 @@ Main idea:
 
 ## `example/NRG.jl`
 
-Main QSpace functions:
+Main TLArray functions:
 
 - `getLocalSpace`
 - `getvac`
@@ -595,7 +595,7 @@ Main QSpace functions:
 - `lock`
 - `findleg`
 - `discard_eigen`
-- `QSpace`
+- `TLArray`
 
 Main idea:
 
@@ -605,7 +605,7 @@ Main idea:
 
 If you want to understand the examples quickly, this order works well:
 
-1. Read `getLocalSpace`, `QSpace`, `addSingleton`, `setitag`, and `permutedims`.
+1. Read `getLocalSpace`, `TLArray`, `addSingleton`, `setitag`, and `permutedims`.
 2. Then read `getIdentity`, `findleg`, `lock`, and `*`.
 3. Then read `svd`, `eigen`, and `discard_eigen`.
 4. After that, the example files become much easier to follow.
@@ -614,9 +614,9 @@ If you want to understand the examples quickly, this order works well:
 
 If you only remember one sentence for each group:
 
-- construction: `getLocalSpace`, `QSpace`, `addSingleton`, `setitag`, `permutedims`
+- construction: `getLocalSpace`, `TLArray`, `addSingleton`, `setitag`, `permutedims`
 - navigation: `findleg`, `getsub`, `deleteSingleton`, `zero_qlabels`
 - contraction: `*`, `'`, `⊗`, `lock`
 - truncation: `svd`, `eigen`, `discard_eigen`
 
-That is most of the QSpaces vocabulary used by the examples.
+That is most of the Telum vocabulary used by the examples.

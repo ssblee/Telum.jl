@@ -3,8 +3,8 @@ using Random
 using SparseArrays
 using Test
 using LurCGT
-using QSpaces
-import QSpaces: _compute_spaces
+using Telum
+import Telum: _compute_spaces
 
 include("test_utils.jl")
 
@@ -184,9 +184,9 @@ function _dense_matrix_entry(mat, i::Int, j::Int)
     return (val === nothing || val === missing) ? nothing : val
 end
 
-function _zero_qspace_ref_like(ref::QSpace{TQ, QD, N, RD}, spaces; T::Type=Float64) where {TQ, QD, N, RD}
+function _zero_qspace_ref_like(ref::TLArray{TQ, QD, N, RD}, spaces; T::Type=Float64) where {TQ, QD, N, RD}
     rows = Vector{row{T, QD, N, RD}}()
-    return QSpace(symm(ref), rows, ref.inds, spaces)
+    return TLArray(symm(ref), rows, ref.inds, spaces)
 end
 
 function _matrix_axis_start_maps(sources, dims, QD::Int, symm::Tuple)
@@ -210,12 +210,12 @@ function _matrix_axis_start_maps(sources, dims, QD::Int, symm::Tuple)
 end
 
 function _dense_matrix_oplus_ref(mat, dimensions)
-    defined = QSpace[]
+    defined = TLArray[]
     for j in axes(mat, 2), i in axes(mat, 1)
         q = _dense_matrix_entry(mat, i, j)
         q === nothing || push!(defined, q)
     end
-    isempty(defined) && error("matrix reference requires at least one defined QSpace")
+    isempty(defined) && error("matrix reference requires at least one defined TLArray")
 
     ref = first(defined)
     row_dims, col_dims = _normalize_matrix_dim_tuple(dimensions, length(ref.inds))

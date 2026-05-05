@@ -1,7 +1,7 @@
 function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov)
     # solve the effective Hamiltonian eigenvalue problem by Lanczos method
     # return the ground state and energy
-    As = Vector{QSpace}(undef, nKrylov)
+    As = Vector{TLArray}(undef, nKrylov)
     As[1] = M / norm(M)
     αs = zeros(nKrylov); βs = zeros(nKrylov-1)
     cnt = 0
@@ -34,7 +34,7 @@ end
 
 function getHrl(MPO, MPS)
     N = length(MPS)
-    Hrl = Vector{QSpace}(undef, N + 2)
+    Hrl = Vector{TLArray}(undef, N + 2)
 
     li = findleg(MPS[1]; itag="SLeft")
     left_id = getIdentity((MPS[1]', li); itag="SLeft")
@@ -48,8 +48,8 @@ function getHrl(MPO, MPS)
     return Hrl
 end
 
-function DMRG_GS_1site!(MPS::Vector{<:QSpace{T1, 3}},
-    MPO::Vector{<:QSpace{T2, 4}}, 
+function DMRG_GS_1site!(MPS::Vector{<:TLArray{T1, 3}},
+    MPO::Vector{<:TLArray{T2, 4}}, 
     Nkeep::Int, 
     Nsweep::Int) where {T1, T2}
 
@@ -91,8 +91,8 @@ function DMRG_GS_1site!(MPS::Vector{<:QSpace{T1, 3}},
     return MPS, E
 end
 
-function DMRG_GS_2site!(MPS::Vector{<:QSpace{T1, 3}},
-    MPO::Vector{<:QSpace{T2, 4}}, 
+function DMRG_GS_2site!(MPS::Vector{<:TLArray{T1, 3}},
+    MPO::Vector{<:TLArray{T2, 4}}, 
     Nkeep::Int, 
     Nsweep::Int) where {T1, T2}
 

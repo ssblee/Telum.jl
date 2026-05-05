@@ -1,5 +1,5 @@
 using LurCGT
-using QSpaces
+using Telum
 using Plots
 using LinearAlgebra
 
@@ -234,9 +234,9 @@ function NRG_test()
 
     ff, gg = doCLD([-1, 1], [1, 1].*(Γ/pi), λ, N)
 
-    option = FermionSOptions(U1, SU{2}, nothing, 1)
+    option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option, ("s,0", "s,0", "op"))
-    n0 = lock(q0.F', 2) * q0.F
+    n0 = lock(q0.F1', 2) * q0.F1
 
     H0 = U/2*lock(n0, 1) * (n0 - q0.I) + epsd * n0 
     v = getvac(q0.I, ("K,vac", "K,vac"))
@@ -244,17 +244,17 @@ function NRG_test()
 
     H0 = A0' * lock(A0 * H0, 2)
 
-    return NRG_IterDiag(H0, A0, λ, ff, q0.F, gg, n0, q0.Z, Nkeep)
+    return NRG_IterDiag(H0, A0, λ, ff, q0.F1, gg, n0, q0.Z, Nkeep)
 end
 
-function NRG_IterDiag(H0::QSpace{T, 2, N}, 
-    A0::QSpace{T, 3, N}, 
+function NRG_IterDiag(H0::TLArray{T, 2, N}, 
+    A0::TLArray{T, 3, N}, 
     λ::Float64, 
     ff::Vector{Float64}, 
-    q0F::QSpace{T, 3, N}, 
+    q0F::TLArray{T, 3, N}, 
     gg::Vector{Float64}, 
-    n0::QSpace{T, 2, N}, 
-    q0Z::QSpace{T, 2, N}, 
+    n0::TLArray{T, 2, N}, 
+    q0Z::TLArray{T, 2, N}, 
     Nkeep::Int) where {T, N}
     # Placeholder for the actual NRG iteration and diagonalization routine.
     # This function would perform the iterative diagonalization of the Wilson
@@ -266,8 +266,8 @@ function NRG_IterDiag(H0::QSpace{T, 2, N},
 
     Nsite = length(ff) + 1
     EScale = [1, (λ.^(((Nsite-2):-1:0)./2).*ff[end])...]
-    AK = Vector{QSpace{T, 3, N}}(undef, Nsite)
-    AD = Vector{QSpace{T, 3, N}}(undef, Nsite)
+    AK = Vector{TLArray{T, 3, N}}(undef, Nsite)
+    AD = Vector{TLArray{T, 3, N}}(undef, Nsite)
     EK = []
     ED = []
     E0 = Vector{Float64}(undef, Nsite)
@@ -277,9 +277,9 @@ function NRG_IterDiag(H0::QSpace{T, 2, N},
     Fprev = q0F
     for itN=1:Nsite
         si = itN - 1
-        Z = QSpace(q0Z, ("s,$si", "s,$si"))
-        n0 = QSpace(n0, ("s,$si", "s,$si"))
-        F = QSpace(q0F, ("s,$si", "s,$si", "op"))
+        Z = TLArray(q0Z, ("s,$si", "s,$si"))
+        n0 = TLArray(n0, ("s,$si", "s,$si"))
+        F = TLArray(q0F, ("s,$si", "s,$si", "op"))
         if itN == 1
             AK[itN] = A0
             # Do not update AD since there is no discarded states

@@ -1,7 +1,7 @@
-get1jtensor(q::QSpace{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
+get1jtensor(q::TLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
 get1jtensor(leginfo(q, leg))
 
-function _resolve_unique_leg(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+function _resolve_unique_leg(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
                              lock=nothing, rev::Bool=false,
                              opname::AbstractString="operation")
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
@@ -10,7 +10,7 @@ function _resolve_unique_leg(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
     throw(ArgumentError("$opname requires a uniquely specified leg, but matched legs $legs"))
 end
 
-function _resolve_matching_legs(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+function _resolve_matching_legs(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
                                 lock=nothing, rev::Bool=false,
                                 opname::AbstractString="operation")
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
@@ -18,7 +18,7 @@ function _resolve_matching_legs(q::QSpace; dir=nothing, itag=nothing, plev=nothi
     return legs
 end
 
-function _normalize_legflip_legs(q::QSpace{T, QD}, legs) where {T, QD}
+function _normalize_legflip_legs(q::TLArray{T, QD}, legs) where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
     isempty(positions) && throw(ArgumentError("legflip requires at least one leg"))
 
@@ -31,7 +31,7 @@ function _normalize_legflip_legs(q::QSpace{T, QD}, legs) where {T, QD}
     return positions
 end
 
-function get1jtensor(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+function get1jtensor(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
                      lock=nothing, rev::Bool=false)
     leg = _resolve_unique_leg(q; dir=dir, itag=itag, plev=plev, lock=lock,
                               rev=rev, opname="get1jtensor")
@@ -69,11 +69,11 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
                            for (qlabels, RMTd) in info.splist], by=x->x[1])
     spaces1 = (info.splist, dual_splist)
 
-    q1 = QSpace(symm, rows1, inds1, spaces1)
+    q1 = TLArray(symm, rows1, inds1, spaces1)
     return q1
 end
 
-function legflip(q::QSpace{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
+function legflip(q::TLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
     1 <= leg <= QD || throw(BoundsError(q, leg))
     j = get1jtensor(q, leg)
     q_flip = contract(q, (leg,), j, (1,); reduce_lock=false)
@@ -81,7 +81,7 @@ function legflip(q::QSpace{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
     return permutedims(q_flip, perm)
 end
 
-function legflip(q::QSpace{T, QD, N, RD}, legs::LegList) where {T, QD, N, RD}
+function legflip(q::TLArray{T, QD, N, RD}, legs::LegList) where {T, QD, N, RD}
     positions = _normalize_legflip_legs(q, legs)
     q_flip = q
     for leg in positions
@@ -90,7 +90,7 @@ function legflip(q::QSpace{T, QD, N, RD}, legs::LegList) where {T, QD, N, RD}
     return q_flip
 end
 
-function legflip(q::QSpace; dir=nothing, itag=nothing, plev=nothing,
+function legflip(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
                  lock=nothing, rev::Bool=false)
     legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
                                   rev=rev, opname="legflip")

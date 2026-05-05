@@ -2,7 +2,7 @@
 #
 # Each concrete option struct encodes the valid configuration for one class
 # of physical local space.  The three classes mirror the three branches in
-# the original QSpace Matlab code:
+# the original TLArray Matlab code:
 #
 #   SpinOptions        – pure spin models (no charge degree of freedom)
 #   FermionOptions     – spinless (single-component) fermions

@@ -4,7 +4,7 @@ include("LurTensor.jl")
 include("utils.jl")
 include("localspaces/localspaces.jl")
 
-# A compile-time tag for a direct product of symmetry groups. QSpaces records
+# A compile-time tag for a direct product of symmetry groups. Telum records
 # symmetry identities in type parameters; use `symm(q)` to retrieve them
 # without going through dynamic property access.
 abstract type ProductSymm{Syms<:Tuple{Vararg{Symmetry}}} <: Symmetry end
@@ -115,7 +115,7 @@ function _remove_itag(base::AbstractString,
     return Itag(join(filter(tag -> tag ∉ rm, base_tags), ','))
 end
 
-struct QIndex
+struct TLIndex
     # Tags associated with the leg, similar to ITensor
     itags::Itag
     # Direction of the leg, '+' for incoming, '-' for outgoing
@@ -128,24 +128,24 @@ struct QIndex
     # If true, this leg represents the dual space.
     dual::Bool
 
-    QIndex(itags::AbstractString, dir::Char, plev::Int=0, lock::Int=0, dual::Bool=false) = new(_normalize_itag(itags), dir, plev, lock, dual)
+    TLIndex(itags::AbstractString, dir::Char, plev::Int=0, lock::Int=0, dual::Bool=false) = new(_normalize_itag(itags), dir, plev, lock, dual)
 end
 
-QIndex(dir::Char, plev::Int=0, lock::Int=0) = QIndex("", dir, plev, lock)
+TLIndex(dir::Char, plev::Int=0, lock::Int=0) = TLIndex("", dir, plev, lock)
 
-# Two QIndex objects are equal if they share the same itags, dir, plev, and dual
+# Two TLIndex objects are equal if they share the same itags, dir, plev, and dual
 # (lock is intentionally ignored — it is a transient contraction counter).
-Base.:(==)(a::QIndex, b::QIndex) = a.itags == b.itags && a.dir == b.dir && a.plev == b.plev && a.dual == b.dual
-Base.isequal(a::QIndex, b::QIndex) = (a == b)
-Base.hash(a::QIndex, h::UInt) = hash((a.itags, a.dir, a.plev, a.dual), h)
+Base.:(==)(a::TLIndex, b::TLIndex) = a.itags == b.itags && a.dir == b.dir && a.plev == b.plev && a.dual == b.dual
+Base.isequal(a::TLIndex, b::TLIndex) = (a == b)
+Base.hash(a::TLIndex, h::UInt) = hash((a.itags, a.dir, a.plev, a.dual), h)
 
-to_incoming(idx::QIndex) = QIndex(idx.itags, '+', idx.plev, idx.lock, idx.dual)
-to_outgoing(idx::QIndex) = QIndex(idx.itags, '-', idx.plev, idx.lock, idx.dual)
-change_dir(idx::QIndex)  = QIndex(idx.itags, idx.dir == '+' ? '-' : '+', idx.plev, idx.lock, idx.dual)
-dual(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, true)
-change_dual(idx::QIndex) = QIndex(idx.itags, idx.dir, idx.plev, idx.lock, !idx.dual)
-green(idx::QIndex) = dual(idx)
-change_green(idx::QIndex) = change_dual(idx)
+to_incoming(idx::TLIndex) = TLIndex(idx.itags, '+', idx.plev, idx.lock, idx.dual)
+to_outgoing(idx::TLIndex) = TLIndex(idx.itags, '-', idx.plev, idx.lock, idx.dual)
+change_dir(idx::TLIndex)  = TLIndex(idx.itags, idx.dir == '+' ? '-' : '+', idx.plev, idx.lock, idx.dual)
+dual(idx::TLIndex) = TLIndex(idx.itags, idx.dir, idx.plev, idx.lock, true)
+change_dual(idx::TLIndex) = TLIndex(idx.itags, idx.dir, idx.plev, idx.lock, !idx.dual)
+green(idx::TLIndex) = dual(idx)
+change_green(idx::TLIndex) = change_dual(idx)
 
 struct CGR{QD, NZ, S<:Symmetry}
     qlabels::NTuple{QD, NTuple{NZ, Int}}
@@ -361,7 +361,7 @@ function get_rows(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Vararg{Int}}}}, 
                 cgp = (1, 2); legdir = (1, 1)
             elseif QD == 3
                 cgp = qforsymm[2] <= qforsymm[3] ? (1, 2, 3) : (1, 3, 2); legdir = (1, 2)
-            else error("Invalid QSpace tensor dimension for getLocalSpace: $QD") end
+            else error("Invalid TLArray tensor dimension for getLocalSpace: $QD") end
 
             if QD == 3 && qforsymm[2] > qforsymm[3]
                 qforsymm = (qforsymm[1], qforsymm[3], qforsymm[2])
@@ -373,13 +373,13 @@ function get_rows(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Vararg{Int}}}}, 
     return rows
 end
 
-# ─── QSpace invariant checkers ─────────────────────────────────────────────
+# ─── TLArray invariant checkers ─────────────────────────────────────────────
 
 # Condition 1: for each CGR, if two stored qlabel positions i < j share the
 # same qlabel AND the same arrow direction (both incoming or both outgoing),
 # the corresponding physical legs must also appear in that order:
 #   cgp_inv[i] < cgp_inv[j]   (i.e. the order in CGR.qlabels is preserved
-#                               through the cgp mapping to QSpace legs).
+#                               through the cgp mapping to TLArray legs).
 function _check_cgr_qlabel_order(cgr::CGR{QD}) where QD
     m, k = cgr.legdir
     # Build cgp_inv: cgp_inv[si] = physical leg l with cgp[l] == si.
@@ -408,28 +408,28 @@ function _check_cgr_qlabel_order(cgr::CGR{QD}) where QD
 end
 
 # Condition 3: an index with empty itags must have lock == 0
-function _check_empty_tag_lock(inds::NTuple{QD, QIndex}) where QD
+function _check_empty_tag_lock(inds::NTuple{QD, TLIndex}) where QD
     for idx in inds
         if isempty(idx.itags)
-            @assert idx.lock == 0 "QSpace: index with empty itag has nonzero lock=$(idx.lock)"
+            @assert idx.lock == 0 "TLArray: index with empty itag has nonzero lock=$(idx.lock)"
         end
     end
 end
 
-# Condition 2: no two QIndex objects with non-empty itags in the inds tuple
+# Condition 2: no two TLIndex objects with non-empty itags in the inds tuple
 # may be equal (as determined by ==, which compares itags, dir, plev, dual).
-function _check_unique_inds(inds::NTuple{QD, QIndex}) where QD
+function _check_unique_inds(inds::NTuple{QD, TLIndex}) where QD
     tagged = [idx for idx in inds if !isempty(idx.itags)]
     for i in 1:length(tagged), j in i+1:length(tagged)
         @assert tagged[i] != tagged[j] begin
-            "Duplicate QIndex with non-empty itag in QSpace.inds: $(tagged[i])"
+            "Duplicate TLIndex with non-empty itag in TLArray.inds: $(tagged[i])"
         end
     end
 end
 
 # Compute the spaces tuple from rows: for each leg, a vector of (qlabels, dim) pairs.
 # This is the same information that leginfo extracts, but computed for all legs at once.
-function _compute_spaces(rows::Vector{row{T, QD, N, RD}}) where {T, QD, N, RD}
+function _compute_spaces(rows::AbstractVector{<:row{T, QD, N, RD}}) where {T, QD, N, RD}
     # For each leg, track seen qlabels to avoid duplicates
     spsets = ntuple(_ -> Set{NTuple{N, Tuple{Vararg{Int}}}}(), QD)
     splists = ntuple(_ -> Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}}(), QD)
@@ -452,18 +452,18 @@ end
 # QD: The rank of tensor (# of legs), N: The number of symmetries
 # RD: The rank of RMT array, which is equal to QD + N
 # QT: The qlabel type for one leg sector, inferred from the symmetries
-struct QSpace{T, QD, N, RD, QT, PS<:ProductSymm, CGRS<:NTuple{N, CGR{QD}}}
-    # Data rows for QSpace object
+struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, CGRS<:NTuple{N, CGR{QD}}}
+    # Data rows for TLArray object
     rows::Vector{row{T, QD, N, RD, CGRS}}
-    inds::NTuple{QD, QIndex}
+    inds::NTuple{QD, TLIndex}
     # Space list for each leg: vector of (qlabels, RMT_dim) pairs
     # Similar to leginfo.splist but precomputed for all legs
     spaces::NTuple{QD, Vector{Tuple{QT, Int}}}
 
     # Constructor with explicit spaces (for efficiency when spaces are already known)
-    function QSpace(symm::NTuple{N, Any}, 
+    function TLArray(symm::NTuple{N, Any}, 
         rows::AbstractVector{<:row{T, QD, N, RD}},
-        inds::NTuple{QD, QIndex},
+        inds::NTuple{QD, TLIndex},
         spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {T, QD, N, RD}
 
         QT = qlabeltype(symm)
@@ -485,29 +485,29 @@ struct QSpace{T, QD, N, RD, QT, PS<:ProductSymm, CGRS<:NTuple{N, CGR{QD}}}
     end
 end
 
-function QSpace(::Type{PS},
+function TLArray(::Type{PS},
     rows::AbstractVector{<:row{T, QD, N, RD}},
-    inds::NTuple{QD, QIndex},
+    inds::NTuple{QD, TLIndex},
     spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {T, QD, N, RD, PS<:ProductSymm}
     QT = qlabeltype(PS)
     CGRS = cgrstype(PS, Val(QD))
-    return QSpace(product_symms(PS), rows, inds, spaces)::QSpace{T, QD, N, RD, QT, PS, CGRS}
+    return TLArray(product_symms(PS), rows, inds, spaces)::TLArray{T, QD, N, RD, QT, PS, CGRS}
 end
 
-productsymm(::QSpace{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} = PS
-product_symms(q::QSpace) = product_symms(productsymm(q))
-@inline symm(::QSpace{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
+productsymm(::TLArray{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} = PS
+product_symms(q::TLArray) = product_symms(productsymm(q))
+@inline symm(::TLArray{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
     product_symms(PS)
-nsymms(q::QSpace) = nsymms(productsymm(q))
+nsymms(q::TLArray) = nsymms(productsymm(q))
 
 # Drop rows whose norm² contribution is below cutoff² × total norm² (relative threshold).
 # For QD == 2 the effective norm² per row is dim_r * ‖RMT_r‖² (see normalize_qspace!);
 # for all other ranks it is simply ‖RMT_r‖².
 const QSPACE_ROW_CUTOFF = 1e-14
 
-Base.ndims(q::QSpace{T, QD}) where {T, QD} = QD
+Base.ndims(q::TLArray{T, QD}) where {T, QD} = QD
 
-function _orient_wmats!(q::QSpace{T, QD, N}) where {T, QD, N}
+function _orient_wmats!(q::TLArray{T, QD, N}) where {T, QD, N}
     for r in q.rows
         for cgr in r.cgrs
             if length(cgr.wmat.data) == 1 && cgr.wmat.data[1] < 0
@@ -518,7 +518,7 @@ function _orient_wmats!(q::QSpace{T, QD, N}) where {T, QD, N}
     end
 end
 
-function _drop_small_rows!(q::QSpace{T, QD, N}; cutoff::Float64 = QSPACE_ROW_CUTOFF) where {T, QD, N}
+function _drop_small_rows!(q::TLArray{T, QD, N}; cutoff::Float64 = QSPACE_ROW_CUTOFF) where {T, QD, N}
     rows = q.rows
     isempty(rows) && return
 
@@ -537,28 +537,28 @@ function _drop_small_rows!(q::QSpace{T, QD, N}; cutoff::Float64 = QSPACE_ROW_CUT
     splice!(rows, 1:length(rows), rows[keepidx])
 end
 
-# Construct a QSpace with the same rows but with itags replaced.
-# itags: Tuple{Vararg{AbstractString, QD}} — one tag per leg; all other QIndex
+# Construct a TLArray with the same rows but with itags replaced.
+# itags: Tuple{Vararg{AbstractString, QD}} — one tag per leg; all other TLIndex
 # fields are preserved.
-function QSpace(q::QSpace{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) where {T, QD, N, RD}
-    new_inds = ntuple(l -> QIndex(itags[l], q.inds[l].dir, q.inds[l].plev,
+function TLArray(q::TLArray{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) where {T, QD, N, RD}
+    new_inds = ntuple(l -> TLIndex(itags[l], q.inds[l].dir, q.inds[l].plev,
                                   q.inds[l].lock, q.inds[l].dual), QD)
     # spaces remain the same since rows didn't change
-    return QSpace(symm(q), q.rows, new_inds, q.spaces)
+    return TLArray(symm(q), q.rows, new_inds, q.spaces)
 end
 
-# Construct a QSpace with the same rows but with all QIndex fields replaced.
-# inds: NTuple{QD, QIndex} — one full QIndex per leg.
-# Arrow directions must match the original QSpace (only itags/lock/plev/dual may differ).
-function QSpace(q::QSpace{T, QD, N, RD}, inds::NTuple{QD, QIndex}) where {T, QD, N, RD}
-    @assert ntuple(l -> inds[l].dir, QD) == ntuple(l -> q.inds[l].dir, QD) "QSpace(q, inds): arrow directions must match the original QSpace on all legs"
-    return QSpace(symm(q), q.rows, inds, q.spaces)
+# Construct a TLArray with the same rows but with all TLIndex fields replaced.
+# inds: NTuple{QD, TLIndex} — one full TLIndex per leg.
+# Arrow directions must match the original TLArray (only itags/lock/plev/dual may differ).
+function TLArray(q::TLArray{T, QD, N, RD}, inds::NTuple{QD, TLIndex}) where {T, QD, N, RD}
+    @assert ntuple(l -> inds[l].dir, QD) == ntuple(l -> q.inds[l].dir, QD) "TLArray(q, inds): arrow directions must match the original TLArray on all legs"
+    return TLArray(symm(q), q.rows, inds, q.spaces)
 end
 
-Base.getindex(q::QSpace, i::Int) = q.rows[i]
-Base.length(q::QSpace) = length(q.rows)
-Base.firstindex(q::QSpace) = firstindex(q.rows)
-Base.lastindex(q::QSpace) = lastindex(q.rows)
+Base.getindex(q::TLArray, i::Int) = q.rows[i]
+Base.length(q::TLArray) = length(q.rows)
+Base.firstindex(q::TLArray) = firstindex(q.rows)
+Base.lastindex(q::TLArray) = lastindex(q.rows)
 
 function _normalize_qspace_row_index(i::Int, nrows::Int)
     i == 0 && throw(BoundsError(1:nrows, i))
@@ -590,28 +590,28 @@ function _normalize_qspace_row_selector(selector, nrows::Int)
 end
 
 """
-    QSpace(q::QSpace, selector) -> QSpace
+    TLArray(q::TLArray, selector) -> TLArray
 
-Create a new `QSpace` from a subset of `q.rows`, preserving the original
+Create a new `TLArray` from a subset of `q.rows`, preserving the original
 symmetry tuple, leg indices, and cached leg-space metadata in `q.spaces`.
 
 `selector` may be `:`, an `Int`, an integer range, an integer vector, or a
 boolean mask. Negative integer indices count from the end.
 """
-function QSpace(q::QSpace{T, QD, N, RD}, selector) where {T, QD, N, RD}
+function TLArray(q::TLArray{T, QD, N, RD}, selector) where {T, QD, N, RD}
     inds = _normalize_qspace_row_selector(selector, length(q.rows))
-    return QSpace(symm(q), deepcopy(q.rows[inds]), q.inds, _copy_spaces_tuple(q.spaces))
+    return TLArray(symm(q), deepcopy(q.rows[inds]), q.inds, _copy_spaces_tuple(q.spaces))
 end
 
-Base.getindex(q::QSpace,
+Base.getindex(q::TLArray,
               selector::Union{Colon, AbstractRange{<:Integer},
-                              AbstractVector{<:Integer}, AbstractVector{Bool}}) = QSpace(q, selector)
+                              AbstractVector{<:Integer}, AbstractVector{Bool}}) = TLArray(q, selector)
 
-# For 0-dimensional QSpace (scalar), q[] returns the unique RMT element.
-function Base.getindex(q::QSpace{T, 0, N, N}) where {T, N}
-    @assert length(q.rows) <= 1 "0D QSpace must have zero or one row"
+# For 0-dimensional TLArray (scalar), q[] returns the unique RMT element.
+function Base.getindex(q::TLArray{T, 0, N, N}) where {T, N}
+    @assert length(q.rows) <= 1 "0D TLArray must have zero or one row"
     if length(q.rows) == 1 
-        @assert length(q.rows[1].RMT.data) == 1 "0D QSpace RMT must be a scalar"
+        @assert length(q.rows[1].RMT.data) == 1 "0D TLArray RMT must be a scalar"
         return only(q.rows[1].RMT.data)
     else return zero(T) end
 end
@@ -619,7 +619,7 @@ end
 # ─── Leg selection utilities ─────────────────────────────────────────────────
 
 """
-    findlegs(q::QSpace, pred::Function) -> Vector{Int}
+    findlegs(q::TLArray, pred::Function) -> Vector{Int}
 
 Find all leg indices where `pred(qindex)` returns true.
 
@@ -630,10 +630,10 @@ findlegs(q, idx -> occursin("site", idx.itags))       # legs with "site" in tag
 findlegs(q, idx -> idx.dir == '-' && idx.plev == 0)   # outgoing, unprimed
 ```
 """
-findlegs(q::QSpace{T, QD}, pred::Function) where {T, QD} = [i for i in 1:QD if pred(q.inds[i])]
+findlegs(q::TLArray{T, QD}, pred::Function) where {T, QD} = [i for i in 1:QD if pred(q.inds[i])]
 
 """
-    findleg(q::QSpace, pred::Function) -> Int
+    findleg(q::TLArray, pred::Function) -> Int
 
 Find the first leg index where `pred(qindex)` returns true.
 Throws an error if no leg matches.
@@ -644,13 +644,13 @@ findleg(q, idx -> idx.itags == "bond")   # first leg with exact tag "bond"
 findleg(q, idx -> idx.dir == '+')        # first incoming leg
 ```
 """
-function findleg(q::QSpace{T, QD}, pred::Function) where {T, QD}
+function findleg(q::TLArray{T, QD}, pred::Function) where {T, QD}
     for i in 1:QD pred(q.inds[i]) && return i end
     return nothing
 end
 
-# Internal: check if a QIndex matches all specified criteria
-function _matches_criteria(idx::QIndex; dir=nothing, itag=nothing, plev=nothing, lock=nothing)
+# Internal: check if a TLIndex matches all specified criteria
+function _matches_criteria(idx::TLIndex; dir=nothing, itag=nothing, plev=nothing, lock=nothing)
     (!isnothing(dir)  && idx.dir != dir)                                 && return false
     (!isnothing(itag) && !_matches_itag_selector(idx.itags, itag))       && return false
     (!isnothing(plev) && idx.plev != plev)                               && return false
@@ -659,7 +659,7 @@ function _matches_criteria(idx::QIndex; dir=nothing, itag=nothing, plev=nothing,
 end
 
 """
-    findlegs(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+    findlegs(q::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
 
 Find all leg indices matching the specified criteria. Unspecified criteria match any value.
 If `rev=true`, the selection is reversed: legs that do *not* match are returned.
@@ -682,12 +682,12 @@ findlegs(q; lock=0)                     # non-locked legs
 findlegs(q; dir='-', rev=true)          # all legs that are NOT outgoing
 ```
 """
-function findlegs(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function findlegs(q::TLArray{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     return [i for i in 1:QD if _matches_criteria(q.inds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev]
 end
 
 """
-    findleg(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+    findleg(q::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
 
 Find the first leg index matching the specified criteria.
 Returns `nothing` if no leg matches.
@@ -701,22 +701,22 @@ findleg(q; lock=0)                # first non-locked leg
 findleg(q; dir='+', rev=true)     # first leg that is NOT incoming
 ```
 """
-function findleg(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function findleg(q::TLArray{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     for i in 1:QD
         _matches_criteria(q.inds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev && return i
     end
     return nothing
 end
 
-function _matching_targets(q::QSpace; require_unlocked::Bool=false)
+function _matching_targets(q::TLArray; require_unlocked::Bool=false)
     return Set(change_dir(idx) for idx in q.inds
                if !require_unlocked || idx.lock == 0)
 end
 
-_has_target_match(idx::QIndex, targets; require_unlocked::Bool=false) =
+_has_target_match(idx::TLIndex, targets; require_unlocked::Bool=false) =
     (!require_unlocked || idx.lock == 0) && (idx in targets)
 
-function _find_matching_legs(a::QSpace{T, QD}, b::QSpace;
+function _find_matching_legs(a::TLArray{T, QD}, b::TLArray;
                              dir=nothing, itag=nothing, plev=nothing,
                              lock=nothing, rev::Bool=false,
                              matched::Bool=true,
@@ -728,7 +728,7 @@ function _find_matching_legs(a::QSpace{T, QD}, b::QSpace;
                                   plev=plev, lock=lock) ⊻ rev)]
 end
 
-function _find_matching_leg(a::QSpace{T, QD}, b::QSpace;
+function _find_matching_leg(a::TLArray{T, QD}, b::TLArray;
                             dir=nothing, itag=nothing, plev=nothing,
                             lock=nothing, rev::Bool=false,
                             matched::Bool=true,
@@ -742,7 +742,7 @@ function _find_matching_leg(a::QSpace{T, QD}, b::QSpace;
 end
 
 """
-    matchings(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+    matchings(a::TLArray, b::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
 
 Return all leg indices of `a` that have at least one matching leg in `b`.
 
@@ -751,7 +751,7 @@ of `b`, but with opposite direction. Lock is ignored for the cross-tensor
 match test. Keyword arguments filter the returned legs of `a` using the same
 rules as `findlegs`.
 """
-function matchings(a::QSpace{T, QD}, b::QSpace;
+function matchings(a::TLArray{T, QD}, b::TLArray;
                    dir=nothing, itag=nothing, plev=nothing,
                    lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -759,7 +759,7 @@ function matchings(a::QSpace{T, QD}, b::QSpace;
 end
 
 """
-    matching(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+    matching(a::TLArray, b::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
 
 Return the first leg index of `a` that has a matching leg in `b`, or `nothing`
 if no such leg exists.
@@ -767,7 +767,7 @@ if no such leg exists.
 Matching ignores lock between tensors; keyword arguments filter the returned
 leg of `a` using the same rules as `findleg`.
 """
-function matching(a::QSpace{T, QD}, b::QSpace;
+function matching(a::TLArray{T, QD}, b::TLArray;
                   dir=nothing, itag=nothing, plev=nothing,
                   lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -775,7 +775,7 @@ function matching(a::QSpace{T, QD}, b::QSpace;
 end
 
 """
-    unmatchings(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+    unmatchings(a::TLArray, b::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
 
 Return all leg indices of `a` that do not have any matching leg in `b`.
 
@@ -783,7 +783,7 @@ The match test uses the same rule as `matchings`: same `itags`, `plev`, and
 `dual`, opposite direction, and lock ignored between tensors. Keyword
 arguments filter the returned legs of `a` using the same rules as `findlegs`.
 """
-function unmatchings(a::QSpace{T, QD}, b::QSpace;
+function unmatchings(a::TLArray{T, QD}, b::TLArray;
                      dir=nothing, itag=nothing, plev=nothing,
                      lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -791,7 +791,7 @@ function unmatchings(a::QSpace{T, QD}, b::QSpace;
 end
 
 """
-    unmatching(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+    unmatching(a::TLArray, b::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
 
 Return the first leg index of `a` that does not have any matching leg in `b`,
 or `nothing` if every leg is matched.
@@ -800,7 +800,7 @@ The match test uses the same rule as `matchings`: same `itags`, `plev`, and
 `dual`, opposite direction, and lock ignored between tensors. Keyword
 arguments filter the returned leg of `a` using the same rules as `findleg`.
 """
-function unmatching(a::QSpace{T, QD}, b::QSpace;
+function unmatching(a::TLArray{T, QD}, b::TLArray;
                     dir=nothing, itag=nothing, plev=nothing,
                     lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -808,7 +808,7 @@ function unmatching(a::QSpace{T, QD}, b::QSpace;
 end
 
 """
-    contractables(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+    contractables(a::TLArray, b::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
 
 Return all leg indices of `a` that have at least one contractable leg in `b`.
 
@@ -816,7 +816,7 @@ Two legs are contractable when they satisfy the same cross-tensor match rule as
 `matchings` and both legs have `lock == 0`. Keyword arguments filter the
 returned legs of `a` using the same rules as `findlegs`.
 """
-function contractables(a::QSpace{T, QD}, b::QSpace;
+function contractables(a::TLArray{T, QD}, b::TLArray;
                        dir=nothing, itag=nothing, plev=nothing,
                        lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -824,7 +824,7 @@ function contractables(a::QSpace{T, QD}, b::QSpace;
 end
 
 """
-    contractable(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+    contractable(a::TLArray, b::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
 
 Return the first leg index of `a` that has a contractable leg in `b`, or
 `nothing` if no such leg exists.
@@ -832,7 +832,7 @@ Return the first leg index of `a` that has a contractable leg in `b`, or
 Contractable legs satisfy the same cross-tensor match rule as `matchings`, but
 both tensors must have `lock == 0` on the matched legs.
 """
-function contractable(a::QSpace{T, QD}, b::QSpace;
+function contractable(a::TLArray{T, QD}, b::TLArray;
                       dir=nothing, itag=nothing, plev=nothing,
                       lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -840,7 +840,7 @@ function contractable(a::QSpace{T, QD}, b::QSpace;
 end
 
 """
-    uncontractables(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
+    uncontractables(a::TLArray, b::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Vector{Int}
 
 Return all leg indices of `a` that do not have any contractable leg in `b`.
 
@@ -848,7 +848,7 @@ Contractability requires the same cross-tensor match rule as `matchings`, plus
 `lock == 0` on both matched legs. Keyword arguments filter the returned legs of
 `a` using the same rules as `findlegs`.
 """
-function uncontractables(a::QSpace{T, QD}, b::QSpace;
+function uncontractables(a::TLArray{T, QD}, b::TLArray;
                          dir=nothing, itag=nothing, plev=nothing,
                          lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -856,7 +856,7 @@ function uncontractables(a::QSpace{T, QD}, b::QSpace;
 end
 
 """
-    uncontractable(a::QSpace, b::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
+    uncontractable(a::TLArray, b::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false) -> Union{Int, Nothing}
 
 Return the first leg index of `a` that does not have any contractable leg in
 `b`, or `nothing` if every eligible leg is contractable.
@@ -864,7 +864,7 @@ Return the first leg index of `a` that does not have any contractable leg in
 Contractability requires the same cross-tensor match rule as `matchings`, plus
 `lock == 0` on both matched legs.
 """
-function uncontractable(a::QSpace{T, QD}, b::QSpace;
+function uncontractable(a::TLArray{T, QD}, b::TLArray;
                         dir=nothing, itag=nothing, plev=nothing,
                         lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -884,52 +884,52 @@ const LegList = Union{AbstractVector{<:Integer}, Tuple{Vararg{<:Integer}}}
 
 # Internal: apply a lock modification function to selected leg indices.
 # legs can be any iterable of integers (Int, Vector, UnitRange, Tuple, etc.)
-function _modify_lock(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
+function _modify_lock(q::TLArray{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
     new_inds = collect(q.inds)
     for i in legs
         idx = new_inds[i]
         new_lock = modify_fn(idx.lock)
-        new_inds[i] = QIndex(idx.itags, idx.dir, idx.plev, new_lock, idx.dual)
+        new_inds[i] = TLIndex(idx.itags, idx.dir, idx.plev, new_lock, idx.dual)
     end
-    return QSpace(symm(q), q.rows, Tuple(new_inds), q.spaces)
+    return TLArray(symm(q), q.rows, Tuple(new_inds), q.spaces)
 end
 
 # Lock increase function (respects permanent lock)
 _lock_inc(current_lock, inc) = current_lock == -1 ? -1 : current_lock + inc
 
 """
-    lock(q::QSpace, leg::Integer; inc::Int=1)
+    lock(q::TLArray, leg::Integer; inc::Int=1)
 
 Increase lock level of a single specified leg by `inc` (default 1).
 Permanently locked legs (lock=-1) are unchanged.
 """
-function Base.lock(q::QSpace, leg::Integer; inc::Int=1)
+function Base.lock(q::TLArray, leg::Integer; inc::Int=1)
     return _modify_lock(q, (leg,), lk -> _lock_inc(lk, inc))
 end
 
 """
-    lock(q::QSpace, legs::LegList; inc::Int=1)
+    lock(q::TLArray, legs::LegList; inc::Int=1)
 
 Increase lock level of the specified legs by `inc` (default 1).
 `legs` can be any vector, range, or tuple of integers, e.g. `[1, 3]`, `1:3`, or `(1, 3)`.
 Permanently locked legs (lock=-1) are unchanged.
 """
-function Base.lock(q::QSpace, legs::LegList; inc::Int=1)
+function Base.lock(q::TLArray, legs::LegList; inc::Int=1)
     return _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
 end
 
 """
-    lock(q::QSpace, pred::Function; inc::Int=1)
+    lock(q::TLArray, pred::Function; inc::Int=1)
 
 Increase lock level of legs satisfying predicate by `inc` (default 1).
 """
-function Base.lock(q::QSpace, pred::Function; inc::Int=1)
+function Base.lock(q::TLArray, pred::Function; inc::Int=1)
     legs = findlegs(q, pred)
     return _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
 end
 
 """
-    lock(q::QSpace; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false)
+    lock(q::TLArray; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false)
 
 Increase lock level of legs matching criteria by `inc`.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -942,42 +942,42 @@ lock(q; lock=0)                   # lock all currently-unlocked legs by 1
 lock(q; dir='-', rev=true)        # lock all legs that are NOT outgoing
 ```
 """
-function Base.lock(q::QSpace; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+function Base.lock(q::TLArray; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
 end
 
 """
-    lockp(q::QSpace, leg::Integer)
+    lockp(q::TLArray, leg::Integer)
 
 Permanently lock a single specified leg (set lock=-1).
 """
-function lockp(q::QSpace, leg::Integer)
+function lockp(q::TLArray, leg::Integer)
     return _modify_lock(q, (leg,), _ -> -1)
 end
 
 """
-    lockp(q::QSpace, legs::LegList)
+    lockp(q::TLArray, legs::LegList)
 
 Permanently lock the specified legs (set lock=-1).
 `legs` can be any vector, range, or tuple of integers.
 """
-function lockp(q::QSpace, legs::LegList)
+function lockp(q::TLArray, legs::LegList)
     return _modify_lock(q, legs, _ -> -1)
 end
 
 """
-    lockp(q::QSpace, pred::Function)
+    lockp(q::TLArray, pred::Function)
 
 Permanently lock legs satisfying predicate.
 """
-function lockp(q::QSpace, pred::Function)
+function lockp(q::TLArray, pred::Function)
     legs = findlegs(q, pred)
     return _modify_lock(q, legs, _ -> -1)
 end
 
 """
-    lockp(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false)
+    lockp(q::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false)
 
 Permanently lock legs matching criteria.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -989,42 +989,42 @@ lockp(q; lock=0)               # permanently lock all currently-unlocked legs
 lockp(q; itag="phys", rev=true)   # permanently lock all legs except "phys"
 ```
 """
-function lockp(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+function lockp(q::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_lock(q, legs, _ -> -1)
 end
 
 """
-    unlock(q::QSpace, leg::Integer)
+    unlock(q::TLArray, leg::Integer)
 
 Unlock a single specified leg (set lock=0). Also removes permanent lock.
 """
-function Base.unlock(q::QSpace, leg::Integer)
+function Base.unlock(q::TLArray, leg::Integer)
     return _modify_lock(q, (leg,), _ -> 0)
 end
 
 """
-    unlock(q::QSpace, legs::LegList)
+    unlock(q::TLArray, legs::LegList)
 
 Unlock the specified legs (set lock=0).
 `legs` can be any vector, range, or tuple of integers.
 """
-function Base.unlock(q::QSpace, legs::LegList)
+function Base.unlock(q::TLArray, legs::LegList)
     return _modify_lock(q, legs, _ -> 0)
 end
 
 """
-    unlock(q::QSpace, pred::Function)
+    unlock(q::TLArray, pred::Function)
 
 Unlock legs satisfying predicate.
 """
-function Base.unlock(q::QSpace, pred::Function)
+function Base.unlock(q::TLArray, pred::Function)
     legs = findlegs(q, pred)
     return _modify_lock(q, legs, _ -> 0)
 end
 
 """
-    unlock(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false)
+    unlock(q::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev=false)
 
 Unlock legs matching criteria.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -1036,7 +1036,7 @@ unlock(q; lock=1)              # unlock all legs currently at lock=1
 unlock(q; dir='-', rev=true)   # unlock all legs that are NOT outgoing
 ```
 """
-function Base.unlock(q::QSpace; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+function Base.unlock(q::TLArray; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_lock(q, legs, _ -> 0)
 end
@@ -1061,17 +1061,17 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 
 # legs can be any iterable of integers
-function _modify_plev(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
+function _modify_plev(q::TLArray{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
     new_inds = collect(q.inds)
     for i in legs
         idx = new_inds[i]
-        new_inds[i] = QIndex(idx.itags, idx.dir, modify_fn(idx.plev), idx.lock, idx.dual)
+        new_inds[i] = TLIndex(idx.itags, idx.dir, modify_fn(idx.plev), idx.lock, idx.dual)
     end
-    return QSpace(symm(q), q.rows, Tuple(new_inds), q.spaces)
+    return TLArray(symm(q), q.rows, Tuple(new_inds), q.spaces)
 end
 
 """
-    prime(q::QSpace; inc::Int=1, dir, itag, plev, lock, rev=false)
+    prime(q::TLArray; inc::Int=1, dir, itag, plev, lock, rev=false)
 
 Increase the prime level of matching legs by `inc` (default 1).
 Prime level is clamped to 0 from below.
@@ -1089,13 +1089,13 @@ prime(q; plev=0)                # only currently unprimed legs
 prime(q; dir='+', rev=true)     # all legs that are NOT incoming
 ```
 """
-function prime(q::QSpace{T, QD}; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function prime(q::TLArray{T, QD}; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_plev(q, legs, p -> max(0, p + inc))
 end
 
 """
-    prime(q::QSpace, leg::Integer; inc::Int=1)
+    prime(q::TLArray, leg::Integer; inc::Int=1)
 
 Increase the prime level of a single specified leg by `inc` (default 1).
 Prime level is clamped to 0 from below.
@@ -1106,12 +1106,12 @@ prime(q, 2)                     # leg 2: plev += 1
 prime(q, 2; inc=3)              # leg 2: plev += 3
 ```
 """
-function prime(q::QSpace{T, QD}, leg::Integer; inc::Int=1) where {T, QD}
+function prime(q::TLArray{T, QD}, leg::Integer; inc::Int=1) where {T, QD}
     return _modify_plev(q, (leg,), p -> max(0, p + inc))
 end
 
 """
-    prime(q::QSpace, legs::LegList; inc::Int=1)
+    prime(q::TLArray, legs::LegList; inc::Int=1)
 
 Increase the prime level of the specified legs by `inc` (default 1).
 Prime level is clamped to 0 from below.
@@ -1124,12 +1124,12 @@ prime(q, 1:2; inc=2)            # legs 1–2: plev += 2
 prime(q, (1, 3))                # same as prime(q, [1, 3])
 ```
 """
-function prime(q::QSpace{T, QD}, legs::LegList; inc::Int=1) where {T, QD}
+function prime(q::TLArray{T, QD}, legs::LegList; inc::Int=1) where {T, QD}
     return _modify_plev(q, legs, p -> max(0, p + inc))
 end
 
 """
-    prime(q::QSpace, pred::Function; inc::Int=1)
+    prime(q::TLArray, pred::Function; inc::Int=1)
 
 Increase the prime level of legs satisfying predicate by `inc` (default 1).
 Prime level is clamped to 0 from below.
@@ -1140,13 +1140,13 @@ prime(q, idx -> idx.dir == '+')          # incoming legs: plev += 1
 prime(q, idx -> idx.plev == 0; inc=2)   # unprimed legs: plev += 2
 ```
 """
-function prime(q::QSpace{T, QD}, pred::Function; inc::Int=1) where {T, QD}
+function prime(q::TLArray{T, QD}, pred::Function; inc::Int=1) where {T, QD}
     legs = findlegs(q, pred)
     return _modify_plev(q, legs, p -> max(0, p + inc))
 end
 
 """
-    setprime(q::QSpace, n::Int; dir, itag, plev, lock, rev=false)
+    setprime(q::TLArray, n::Int; dir, itag, plev, lock, rev=false)
 
 Set the prime level of matching legs to `n`. `n` must be non-negative.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -1159,14 +1159,14 @@ setprime(q, 0; itag="bond")     # same as noprime(q; itag="bond")
 setprime(q, 0; dir='-', rev=true)  # clear prime on all non-outgoing legs
 ```
 """
-function setprime(q::QSpace{T, QD}, n::Int; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function setprime(q::TLArray{T, QD}, n::Int; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     n >= 0 || throw(ArgumentError("prime level must be non-negative, got $n"))
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_plev(q, legs, _ -> n)
 end
 
 """
-    setprime(q::QSpace, legs, n::Int)
+    setprime(q::TLArray, legs, n::Int)
 
 Set the prime level of the specified legs to `n`. `n` must be non-negative.
 `legs` can be any iterable of leg indices.
@@ -1177,13 +1177,13 @@ setprime(q, [1, 3], 2)          # set legs 1 and 3 to plev=2
 setprime(q, 1:2, 0)             # same as noprime(q, 1:2)
 ```
 """
-function setprime(q::QSpace{T, QD}, legs, n::Int) where {T, QD}
+function setprime(q::TLArray{T, QD}, legs, n::Int) where {T, QD}
     n >= 0 || throw(ArgumentError("prime level must be non-negative, got $n"))
     return _modify_plev(q, legs, _ -> n)
 end
 
 """
-    noprime(q::QSpace; dir, itag, plev, lock, rev=false)
+    noprime(q::TLArray; dir, itag, plev, lock, rev=false)
 
 Set the prime level of matching legs to 0.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -1196,43 +1196,43 @@ noprime(q; plev=1)              # clear all legs currently at plev=1
 noprime(q; dir='+', rev=true)   # clear prime on all non-incoming legs
 ```
 """
-function noprime(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function noprime(q::TLArray{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_plev(q, legs, _ -> 0)
 end
 
 """
-    noprime(q::QSpace, leg::Integer)
+    noprime(q::TLArray, leg::Integer)
 
 Set the prime level of a single specified leg to 0.
 """
-function noprime(q::QSpace{T, QD}, leg::Integer) where {T, QD}
+function noprime(q::TLArray{T, QD}, leg::Integer) where {T, QD}
     return _modify_plev(q, (leg,), _ -> 0)
 end
 
 """
-    noprime(q::QSpace, legs::LegList)
+    noprime(q::TLArray, legs::LegList)
 
 Set the prime level of the specified legs to 0.
 `legs` can be any vector, range, or tuple, e.g. `[1, 3]`, `1:3`, or `(1, 3)`.
 """
-function noprime(q::QSpace{T, QD}, legs::LegList) where {T, QD}
+function noprime(q::TLArray{T, QD}, legs::LegList) where {T, QD}
     return _modify_plev(q, legs, _ -> 0)
 end
 
 """
-    noprime(q::QSpace, pred::Function)
+    noprime(q::TLArray, pred::Function)
 
 Set the prime level of legs satisfying predicate to 0.
 """
-function noprime(q::QSpace{T, QD}, pred::Function) where {T, QD}
+function noprime(q::TLArray{T, QD}, pred::Function) where {T, QD}
     legs = findlegs(q, pred)
     return _modify_plev(q, legs, _ -> 0)
 end
 
 # ─── Tag modification ────────────────────────────────────────────────────────
 #
-# ITensor-style tag manipulation on QSpace legs.
+# ITensor-style tag manipulation on TLArray legs.
 # Tags are stored as sorted, comma-separated strings (e.g. "bond,site").
 #
 #   additag(q, newtags; kw...)     – add tag(s) to matching legs
@@ -1246,17 +1246,17 @@ const ITagQuerySpec = Union{AbstractString,
                             Tuple{Vararg{AbstractString}},
                             AbstractVector{<:AbstractString}}
 
-function _modify_itag(q::QSpace{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
+function _modify_itag(q::TLArray{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
     new_inds = collect(q.inds)
     for i in legs
         idx = new_inds[i]
-        new_inds[i] = QIndex(modify_fn(idx.itags), idx.dir, idx.plev, idx.lock, idx.dual)
+        new_inds[i] = TLIndex(modify_fn(idx.itags), idx.dir, idx.plev, idx.lock, idx.dual)
     end
-    return QSpace(symm(q), q.rows, Tuple(new_inds), q.spaces)
+    return TLArray(symm(q), q.rows, Tuple(new_inds), q.spaces)
 end
 
 """
-    additag(q::QSpace, newtags; dir, itag, plev, lock, rev=false)
+    additag(q::TLArray, newtags; dir, itag, plev, lock, rev=false)
 
 Add one or more tags to matching legs. `newtags` may be a comma-separated
 string of tags (e.g. `"bond,u1"`). The result is always sorted.
@@ -1270,37 +1270,37 @@ additag(q, "u1"; itag="bond")   # add "u1" to legs that already have "bond"
 additag(q, "aux"; dir='+', rev=true)  # add "aux" to all non-incoming legs
 ```
 """
-function additag(q::QSpace{T, QD}, newtags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function additag(q::TLArray{T, QD}, newtags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_itag(q, legs, base -> _add_itag(base, newtags))
 end
 
-"""    additag(q::QSpace, leg::Integer, newtags)
+"""    additag(q::TLArray, leg::Integer, newtags)
 
 Add tags to a single specified leg.
 """
-function additag(q::QSpace{T, QD}, leg::Integer, newtags::AbstractString) where {T, QD}
+function additag(q::TLArray{T, QD}, leg::Integer, newtags::AbstractString) where {T, QD}
     return _modify_itag(q, (leg,), base -> _add_itag(base, newtags))
 end
 
-"""    additag(q::QSpace, legs::LegList, newtags)
+"""    additag(q::TLArray, legs::LegList, newtags)
 
 Add tags to the specified legs. `legs` can be any vector, range, or tuple.
 """
-function additag(q::QSpace{T, QD}, legs::LegList, newtags::AbstractString) where {T, QD}
+function additag(q::TLArray{T, QD}, legs::LegList, newtags::AbstractString) where {T, QD}
     return _modify_itag(q, legs, base -> _add_itag(base, newtags))
 end
 
-"""    additag(q::QSpace, pred::Function, newtags)
+"""    additag(q::TLArray, pred::Function, newtags)
 
 Add tags to legs satisfying predicate.
 """
-function additag(q::QSpace{T, QD}, pred::Function, newtags::AbstractString) where {T, QD}
+function additag(q::TLArray{T, QD}, pred::Function, newtags::AbstractString) where {T, QD}
     return _modify_itag(q, findlegs(q, pred), base -> _add_itag(base, newtags))
 end
 
 """
-    removeitag(q::QSpace, tags; dir, itag, plev, lock, rev=false)
+    removeitag(q::TLArray, tags; dir, itag, plev, lock, rev=false)
 
 Remove one or more tags from matching legs.
 
@@ -1317,37 +1317,37 @@ removeitag(q, "phys"; dir='-')           # remove "phys" from outgoing legs
 removeitag(q, "aux"; dir='-', rev=true)  # remove "aux" from all non-outgoing legs
 ```
 """
-function removeitag(q::QSpace{T, QD}, tags::ITagQuerySpec; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function removeitag(q::TLArray{T, QD}, tags::ITagQuerySpec; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return _modify_itag(q, legs, base -> _remove_itag(base, tags))
 end
 
-"""    removeitag(q::QSpace, leg::Integer, tags)
+"""    removeitag(q::TLArray, leg::Integer, tags)
 
 Remove tags from a single specified leg.
 """
-function removeitag(q::QSpace{T, QD}, leg::Integer, tags::ITagQuerySpec) where {T, QD}
+function removeitag(q::TLArray{T, QD}, leg::Integer, tags::ITagQuerySpec) where {T, QD}
     return _modify_itag(q, (leg,), base -> _remove_itag(base, tags))
 end
 
-"""    removeitag(q::QSpace, legs::LegList, tags)
+"""    removeitag(q::TLArray, legs::LegList, tags)
 
 Remove tags from the specified legs. `legs` can be any vector, range, or tuple.
 """
-function removeitag(q::QSpace{T, QD}, legs::LegList, tags::ITagQuerySpec) where {T, QD}
+function removeitag(q::TLArray{T, QD}, legs::LegList, tags::ITagQuerySpec) where {T, QD}
     return _modify_itag(q, legs, base -> _remove_itag(base, tags))
 end
 
-"""    removeitag(q::QSpace, pred::Function, tags)
+"""    removeitag(q::TLArray, pred::Function, tags)
 
 Remove tags from legs satisfying predicate.
 """
-function removeitag(q::QSpace{T, QD}, pred::Function, tags::ITagQuerySpec) where {T, QD}
+function removeitag(q::TLArray{T, QD}, pred::Function, tags::ITagQuerySpec) where {T, QD}
     return _modify_itag(q, findlegs(q, pred), base -> _remove_itag(base, tags))
 end
 
 """
-    setitag(q::QSpace, tags; dir, itag, plev, lock, rev=false)
+    setitag(q::TLArray, tags; dir, itag, plev, lock, rev=false)
 
 Replace the entire tag string of matching legs with `tags`.
 Use `rev=true` to act on legs that do *not* match the criteria.
@@ -1360,44 +1360,44 @@ setitag(q, "phys"; itag="site") # rename "site" → "phys" (full replacement)
 setitag(q, "aux"; dir='+', rev=true)  # set tag on all non-incoming legs
 ```
 """
-function setitag(q::QSpace{T, QD}, tags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function setitag(q::TLArray{T, QD}, tags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     norm = _normalize_itag(tags)
     return _modify_itag(q, legs, _ -> norm)
 end
 
-"""    setitag(q::QSpace, leg::Integer, tags)
+"""    setitag(q::TLArray, leg::Integer, tags)
 
 Set the entire tag string of a single specified leg.
 """
-function setitag(q::QSpace{T, QD}, leg::Integer, tags::AbstractString) where {T, QD}
+function setitag(q::TLArray{T, QD}, leg::Integer, tags::AbstractString) where {T, QD}
     norm = _normalize_itag(tags)
     return _modify_itag(q, (leg,), _ -> norm)
 end
 
-"""    setitag(q::QSpace, legs::LegList, tags)
+"""    setitag(q::TLArray, legs::LegList, tags)
 
 Set the entire tag string of the specified legs. `legs` can be any vector, range, or tuple.
 """
-function setitag(q::QSpace{T, QD}, legs::LegList, tags::AbstractString) where {T, QD}
+function setitag(q::TLArray{T, QD}, legs::LegList, tags::AbstractString) where {T, QD}
     norm = _normalize_itag(tags)
     return _modify_itag(q, legs, _ -> norm)
 end
 
-"""    setitag(q::QSpace, pred::Function, tags)
+"""    setitag(q::TLArray, pred::Function, tags)
 
 Set the entire tag string of legs satisfying predicate.
 """
-function setitag(q::QSpace{T, QD}, pred::Function, tags::AbstractString) where {T, QD}
+function setitag(q::TLArray{T, QD}, pred::Function, tags::AbstractString) where {T, QD}
     norm = _normalize_itag(tags)
     return _modify_itag(q, findlegs(q, pred), _ -> norm)
 end
 
-# ─── Pretty-printing for QSpace ──────────────────────────────────────────────
+# ─── Pretty-printing for TLArray ──────────────────────────────────────────────
 #
 # Format:
 #
-#   QSpace{T}  [Symm1, Symm2, ...]
+#   TLArray{T}  [Symm1, Symm2, ...]
 #     leg 1:  dir  'tag'  (plev=k)
 #     leg 2:  dir  'tag'
 #     ...
@@ -1413,28 +1413,28 @@ end
 const QSPACE_DISPLAY_HEAD = Ref(5)   # number of first rows to show
 const QSPACE_DISPLAY_TAIL = Ref(5)   # number of last rows to show
 
-Base.show(io::IO, qs::QSpace) = show(io, MIME"text/plain"(), qs)
+Base.show(io::IO, qs::TLArray) = show(io, MIME"text/plain"(), qs)
 
 _qindex_plev_string(plev::Int) =
     plev == 0 ? "" : "p$(plev)"
 
 _qindex_lock_string(lock::Int) = lock == 0 ? "" : "🔒$(lock)"
 
-function _format_qindex(idx::QIndex)
+function _format_qindex(idx::TLIndex)
     return "\"$(idx.itags)$(idx.dir)\"$(_qindex_plev_string(idx.plev))$(_qindex_lock_string(idx.lock))"
 end
 
-# Special pretty-printing for 0-dimensional QSpace (scalar result of full contraction).
-function Base.show(io::IO, ::MIME"text/plain", qs::QSpace{T, 0, N, N}) where {T, N}
+# Special pretty-printing for 0-dimensional TLArray (scalar result of full contraction).
+function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, 0, N, N}) where {T, N}
     symm_names = join((totxt(s) for s in symm(qs)), ", ")
-    print(io, "0D QSpace{$T}, $N symmetries [$symm_names]: ", _fmt_scalar_str(qs[]))
+    print(io, "0D TLArray{$T}, $N symmetries [$symm_names]: ", _fmt_scalar_str(qs[]))
 end
 
-function Base.show(io::IO, ::MIME"text/plain", qs::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
+function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
     # --- Header: symmetries and leg dirs/tags on one line ---
-    # Format:  QSpace{...}  [Sym1, Sym2]  ["tag1"+, "tag2"-', ...]
+    # Format:  TLArray{...}  [Sym1, Sym2]  ["tag1"+, "tag2"-', ...]
     symm_names = join((totxt(s) for s in symm(qs)), ", ")
-    print(io, "$(QD)D QSpace, $N symmetries [$symm_names]")
+    print(io, "$(QD)D TLArray, $N symmetries [$symm_names]")
     leg_strs = map(qs.inds) do idx
         raw = _format_qindex(idx)
         idx.dual ? "\e[32m$(raw)\e[0m" : raw
@@ -1491,11 +1491,11 @@ function Base.show(io::IO, ::MIME"text/plain", qs::QSpace{T, QD, N, RD}) where {
     end
 end
 
-# Normalize QSpace w-matrices in-place.
+# Normalize TLArray w-matrices in-place.
 # - For 2D: set each wmat[1] = sqrt(dim) so the CGT contributes identity scaling.
 # - For 0D: set all wmat elements to 1.0, absorbing factors into RMT.
 # - For other dimensions: no-op.
-function normalize_qspace!(q::QSpace{T, QD, N}) where {T, QD, N}
+function normalize_qspace!(q::TLArray{T, QD, N}) where {T, QD, N}
     if QD == 2
         for r in q.rows
             for i in 1:N
@@ -1513,7 +1513,7 @@ function normalize_qspace!(q::QSpace{T, QD, N}) where {T, QD, N}
         for r in q.rows
             for i in 1:N
                 cgr = r.cgrs[i]
-                @assert size(cgr.wmat) == (1, 1) "0D QSpace must have 1x1 w-matrices"
+                @assert size(cgr.wmat) == (1, 1) "0D TLArray must have 1x1 w-matrices"
                 w_val = cgr.wmat[1]
                 if w_val != 1.0
                     cgr.wmat[:] .= 1.0
@@ -1525,12 +1525,12 @@ function normalize_qspace!(q::QSpace{T, QD, N}) where {T, QD, N}
     # For other dimensions (QD != 0 and QD != 2), do nothing.
 end
 
-# Sort rows of a QSpace in-place in dictionary order by physical leg qlabels.
+# Sort rows of a TLArray in-place in dictionary order by physical leg qlabels.
 # For each row the sort key is built leg by leg (1 → QD): at leg l, the key
 # is the tuple of qlabels across all symmetries, i.e.
 #   (cgrs[1].qlabels[cgp₁[l]], cgrs[2].qlabels[cgp₂[l]], ...)
 # Comparison is then lexicographic over (leg 1 key, leg 2 key, ..., leg QD key).
-function sort_rows!(q::QSpace{T, QD, N}) where {T, QD, N}
+function sort_rows!(q::TLArray{T, QD, N}) where {T, QD, N}
     sort!(q.rows; by = r -> Tuple(
             Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[l]] for n in 1:N)
         for l in QD:-1:1)
@@ -1539,22 +1539,22 @@ end
 
 # Scalar multiplication and division: only the RMT arrays are scaled.
 # CGRs (w-matrices, qlabels) are left untouched.
-function Base.:*(qs::QSpace, fac::Number)
+function Base.:*(qs::TLArray, fac::Number)
     result = deepcopy(qs)
     for r in result.rows
         r.RMT.data .*= fac
     end
     return result
 end
-Base.:*(fac::Number, qs::QSpace) = qs * fac
-Base.:/(qs::QSpace, fac::Number) = qs * (1 / fac)
-Base.:-(qs::QSpace) = qs * -1
+Base.:*(fac::Number, qs::TLArray) = qs * fac
+Base.:/(qs::TLArray, fac::Number) = qs * (1 / fac)
+Base.:-(qs::TLArray) = qs * -1
 
-# Return a deep copy of a QSpace (CGRs, RMTs, indices, spaces all copied).
-Base.copy(q::QSpace) = deepcopy(q)
+# Return a deep copy of a TLArray (CGRs, RMTs, indices, spaces all copied).
+Base.copy(q::TLArray) = deepcopy(q)
 
-function _identity_on_qspace(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
-    @assert QD == 2 "Scalar add/subtract is only defined for rank-2 QSpace objects"
+function _identity_on_qspace(q::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
+    @assert QD == 2 "Scalar add/subtract is only defined for rank-2 TLArray objects"
 
     in_legs  = findlegs(q; dir='+')
     out_legs = findlegs(q; dir='-')
@@ -1565,10 +1565,10 @@ function _identity_on_qspace(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
     @assert q.spaces[in_leg] == q.spaces[out_leg] "Scalar add/subtract requires matching incoming and outgoing spaces"
 
     id_q = getIdentity((q, out_leg); itag=q.inds[out_leg].itags)
-    return QSpace(id_q, (q.inds[in_leg], q.inds[out_leg]))
+    return TLArray(id_q, (q.inds[in_leg], q.inds[out_leg]))
 end
 
-# ─── QSpace norm ─────────────────────────────────────────────────────────────
+# ─── TLArray norm ─────────────────────────────────────────────────────────────
 #
 # Exploits the Wigner-Eckart decomposition to compute the Frobenius norm
 # directly from the reduced matrix elements (RMTs) without building the full
@@ -1589,7 +1589,7 @@ end
 #   where dim_r = _cgt_size_2d(r.cgrs, symm(q)) = ∏_{non-abelian n} d_leg1^(n).
 #
 # ─────────────────────────────────────────────────────────────────────────────
-function LinearAlgebra.norm(q::QSpace{T, QD, N}) where {T, QD, N}
+function LinearAlgebra.norm(q::TLArray{T, QD, N}) where {T, QD, N}
     s = zero(Float64)
     if QD == 2
         for r in q.rows
@@ -1604,9 +1604,9 @@ function LinearAlgebra.norm(q::QSpace{T, QD, N}) where {T, QD, N}
     return sqrt(s)
 end
 
-# ─── QSpace addition ─────────────────────────────────────────────────────────
+# ─── TLArray addition ─────────────────────────────────────────────────────────
 #
-# Each row is a QSpace record uniquely identified by its physical q-labels
+# Each row is a TLArray record uniquely identified by its physical q-labels
 # (cgrs[n].qlabels with cgp applied) across all symmetries.
 #
 # Per the Wigner-Eckart decomposition (paper Eq. 22):
@@ -1617,15 +1617,15 @@ end
 # new w-matrix via SVD using _compress_sector / merge_new_row (same routine as
 # used for contractions).  A sector present in only one operand is copied as-is.
 #
-# If the two QSpaces share the same indices but in different order, the second
+# If the two Telum share the same indices but in different order, the second
 # operand is permuted to match the first before addition.
 # ─────────────────────────────────────────────────────────────────────────────
 
 # Find the unique permutation perm such that qs2.inds[perm[i]] == inds1[i]
 # and qs2.spaces[perm[i]] == spaces1[i] for all i.  Raises an error if no
 # such bijection exists or if it is not unique.
-function _find_leg_permutation(inds1::NTuple{QD, QIndex}, spaces1,
-                               inds2::NTuple{QD, QIndex}, spaces2) where {QD}
+function _find_leg_permutation(inds1::NTuple{QD, TLIndex}, spaces1,
+                               inds2::NTuple{QD, TLIndex}, spaces2) where {QD}
     candidates = Vector{Vector{Int}}(undef, QD)
     for i in 1:QD
         cs = Int[]
@@ -1635,16 +1635,16 @@ function _find_leg_permutation(inds1::NTuple{QD, QIndex}, spaces1,
             end
         end
         isempty(cs) && error(
-            "No leg in second QSpace matches leg $i of first QSpace " *
+            "No leg in second TLArray matches leg $i of first TLArray " *
             "(itag=\"$(inds1[i].itags)\", dir='$(inds1[i].dir)')")
         candidates[i] = cs
     end
     results = Vector{NTuple{QD, Int}}()
     _enum_leg_perms!(results, candidates, Int[], Set{Int}(), QD)
     isempty(results) && error(
-        "No valid bijective permutation found to match QSpace leg indices")
+        "No valid bijective permutation found to match TLArray leg indices")
     length(results) > 1 && error(
-        "Ambiguous permutation: $(length(results)) ways to match QSpace leg indices")
+        "Ambiguous permutation: $(length(results)) ways to match TLArray leg indices")
     return results[1]
 end
 
@@ -1664,9 +1664,9 @@ function _enum_leg_perms!(results, candidates, current, used, QD)
     end
 end
 
-function Base.:+(qs1::QSpace{T1, QD, N, RD, QT, PS, CGRS},
-                 qs2::QSpace{T2, QD, N, RD, QT, PS, CGRS}) where {T1, T2, QD, N, RD, QT, PS, CGRS}
-    @assert symm(qs1) == symm(qs2) "QSpace objects must share the same symmetry tuple"
+function Base.:+(qs1::TLArray{T1, QD, N, RD, QT, PS, CGRS},
+                 qs2::TLArray{T2, QD, N, RD, QT, PS, CGRS}) where {T1, T2, QD, N, RD, QT, PS, CGRS}
+    @assert symm(qs1) == symm(qs2) "TLArray objects must share the same symmetry tuple"
 
     if qs1.inds != qs2.inds || qs1.spaces != qs2.spaces
         perm = _find_leg_permutation(qs1.inds, qs1.spaces, qs2.inds, qs2.spaces)
@@ -1728,14 +1728,14 @@ function Base.:+(qs1::QSpace{T1, QD, N, RD, QT, PS, CGRS},
         end
     end
 
-    return QSpace(PS, new_rows, qs1.inds, qs1.spaces)
+    return TLArray(PS, new_rows, qs1.inds, qs1.spaces)
 end
 
-Base.:-(qs1::QSpace, qs2::QSpace) = qs1 + (-1 * qs2)
-Base.:+(q::QSpace, x::Number) = q + x * _identity_on_qspace(q)
-Base.:+(x::Number, q::QSpace) = q + x
-Base.:-(q::QSpace, x::Number) = q + (-x) * _identity_on_qspace(q)
-Base.:-(x::Number, q::QSpace) = x * _identity_on_qspace(q) + (-q)
+Base.:-(qs1::TLArray, qs2::TLArray) = qs1 + (-1 * qs2)
+Base.:+(q::TLArray, x::Number) = q + x * _identity_on_qspace(q)
+Base.:+(x::Number, q::TLArray) = q + x
+Base.:-(q::TLArray, x::Number) = q + (-x) * _identity_on_qspace(q)
+Base.:-(x::Number, q::TLArray) = x * _identity_on_qspace(q) + (-q)
 
 function _normalize_oplus_dims(dimensions, QD::Int; sort_dims::Bool=true)
     dims = dimensions isa Integer ? (Int(dimensions),) : Tuple(Int(d) for d in dimensions)
@@ -1796,7 +1796,7 @@ function _sum_splists_many(splists)
 end
 
 _copy_spaces_tuple(spaces::NTuple{QD, Vector}) where {QD} = ntuple(l -> copy(spaces[l]), QD)
-_qspace_eltype(::QSpace{T}) where {T} = T
+_qspace_eltype(::TLArray{T}) where {T} = T
 
 function _oplus_row_qlabel(r::row{T, QD, N}, leg::Int) where {T, QD, N}
     return Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:N)
@@ -1835,7 +1835,7 @@ function _pad_row_for_oplus(r::row{T, QD, N, RD},
     return row(deepcopy(r.cgrs), LurTensor(new_data))
 end
 
-function _oplus_pad_qspace(q::QSpace{T, QD, N, RD},
+function _oplus_pad_qspace(q::TLArray{T, QD, N, RD},
                            result_spaces,
                            dims_tuple,
                            start_dim_maps,
@@ -1845,15 +1845,15 @@ function _oplus_pad_qspace(q::QSpace{T, QD, N, RD},
     for r in q.rows
         push!(new_rows, _pad_row_for_oplus(r, dims_set, start_dim_maps, result_dim_maps))
     end
-    return QSpace(symm(q), new_rows, q.inds, _copy_spaces_tuple(result_spaces))
+    return TLArray(symm(q), new_rows, q.inds, _copy_spaces_tuple(result_spaces))
 end
 
 function _zero_qspace_with_spaces(symm::NTuple{N, Any},
-                                  inds::NTuple{QD, QIndex},
+                                  inds::NTuple{QD, TLIndex},
                                   spaces::NTuple{QD, Vector};
                                   T::Type=Float64) where {N, QD}
     rows = Vector{row{T, QD, N, QD + N}}()
-    return QSpace(symm, rows, inds, _copy_spaces_tuple(spaces))
+    return TLArray(symm, rows, inds, _copy_spaces_tuple(spaces))
 end
 
 function _accumulate_oplus_starts(qs, dims_tuple, QD::Int)
@@ -1876,7 +1876,7 @@ function _accumulate_oplus_starts(qs, dims_tuple, QD::Int)
     return starts
 end
 
-_qindex_match_for_oplus(a::QIndex, b::QIndex) =
+_qindex_match_for_oplus(a::TLIndex, b::TLIndex) =
     a.itags == b.itags && a.dir == b.dir && a.plev == b.plev && a.lock == b.lock
 
 function _inds_match_for_oplus(inds1, inds2)
@@ -1885,18 +1885,18 @@ function _inds_match_for_oplus(inds1, inds2)
 end
 
 function _validate_oplus_common(qs)
-    isempty(qs) && throw(ArgumentError("oplus requires at least one QSpace"))
-    first(qs) isa QSpace || throw(ArgumentError("oplus entry 1 is not a QSpace"))
+    isempty(qs) && throw(ArgumentError("oplus requires at least one TLArray"))
+    first(qs) isa TLArray || throw(ArgumentError("oplus entry 1 is not a TLArray"))
 
     ref = first(qs)
     for (i, q) in enumerate(qs)
-        q isa QSpace || throw(ArgumentError("oplus entry $i is not a QSpace"))
+        q isa TLArray || throw(ArgumentError("oplus entry $i is not a TLArray"))
         symm(q) == symm(ref) || throw(ArgumentError(
-            "QSpace entry $i has a different symmetry tuple"))
+            "TLArray entry $i has a different symmetry tuple"))
         length(q.inds) == length(ref.inds) || throw(ArgumentError(
-            "QSpace entry $i has rank $(length(q.inds)), expected $(length(ref.inds))"))
+            "TLArray entry $i has rank $(length(q.inds)), expected $(length(ref.inds))"))
         _inds_match_for_oplus(q.inds, ref.inds) || throw(ArgumentError(
-            "QSpace entry $i has different indices (ignoring green)"))
+            "TLArray entry $i has different indices (ignoring green)"))
     end
 
     return ref
@@ -1932,7 +1932,7 @@ function _materialize_vector_oplus(qs, dims_tuple)
     acc = _zero_qspace_with_spaces(symm(ref), ref.inds, result_spaces; T=T)
     for (q, qstarts) in zip(qs, start_maps)
         padded = _oplus_pad_qspace(q, result_spaces, dims_tuple, qstarts, result_dim_maps)
-        padded = q.inds == ref.inds ? padded : QSpace(padded, ref.inds)
+        padded = q.inds == ref.inds ? padded : TLArray(padded, ref.inds)
         acc = acc + padded
     end
     return acc
@@ -1947,8 +1947,8 @@ function _oplus_matrix_entry(mat, i::Int, j::Int)
     if val === nothing || val === missing
         return nothing
     end
-    val isa QSpace || throw(ArgumentError(
-        "matrix oplus entry ($i, $j) is neither a QSpace nor an undefined entry"))
+    val isa TLArray || throw(ArgumentError(
+        "matrix oplus entry ($i, $j) is neither a TLArray nor an undefined entry"))
     return val
 end
 
@@ -1958,7 +1958,7 @@ function _infer_zero_matrix_spaces(row_sources, col_sources, i::Int, j::Int, QD:
         have_col = haskey(col_sources[j], leg)
         if have_row && have_col
             row_sources[i][leg] == col_sources[j][leg] || throw(ArgumentError(
-                "cannot infer zero QSpace at ($i, $j): inconsistent spaces on leg $leg"))
+                "cannot infer zero TLArray at ($i, $j): inconsistent spaces on leg $leg"))
             copy(row_sources[i][leg])
         elseif have_row
             copy(row_sources[i][leg])
@@ -1966,7 +1966,7 @@ function _infer_zero_matrix_spaces(row_sources, col_sources, i::Int, j::Int, QD:
             copy(col_sources[j][leg])
         else
             throw(ArgumentError(
-                "cannot infer zero QSpace at ($i, $j): missing space information on leg $leg"))
+                "cannot infer zero TLArray at ($i, $j): missing space information on leg $leg"))
         end
     end, QD)
 end
@@ -1974,10 +1974,10 @@ end
 """
     oplus(qs::AbstractVector, dimensions)
 
-Direct sum of a vector of `QSpace` objects along one or more physical legs.
+Direct sum of a vector of `TLArray` objects along one or more physical legs.
 """
 function oplus(qs::AbstractVector, dimensions)
-    isempty(qs) && throw(ArgumentError("oplus requires at least one QSpace"))
+    isempty(qs) && throw(ArgumentError("oplus requires at least one TLArray"))
     any(q -> q === nothing || q === missing, qs) && throw(ArgumentError(
         "vector oplus requires every entry to be well defined"))
 
@@ -1986,8 +1986,8 @@ function oplus(qs::AbstractVector, dimensions)
     return _materialize_vector_oplus(collect(qs), dims_tuple)
 end
 
-function oplus(q1::QSpace, q2::QSpace, dimensions)
-    return oplus(QSpace[q1, q2], dimensions)
+function oplus(q1::TLArray, q2::TLArray, dimensions)
+    return oplus(TLArray[q1, q2], dimensions)
 end
 
 function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
@@ -1995,7 +1995,7 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
         "matrix oplus requires a non-empty matrix"))
 
     defined_positions = Tuple{Int, Int}[]
-    defined_qs = QSpace[]
+    defined_qs = TLArray[]
     for j in axes(mat, 2), i in axes(mat, 1)
         q = _oplus_matrix_entry(mat, i, j)
         q === nothing && continue
@@ -2003,7 +2003,7 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
         push!(defined_qs, q)
     end
     isempty(defined_qs) && throw(ArgumentError(
-        "matrix oplus requires at least one defined QSpace to infer spaces"))
+        "matrix oplus requires at least one defined TLArray to infer spaces"))
 
     ref = _validate_oplus_common(defined_qs)
     row_dims, col_dims = _normalize_oplus_matrix_dims(dimensions, length(ref.inds))
@@ -2035,7 +2035,7 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
     end
 
     T = promote_type((_qspace_eltype(q) for q in defined_qs)...)
-    filled = Matrix{QSpace}(undef, size(mat, 1), size(mat, 2))
+    filled = Matrix{TLArray}(undef, size(mat, 1), size(mat, 2))
     for j in axes(mat, 2), i in axes(mat, 1)
         q = _oplus_matrix_entry(mat, i, j)
         if q === nothing
@@ -2052,8 +2052,8 @@ end
 """
     complete_oplus_matrix(mat::AbstractMatrix, dimensions)
 
-Validate a matrix input for `oplus`, infer zero `QSpace` objects for undefined
-entries, and return the completed `Matrix{QSpace}`.
+Validate a matrix input for `oplus`, infer zero `TLArray` objects for undefined
+entries, and return the completed `Matrix{TLArray}`.
 """
 function complete_oplus_matrix(mat::AbstractMatrix, dimensions)
     filled, _, _ = _complete_oplus_matrix(mat, dimensions)
@@ -2063,7 +2063,7 @@ end
 function oplus(mat::AbstractMatrix, dimensions)
     filled, row_dims, col_dims = _complete_oplus_matrix(mat, dimensions)
 
-    col_aggregates = Vector{QSpace}(undef, size(filled, 2))
+    col_aggregates = Vector{TLArray}(undef, size(filled, 2))
     for j in axes(filled, 2)
         col_aggregates[j] = _materialize_vector_oplus(vec(filled[:, j]), row_dims)
     end
@@ -2075,7 +2075,7 @@ end
 
 # ─── conj / adjoint ──────────────────────────────────────────────────────────
 #
-# conj(q): conjugate a QSpace object.
+# conj(q): conjugate a TLArray object.
 #   1. Every leg direction is reversed ('+' ↔ '-').
 #   2. Every RMT entry is complex-conjugated.
 #   3. For each CGR, the arrow directions of the underlying CGT are inverted:
@@ -2087,9 +2087,9 @@ end
 #      the old one by a transposition within each central-space block — this is
 #      applied as a row permutation on the first dimension of the w-matrix.
 #
-# adjoint(q): for QSpace tensors, defined as conj(q).
+# adjoint(q): for TLArray tensors, defined as conj(q).
 # ─────────────────────────────────────────────────────────────────────────────
-function Base.conj(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
+function Base.conj(q::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
     new_inds = ntuple(l -> change_dir(q.inds[l]), QD)
 
     new_rows = map(q.rows) do r
@@ -2145,12 +2145,12 @@ function Base.conj(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
 
     # spaces remain the same: physical qlabels at each leg don't change in conj,
     # only the CGR internal structure (incoming/outgoing) changes
-    return QSpace(symm(q), new_rows, new_inds, q.spaces)
+    return TLArray(symm(q), new_rows, new_inds, q.spaces)
 end
 
-Base.adjoint(q::QSpace) = conj(q)
+Base.adjoint(q::TLArray) = conj(q)
 
-getsub(q::QSpace, selector) = QSpace(q, selector)
+getsub(q::TLArray, selector) = TLArray(q, selector)
 
 function _normalize_getsub_index(i::Int, dim::Int, sector, leg::Int)
     i == 0 && throw(ArgumentError(
@@ -2194,7 +2194,7 @@ function _normalize_getsub_predicate_pick(raw, dim::Int, sector, leg::Int)
     return _normalize_getsub_indices(raw, dim, sector, leg)
 end
 
-function _collect_getsub_predicate_picks(q::QSpace, positions, pred::Function)
+function _collect_getsub_predicate_picks(q::TLArray, positions, pred::Function)
     selected_picks = Dict{Int, Dict{Any, Any}}()
     for leg in positions
         picks = Dict{Any, Any}()
@@ -2208,7 +2208,7 @@ function _collect_getsub_predicate_picks(q::QSpace, positions, pred::Function)
     return selected_picks
 end
 
-function _apply_getsub_picks(q::QSpace{T, QD, N, RD},
+function _apply_getsub_picks(q::TLArray{T, QD, N, RD},
                              positions,
                              selected_picks::Dict{Int, Dict{Any, Any}};
                              preserve_space::Bool=false) where {T, QD, N, RD}
@@ -2256,10 +2256,10 @@ function _apply_getsub_picks(q::QSpace{T, QD, N, RD},
         end, QD)
     end
 
-    return QSpace(symm(q), rows_out, q.inds, spaces_out)
+    return TLArray(symm(q), rows_out, q.inds, spaces_out)
 end
 
-function _normalize_getsub_predicate_legs(q::QSpace{T, QD}, legs) where {T, QD}
+function _normalize_getsub_predicate_legs(q::TLArray{T, QD}, legs) where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
     isempty(positions) && throw(ArgumentError("getsub requires at least one leg"))
     all(1 <= leg <= QD for leg in positions) || throw(ArgumentError(
@@ -2270,9 +2270,9 @@ function _normalize_getsub_predicate_legs(q::QSpace{T, QD}, legs) where {T, QD}
 end
 
 """
-    getsub(q::QSpace, leg::Integer, pred::Function; preserve_space::Bool=false) -> QSpace
+    getsub(q::TLArray, leg::Integer, pred::Function; preserve_space::Bool=false) -> TLArray
 
-Return a new `QSpace` containing only rows whose sector on `leg` satisfies
+Return a new `TLArray` containing only rows whose sector on `leg` satisfies
 `pred`.
 
 `pred(sector)` may return `nothing` to drop that sector, `Colon()` to keep the full
@@ -2284,14 +2284,14 @@ the retained sectors and all other leg-space lists are copied unchanged. If
 the rows are filtered. This requires `pred` to keep whole sectors, so any
 index-selection return value is rejected when `preserve_space=true`.
 """
-function getsub(q::QSpace{T, QD, N, RD}, leg::Integer, pred::Function; preserve_space::Bool=false) where {T, QD, N, RD}
+function getsub(q::TLArray{T, QD, N, RD}, leg::Integer, pred::Function; preserve_space::Bool=false) where {T, QD, N, RD}
     return getsub(q, (Int(leg),), pred; preserve_space=preserve_space)
 end
 
 """
-    getsub(q::QSpace, legs, pred::Function; preserve_space::Bool=false) -> QSpace
+    getsub(q::TLArray, legs, pred::Function; preserve_space::Bool=false) -> TLArray
 
-Return a new `QSpace` containing only rows whose sectors on every selected leg
+Return a new `TLArray` containing only rows whose sectors on every selected leg
 satisfy `pred`.
 
 `pred(sector)` may return `nothing` to drop that sector, `Colon()` to keep the full
@@ -2304,20 +2304,20 @@ preserved exactly and only the rows are filtered. This requires `pred` to keep
 whole sectors, so any index-selection return value is rejected when
 `preserve_space=true`.
 """
-function getsub(q::QSpace{T, QD, N, RD}, legs::LegList, pred::Function; preserve_space::Bool=false) where {T, QD, N, RD}
+function getsub(q::TLArray{T, QD, N, RD}, legs::LegList, pred::Function; preserve_space::Bool=false) where {T, QD, N, RD}
     positions = _normalize_getsub_predicate_legs(q, legs)
     selected_picks = _collect_getsub_predicate_picks(q, positions, pred)
     return _apply_getsub_picks(q, positions, selected_picks; preserve_space=preserve_space)
 end
 
 """
-    getsub(q::QSpace, pred::Function; preserve_space::Bool=false, dir=nothing,
-           itag=nothing, plev=nothing, lock=nothing, rev=false) -> QSpace
+    getsub(q::TLArray, pred::Function; preserve_space::Bool=false, dir=nothing,
+           itag=nothing, plev=nothing, lock=nothing, rev=false) -> TLArray
 
 Apply predicate-based `getsub` to every leg selected by the keyword criteria.
 The leg selection follows the same matching rules as `findlegs`.
 """
-function getsub(q::QSpace{T, QD, N, RD}, pred::Function; preserve_space::Bool=false,
+function getsub(q::TLArray{T, QD, N, RD}, pred::Function; preserve_space::Bool=false,
                 dir=nothing, itag=nothing, plev=nothing, lock=nothing,
                 rev::Bool=false) where {T, QD, N, RD}
     legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -2326,38 +2326,38 @@ function getsub(q::QSpace{T, QD, N, RD}, pred::Function; preserve_space::Bool=fa
 end
 
 """
-    empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, QIndex}; T::Type=Float64) where {N, QD}
+    empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex}; T::Type=Float64) where {N, QD}
 
-Create an empty rank-`QD` (zero-row) QSpace over the given symmetries.
+Create an empty rank-`QD` (zero-row) TLArray over the given symmetries.
 
 `symm` is an `N`-tuple of symmetry types (e.g. `(SU{2}, U1)`); `inds` is a
-`QD`-tuple of `QIndex` objects describing the leg directions, tags, and prime
-levels.  All `QIndex` entries with non-empty tags must be pairwise distinct.
+`QD`-tuple of `TLIndex` objects describing the leg directions, tags, and prime
+levels.  All `TLIndex` entries with non-empty tags must be pairwise distinct.
 
 The element type of future row data defaults to `Float64`; pass `T=ComplexF64`
 (or another concrete `<:Number` type) to use a different element type.
 """
-function empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, QIndex};
+function empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex};
                       T::Type=Float64) where {N, QD}
     RD = QD + N
     rows   = Vector{row{T, QD, N, RD}}()
     QT = qlabeltype(symm)
     spaces = ntuple(_ -> Vector{Tuple{QT, Int}}(), QD)
-    return QSpace(symm, rows, inds, spaces)
+    return TLArray(symm, rows, inds, spaces)
 end
 
-function empty_qspace(q::QSpace; T::Type=Float64)
+function empty_qspace(q::TLArray; T::Type=Float64)
     return empty_qspace(symm(q), q.inds; T=T)
 end
 
-function Base.zero(q::QSpace{T, QD, N, RD}) where {T, QD, N, RD}
+function Base.zero(q::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
     rows = Vector{row{T, QD, N, RD}}()
-    return QSpace(symm(q), rows, q.inds, _copy_spaces_tuple(q.spaces))
+    return TLArray(symm(q), rows, q.inds, _copy_spaces_tuple(q.spaces))
 end
 
 """
     qlabeltype(symm::NTuple{N, Any}) where {N}
-    qlabeltype(q::QSpace)
+    qlabeltype(q::TLArray)
 
 Return the qlabel type for one leg sector over the symmetries in `symm` or `q`.
 
@@ -2370,11 +2370,11 @@ end
 qlabeltype(::Type{<:ProductSymm{Syms}}) where {Syms} =
     Tuple{(NTuple{nzops(S), Int} for S in Syms.parameters)...}
 
-qlabeltype(::QSpace{T, QD, N, RD, QT}) where {T, QD, N, RD, QT} = QT
+qlabeltype(::TLArray{T, QD, N, RD, QT}) where {T, QD, N, RD, QT} = QT
 
 """
     zero_qlabels(symm::NTuple{N, Any}) where {N}
-    zero_qlabels(q::QSpace)
+    zero_qlabels(q::TLArray)
 
 Return the trivial qlabel for each symmetry in `symm` or `q`.
 
@@ -2384,16 +2384,16 @@ function zero_qlabels(symm::NTuple{N, Any}) where {N}
     return ntuple(n -> Tuple(0 for _ in 1:nzops(symm[n])), N)
 end
 
-zero_qlabels(q::QSpace) = zero_qlabels(symm(q))
+zero_qlabels(q::TLArray) = zero_qlabels(symm(q))
 
-function _is_singleton_leg(q::QSpace{T, QD, N}, leg::Int) where {T, QD, N}
+function _is_singleton_leg(q::TLArray{T, QD, N}, leg::Int) where {T, QD, N}
     1 <= leg <= QD || throw(ArgumentError("leg must lie in 1:$QD, got $leg"))
     return length(q.spaces[leg]) == 1 && only(q.spaces[leg]) == (zero_qlabels(q), 1)
 end
 
-_singleton_legs(q::QSpace{T, QD}) where {T, QD} = [leg for leg in 1:QD if _is_singleton_leg(q, leg)]
+_singleton_legs(q::TLArray{T, QD}) where {T, QD} = [leg for leg in 1:QD if _is_singleton_leg(q, leg)]
 
-function _normalize_delete_singleton_legs(q::QSpace{T, QD}, legs) where {T, QD}
+function _normalize_delete_singleton_legs(q::TLArray{T, QD}, legs) where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[i for i in legs]
     isempty(positions) && throw(ArgumentError("at least one deletion leg must be specified"))
     all(1 <= leg <= QD for leg in positions) || throw(ArgumentError(
@@ -2442,7 +2442,7 @@ function _delete_singleton_rmt(rmt::LurTensor{T, RD}, positions, qd::Int, n_symm
     return LurTensor(copy(rmt.data[selectors...]))
 end
 
-function _delete_singleton_impl(q::QSpace{T, QD, N, RD}, positions) where {T, QD, N, RD}
+function _delete_singleton_impl(q::TLArray{T, QD, N, RD}, positions) where {T, QD, N, RD}
     new_qd = QD - length(positions)
     new_rd = RD - length(positions)
 
@@ -2457,11 +2457,11 @@ function _delete_singleton_impl(q::QSpace{T, QD, N, RD}, positions) where {T, QD
         push!(new_rows, row(new_cgrs, new_rmt))
     end
 
-    return QSpace(symm(q), new_rows, Tuple(keep_inds), Tuple(keep_spaces))
+    return TLArray(symm(q), new_rows, Tuple(keep_inds), Tuple(keep_spaces))
 end
 
 """
-    deleteSingleton(q::QSpace; dir=nothing, itag=nothing, plev=nothing) -> QSpace
+    deleteSingleton(q::TLArray; dir=nothing, itag=nothing, plev=nothing) -> TLArray
 
 Delete singleton legs matching the supplied criteria.
 
@@ -2469,7 +2469,7 @@ With no keyword arguments, all singleton legs are deleted.
 Only singleton legs are eligible for deletion. If none match, a warning is
 emitted and `q` is returned unchanged.
 """
-function deleteSingleton(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothing) where {T, QD}
+function deleteSingleton(q::TLArray{T, QD}; dir=nothing, itag=nothing, plev=nothing) where {T, QD}
     singleton_legs = if isnothing(dir) && isnothing(itag) && isnothing(plev)
         _singleton_legs(q)
     else
@@ -2489,18 +2489,18 @@ function deleteSingleton(q::QSpace{T, QD}; dir=nothing, itag=nothing, plev=nothi
 end
 
 """
-    deleteSingleton(q::QSpace, leg::Integer) -> QSpace
-    deleteSingleton(q::QSpace, legs::LegList) -> QSpace
+    deleteSingleton(q::TLArray, leg::Integer) -> TLArray
+    deleteSingleton(q::TLArray, legs::LegList) -> TLArray
 
 Delete the specified singleton legs from `q`.
 
 Every selected leg must be singleton. Otherwise an `ArgumentError` is thrown.
 """
-function deleteSingleton(q::QSpace, leg::Integer)
+function deleteSingleton(q::TLArray, leg::Integer)
     return deleteSingleton(q, (leg,))
 end
 
-function deleteSingleton(q::QSpace{T, QD}, legs::LegList) where {T, QD}
+function deleteSingleton(q::TLArray{T, QD}, legs::LegList) where {T, QD}
     positions = _normalize_delete_singleton_legs(q, legs)
     bad = [leg for leg in positions if !_is_singleton_leg(q, leg)]
     isempty(bad) || throw(ArgumentError(
@@ -2518,7 +2518,7 @@ function _expand_singleton_kw(values, count::Int, name::AbstractString)
     return collected
 end
 
-function _singleton_insert_spec(q::QSpace{T, QD}, legs;
+function _singleton_insert_spec(q::TLArray{T, QD}, legs;
                                 itag="", plev=0, lock=0, dir='+') where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[i for i in legs]
     isempty(positions) && throw(ArgumentError("at least one insertion leg must be specified"))
@@ -2633,7 +2633,7 @@ function _convert_rank2_singleton_normalization!(new_cgrs, new_rmt::LurTensor, o
 end
 
 """
-    addSingleton(q::QSpace, legs; itag="", plev=0, lock=0, dir='+')
+    addSingleton(q::TLArray, legs; itag="", plev=0, lock=0, dir='+')
 
 Insert one or more singleton trivial legs into `q`.
 
@@ -2644,7 +2644,7 @@ length(legs)`. The original legs keep their relative order.
 `itag`, `plev`, `lock`, and `dir` may each be either a scalar applied to
 every added leg or an iterable with one value per inserted leg.
 """
-function addSingleton(q::QSpace{T, QD, N, RD}, legs;
+function addSingleton(q::TLArray{T, QD, N, RD}, legs;
                       itag="", plev=0, lock=0, dir='+') where {T, QD, N, RD}
     positions, itag_vec, plev_vec, lock_vec, dir_vec =
         _singleton_insert_spec(q, legs; itag=itag, plev=plev, lock=lock, dir=dir)
@@ -2653,7 +2653,7 @@ function addSingleton(q::QSpace{T, QD, N, RD}, legs;
     new_rd = RD + length(positions)
     trivial_qlabels = zero_qlabels(q)
 
-    new_inds = Vector{QIndex}(undef, new_qd)
+    new_inds = Vector{TLIndex}(undef, new_qd)
     QT = qlabeltype(q)
     new_spaces = Vector{Vector{Tuple{QT, Int}}}(undef, new_qd)
     singleton_space = [(trivial_qlabels, 1)]
@@ -2662,7 +2662,7 @@ function addSingleton(q::QSpace{T, QD, N, RD}, legs;
     insert_idx = 1
     for new_leg in 1:new_qd
         if insert_idx <= length(positions) && positions[insert_idx] == new_leg
-            new_inds[new_leg] = QIndex(String(itag_vec[insert_idx]), dir_vec[insert_idx],
+            new_inds[new_leg] = TLIndex(String(itag_vec[insert_idx]), dir_vec[insert_idx],
                                        plev_vec[insert_idx], lock_vec[insert_idx])
             new_spaces[new_leg] = copy(singleton_space)
             insert_idx += 1
@@ -2683,19 +2683,19 @@ function addSingleton(q::QSpace{T, QD, N, RD}, legs;
         push!(new_rows, row(new_cgrs, new_rmt))
     end
 
-    return QSpace(symm(q), new_rows, Tuple(new_inds), Tuple(new_spaces))
+    return TLArray(symm(q), new_rows, Tuple(new_inds), Tuple(new_spaces))
 end
 
 """
-    getvac(q::QSpace, itags::Tuple{Vararg{AbstractString, 2}}=("", "")) -> QSpace
+    getvac(q::TLArray, itags::Tuple{Vararg{AbstractString, 2}}=("", "")) -> TLArray
 
-Build the rank-2 vacuum QSpace associated with `q`.
+Build the rank-2 vacuum TLArray associated with `q`.
 
 The result keeps the same symmetry tuple as `q`, has one incoming leg and one
 outgoing leg, and contains exactly one trivial sector with RMT dimension 1 on
 each leg. If `itags` is provided, it is used as the tags of the two legs.
 """
-function getvac(q::QSpace{T, QD, N, RD},
+function getvac(q::TLArray{T, QD, N, RD},
                 itags::Tuple{Vararg{AbstractString, 2}}=("", "")) where {T, QD, N, RD}
     trivial_qlabels = zero_qlabels(q)
     space_entry = (trivial_qlabels, 1)
@@ -2707,24 +2707,24 @@ function getvac(q::QSpace{T, QD, N, RD},
 
     rmt_data = fill(one(T), ntuple(_ -> 1, N + 2))
     rows = row{T, 2, N, N + 2}[row(cgrs, LurTensor(rmt_data))]
-    inds = (QIndex(itags[1], '+'), QIndex(itags[2], '-'))
+    inds = (TLIndex(itags[1], '+'), TLIndex(itags[2], '-'))
     QT = qlabeltype(q)
     space_template = Vector{Tuple{QT, Int}}([space_entry])
     spaces = (copy(space_template), copy(space_template))
 
-    return QSpace(symm(q), rows, inds, spaces)
+    return TLArray(symm(q), rows, inds, spaces)
 end
 
-function ⊗(q1::QSpace{T1, QD1, N, RD1},
-           q2::QSpace{T2, QD2, N, RD2}) where {T1, T2, QD1, QD2, N, RD1, RD2}
-    @assert symm(q1) == symm(q2) "QSpace objects must share the same symmetry tuple"
+function ⊗(q1::TLArray{T1, QD1, N, RD1},
+           q2::TLArray{T2, QD2, N, RD2}) where {T1, T2, QD1, QD2, N, RD1, RD2}
+    @assert symm(q1) == symm(q2) "TLArray objects must share the same symmetry tuple"
 
     q1_ext = addSingleton(q1, QD1 + 1; dir='-')
     q2_ext = addSingleton(q2, 1; dir='+')
     return contract(q1_ext, (QD1 + 1,), q2_ext, (1,))
 end
 
-LinearAlgebra.kron(q1::QSpace, q2::QSpace) = q1 ⊗ q2
+LinearAlgebra.kron(q1::TLArray, q2::TLArray) = q1 ⊗ q2
 
 include("getLocalSpace.jl")
 include("getIdentity.jl")

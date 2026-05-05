@@ -1,5 +1,5 @@
 #using LurCGT
-#using QSpaces
+#using Telum
 #using LinearAlgebra
 include("MPO.jl")
 include("DMRG_GS.jl")
@@ -7,8 +7,8 @@ include("DMRG_GS.jl")
 # Find approximate ground state by using iterative diagonalization
 # Currently cannot choose the final quantum number, 
 # just return the resulting lowest energy state
-function init_MPS(MPO::Vector{<:QSpace}, Nkeep::Int, Nkeep_last::Int=1; tol=0.0)
-    N = length(MPO); MPS = Vector{QSpace{Float64, 3}}(undef, N)
+function init_MPS(MPO::Vector{<:TLArray}, Nkeep::Int, Nkeep_last::Int=1; tol=0.0)
+    N = length(MPO); MPS = Vector{TLArray{Float64, 3}}(undef, N)
     zq = zero_qlabels(MPO[1])
     Aprev = getvac(MPO[1], ("SLeft", "SLeft"))
     Hprev = addSingleton(Aprev, 3; itag="OLeft", dir='-')

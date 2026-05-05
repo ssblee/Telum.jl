@@ -1,12 +1,12 @@
 using LinearAlgebra
 using SparseArrayKit
 using Test
-const _compress_sector = QSpaces._compress_sector
-const _contract_om_axis = QSpaces._contract_om_axis
-const _qr_shared_isometry = QSpaces._qr_shared_isometry
-const _row_qlabel = QSpaces._row_qlabel
-const change_dir = QSpaces.change_dir
-const contract_old = QSpaces.contract_old
+const _compress_sector = Telum._compress_sector
+const _contract_om_axis = Telum._contract_om_axis
+const _qr_shared_isometry = Telum._qr_shared_isometry
+const _row_qlabel = Telum._row_qlabel
+const change_dir = Telum.change_dir
+const contract_old = Telum.contract_old
 ⊗(a, b) = kron(b, a)
 
 
@@ -122,8 +122,8 @@ end
 
 
 # ─── to_sparse_array ───────────────────────────────────────────────────────────
-# Convert a QSpace to a sparse array using its spaces field for offset computation.
-function to_sparse_array(q::QSpace{T, QD, N, RD},
+# Convert a TLArray to a sparse array using its spaces field for offset computation.
+function to_sparse_array(q::TLArray{T, QD, N, RD},
     ::Type{FT} = Float64) where {T, QD, N, RD, FT}
 
     symmetries = symm(q)
@@ -332,7 +332,7 @@ function test_compress_sector_zero_wmat_shortcircuits(; N::Int = 3,
     @test isnothing(_compress_sector(new_wmats, new_RMTs, QD_out, 0.0))
     dummy_qlabels = ntuple(_ -> (ntuple(_ -> (0,), QD_out), ntuple(identity, QD_out), (QD_out, 0)), N)
     dummy_ps = ProductSymm((ntuple(_ -> U1, N))...)
-    @test isnothing(QSpaces.merge_new_row(new_wmats, new_RMTs, dummy_qlabels,
+    @test isnothing(Telum.merge_new_row(new_wmats, new_RMTs, dummy_qlabels,
                                           dummy_ps, QD_out, 0.0))
 
     direct = nothing
@@ -373,13 +373,13 @@ end
 
 function test_FAcont(option::LocalSpaceOptions)
     q = getLocalSpace(option);
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
-    qf = QSpace(q.F, ("lur2", "lur2", "op"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
+    qf = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     a = getIdentity((qi1, 2), (qi2, 2));
 
     ct = qf * a
-    Farr = to_sparse_array(q.F)
+    Farr = to_sparse_array(getproperty(q, Symbol("F", join(1:option.nchannels))))
     Aarr = to_sparse_array(a)
 
     ctarr1 = contract_sparse(Farr, Aarr, (2,), (2,))
@@ -393,9 +393,9 @@ end
 
 function test_contract_abelian_wmats_are_unit(option::LocalSpaceOptions)
     q = getLocalSpace(option)
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
-    qf = QSpace(q.F, ("lur2", "lur2", "op"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
+    qf = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     a = getIdentity((qi1, 2), (qi2, 2))
 
     ct = qf * a
@@ -408,21 +408,21 @@ end
 
 function test_getIdentity_direct_contract(option::LocalSpaceOptions)
     q = getLocalSpace(option)
-    qi = QSpace(q.I, ("lur", "lur"))
+    qi = TLArray(q.I, ("lur", "lur"))
     a_pairs = getIdentity((qi, 1); itag="fused")
     a = getIdentity(qi, 1; itag="fused")
 
     @test a.inds == a_pairs.inds
     @test a.spaces == a_pairs.spaces
     @test _rows_equal(a.rows, a_pairs.rows)
-    @test a.inds[1] == QIndex(qi.inds[1].itags, '-', qi.inds[1].plev, qi.inds[1].lock, qi.inds[1].dual)
+    @test a.inds[1] == TLIndex(qi.inds[1].itags, '-', qi.inds[1].plev, qi.inds[1].lock, qi.inds[1].dual)
     @test a.spaces[1] == qi.spaces[1]
-    @test a.inds[2] == QIndex("fused", '-')
+    @test a.inds[2] == TLIndex("fused", '-')
 
     ct = qi * a
     @test length(ct.inds) == 2
     @test ct.inds[1] == qi.inds[2]
-    @test ct.inds[2] == QIndex("fused", '-')
+    @test ct.inds[2] == TLIndex("fused", '-')
     @test ct.spaces[1] == qi.spaces[2]
     @test !isempty(ct.rows)
 end
@@ -441,8 +441,8 @@ end
 
 function test_1jpair(option::LocalSpaceOptions)
     q = getLocalSpace(option);
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
 
     q1 = get1jtensor(qi1, 2)
     q2 = permutedims(q1', (2, 1))
@@ -469,9 +469,9 @@ end
 
 function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     q0 = getLocalSpace(option, ("site1", "site2", "op"))
-    q = q0.F
+    q = getproperty(q0, Symbol("F", join(1:option.nchannels)))
 
-    function test_same_qspace_structure(q1::QSpace, q2::QSpace)
+    function test_same_qspace_structure(q1::TLArray, q2::TLArray)
         @test q1.inds == q2.inds
         @test q1.spaces == q2.spaces
         @test length(q1.rows) == length(q2.rows)
@@ -499,7 +499,7 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     test_same_qspace_structure(flipped_kw, flipped_explicit)
 
     @test flipped_explicit.inds[1] == q.inds[1]
-    @test flipped_explicit.inds[2] == change_dir(QSpaces.change_green(q.inds[2]))
+    @test flipped_explicit.inds[2] == change_dir(Telum.change_green(q.inds[2]))
     @test flipped_explicit.inds[3] == q.inds[3]
 
     roundtrip = legflip(flipped_explicit, 2)
@@ -514,8 +514,8 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     test_same_qspace_structure(flipped_multi_kw, flipped_multi_tuple)
 
     @test flipped_multi_tuple.inds[1] == q.inds[1]
-    @test flipped_multi_tuple.inds[2] == change_dir(QSpaces.change_green(q.inds[2]))
-    @test flipped_multi_tuple.inds[3] == change_dir(QSpaces.change_green(q.inds[3]))
+    @test flipped_multi_tuple.inds[2] == change_dir(Telum.change_green(q.inds[2]))
+    @test flipped_multi_tuple.inds[3] == change_dir(Telum.change_green(q.inds[3]))
 
     roundtrip_multi = legflip(flipped_multi_tuple, (2, 3))
     @test roundtrip_multi.inds == q.inds
@@ -528,21 +528,21 @@ end
 
 function test_contract_verify_legs_checks_green(option::LocalSpaceOptions)
     q0 = getLocalSpace(option, ("site1", "site2", "op"))
-    q = q0.F
+    q = getproperty(q0, Symbol("F", join(1:option.nchannels)))
     j = get1jtensor(q, 2)
 
-    @test contract(q, (2,), j, (1,); reduce_lock=false) isa QSpace
+    @test contract(q, (2,), j, (1,); reduce_lock=false) isa TLArray
     @test_throws AssertionError contract(q, (2,), j, (2,); reduce_lock=false)
-    @test contract(q, (2,), j, (2,); reduce_lock=false, verify_legs=false) isa QSpace
+    @test contract(q, (2,), j, (2,); reduce_lock=false, verify_legs=false) isa TLArray
 end
 
 # ─── test_conj ───────────────────────────────────────────────────────────────
 # Invariant: conj(q) represented as a dense/sparse array equals the
 # elementwise complex conjugate of q's sparse array.
 #
-# Tested QSpace objects (drawn from existing test helpers):
+# Tested TLArray objects (drawn from existing test helpers):
 #   1. q.I       — 2-leg identity operator
-#   2. q.F       — 3-leg creation/annihilation operator
+#   2. getproperty(q, Symbol("F", join(1:option.nchannels)))       — 3-leg creation/annihilation operator
 #   3. a         — 4-leg identity from getIdentity (tensor product of two I legs)
 #   4. ct        — 4-leg contraction result F ⊗ a from test_FAcont
 #
@@ -554,16 +554,16 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 function test_conj(option::LocalSpaceOptions)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2))
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     ct  = qf * a
 
-    # Pairs (label, QSpace) to test
+    # Pairs (label, TLArray) to test
     cases = [
         ("I",  q.I),
-        ("F",  q.F),
+        ("F",  getproperty(q, Symbol("F", join(1:option.nchannels)))),
         ("a",  a),
         ("ct", ct),
     ]
@@ -583,10 +583,10 @@ function test_conj(option::LocalSpaceOptions)
 end
 
 # ─── test_svdQS ────────────────────────────────────────────────────────────────
-# Test SVD by performing decomposition and reconstructing the original QSpace.
+# Test SVD by performing decomposition and reconstructing the original TLArray.
 #
 # Arguments:
-#   q         : QSpace to decompose
+#   q         : TLArray to decompose
 #   left_legs : legs to group on the "U" side (same as svd)
 #   cutoff    : singular value cutoff (default 1e-12)
 #   tol       : tolerance for reconstruction error (default 1e-9)
@@ -598,11 +598,11 @@ end
 # Algorithm:
 #   1. Perform svd(q, left_legs; cutoff)
 #   2. Contract U * S to get US
-#   3. Contract US * Vd to get reconstructed QSpace
+#   3. Contract US * Vd to get reconstructed TLArray
 #   4. Permute reconstructed to match original leg order
 #   5. Convert both to sparse arrays and compute norm of difference
 # ─────────────────────────────────────────────────────────────────────────────
-function test_svdQS(q::QSpace{T, QD, N, RD},
+function test_svdQS(q::TLArray{T, QD, N, RD},
                     left_legs;
                     cutoff::Float64 = 1e-12,
                     tol::Float64 = 1e-9,
@@ -718,25 +718,25 @@ end
 #
 # Cases tested per call:
 #   q.I  – rank-2 identity (QD = 2, exercises the dim·‖RMT‖² formula)
-#   q.F  – rank-3 operator (QD = 3, standard CGT-orthonormal formula)
+#   getproperty(q, Symbol("F", join(1:option.nchannels)))  – rank-3 operator (QD = 3, standard CGT-orthonormal formula)
 #   ct   – rank-4 tensor   (QD = 4, after F * identity contraction)
 #
 # For (b) to work every pair (q leg l, conj(q) leg l) must form a valid
 # contraction pair: same itags, opposite directions.  conj() flips all
 # directions, so the pairing is always leg-for-leg given that all legs of q
-# already carry distinct QIndex values (full-rank contraction → 0D scalar).
+# already carry distinct TLIndex values (full-rank contraction → 0D scalar).
 # ─────────────────────────────────────────────────────────────────────────────
 function test_norm(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     ct  = qf * a   # rank-4: legs (lur1_in, lur2_in, lur2_out, op)
 
     cases = [
         ("I",  q.I),
-        ("F",  q.F),
+        ("F",  getproperty(q, Symbol("F", join(1:option.nchannels)))),
         ("ct", ct),
     ]
 
@@ -750,7 +750,7 @@ function test_norm(option::LocalSpaceOptions; tol::Float64 = 1e-9)
 
         # ── (b) compare norm² with scalar from qs * qs' ────────────────────
         #   qs' = conj(qs) flips all leg directions; contraction over all
-        #   matching legs yields a 0D QSpace whose single element is ‖qs‖².
+        #   matching legs yields a 0D TLArray whose single element is ‖qs‖².
         scalar_qs     = qs * qs'
         println(qs)
         norm_sq_contr = abs(scalar_qs[])
@@ -927,10 +927,10 @@ function test_eigen_hermitian_leg_guard(option::LocalSpaceOptions)
 
     idx1, idx2 = A.inds
     bad_inds = (
-        QIndex("eigL", idx1.dir, idx1.plev, idx1.lock, idx1.dual),
-        QIndex("eigR", idx2.dir, idx2.plev, idx2.lock, idx2.dual),
+        TLIndex("eigL", idx1.dir, idx1.plev, idx1.lock, idx1.dual),
+        TLIndex("eigR", idx2.dir, idx2.plev, idx2.lock, idx2.dual),
     )
-    A_bad = QSpace(A, bad_inds)
+    A_bad = TLArray(A, bad_inds)
 
     @test_throws AssertionError eigen(A_bad; hermitian = true)
     @test_throws AssertionError eigen(A_bad)
@@ -993,7 +993,7 @@ function test_missing_spaces_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-
     removed_dim = size(removed_row.RMT.data, 1)
 
     kept_rows = copy(q.I.rows[2:end])
-    A = QSpace(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
+    A = TLArray(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
 
     result = eigen(A; hermitian = true)
     D = result.D
@@ -1034,7 +1034,7 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     removed_dim = size(removed_row.RMT.data, 1)
 
     kept_rows = copy(q.I.rows[2:end])
-    A = QSpace(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
+    A = TLArray(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
 
     result = eigen(A; hermitian = true)
     kept, discarded = discard_eigen(result, removed_dim, 0.0, "eigK", "eigD"; hermitian = true)
@@ -1064,7 +1064,7 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     @test any(ql == removed_sector for (ql, _) in kept.V.spaces[2])
     @test all(ql != removed_sector for (ql, _) in discarded.D.spaces[1])
 
-    result_full = eigen_full(A)
+    result_full = Telum._eigen_general(A)
     kept_full, discarded_full = discard_eigen(result_full, removed_dim, 0.0, "eigKf", "eigDf"; hermitian = false)
     eig_tag_full = result_full.D.inds[1].itags
     v_full_orig_leg = only(findall(i -> result_full.V.inds[i].itags != eig_tag_full, 1:2))
@@ -1216,11 +1216,11 @@ function test_discard_eigen_tol(option::LocalSpaceOptions)
     @test [x[1] for x in kept_tol.eig_list] ≈ [1.0, 10.0, 10.1]
 end
 
-# ─── test_eigen_full_discard ─────────────────────────────────────────────────
+# ─── test_eigen_general_discard ─────────────────────────────────────────────────
 # Verify that the result struct and discard path also work for the full
 # non-Hermitian eigendecomposition, including V_inv slicing.
 # ─────────────────────────────────────────────────────────────────────────────
-function test_eigen_full_discard(option::LocalSpaceOptions)
+function test_eigen_general_discard(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
     rng = Random.MersenneTwister(7)
@@ -1232,7 +1232,7 @@ function test_eigen_full_discard(option::LocalSpaceOptions)
         r.RMT.data .= reshape(ComplexF64.(M), sz)
     end
 
-    result = eigen_full(A)
+    result = Telum._eigen_general(A)
     @test !isnothing(result.V_inv)
 
     Nkeep = min(2, length(result.eig_list))
@@ -1270,7 +1270,7 @@ function test_discard_eigen_itag(option::LocalSpaceOptions)
         r.RMT.data .= reshape(ComplexF64.(M), sz)
     end
 
-    result = eigen_full(A, "origEig")
+    result = Telum._eigen_general(A, "origEig")
     kept_tag = "keptEig"
     discarded_tag = "discardedEig"
     kept, discarded = discard_eigen(
@@ -1318,10 +1318,10 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 function test_spaces_svdQS(option::LocalSpaceOptions)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     ct  = qf * a   # rank-4: legs (lur1_in, lur2_in, lur2_out, op)
 
     # qlabel set from a splist
@@ -1405,28 +1405,28 @@ end
 
 function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e-12)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 2)
-    split_blocks = QSpaces._get_svd_cgt_split_rows(ct, left_legs; tol)
-    expected_blocks = QSpaces._get_svd_cgt_split_rows(ct, left_legs; tol)
-    QSpaces._share_svd_row_isometries!(expected_blocks, symm(ct); tol=tol)
-    prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    split_blocks = Telum._get_svd_cgt_split_rows(ct, left_legs; tol)
+    expected_blocks = Telum._get_svd_cgt_split_rows(ct, left_legs; tol)
+    Telum._share_svd_row_isometries!(expected_blocks, symm(ct); tol=tol)
+    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
     split_blocks_via_svd = prep.blocks_by_symm
 
     direct_pairs_by_symm = ntuple(_ -> Tuple{Any, Any}[], length(symm(ct)))
     for (ri, r) in enumerate(ct.rows)
         row_pairs = ntuple(length(symm(ct))) do n
-            left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
-            left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
+            left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
+            left_spaces, right_spaces = Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
 
             pairs = Tuple{Any, Any}[]
-            for block in QSpaces._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
-                reduced = QSpaces._reduce_svd_cgr_block(
+            for block in Telum._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
+                reduced = Telum._reduce_svd_cgr_block(
                     block, ri, left_spaces, right_spaces; tol=tol)
                 isnothing(reduced) || push!(pairs, (block, reduced))
             end
@@ -1484,20 +1484,20 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
             raw_block_info = raw_info_map[key]
 
             r = ct.rows[shared_block.row_index]
-            left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
+            left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
             expected_left_spaces, expected_right_spaces =
-                QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
+                Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
             @test shared_block.left_spaces == expected_left_spaces
             @test shared_block.right_spaces == expected_right_spaces
 
-            recon = QSpaces._reconstruct_reduced_svd_cgr_block(shared_block)
+            recon = Telum._reconstruct_reduced_svd_cgr_block(shared_block)
             denom = max(norm(raw_block_info.coeffs), 1.0)
             @test norm(recon - raw_block_info.coeffs) / denom < 1e-10
         end
     end
 
     for n in 1:length(symm(ct))
-        QSpaces.isabelian(symm(ct)[n]) && continue
+        Telum.isabelian(symm(ct)[n]) && continue
 
         left_groups = Dict{Any, Vector{Matrix{Float64}}}()
         right_groups = Dict{Any, Vector{Matrix{Float64}}}()
@@ -1525,14 +1525,14 @@ end
 
 function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Float64 = 1e-12)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 2)
-    prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
     split_blocks = prep.blocks_by_symm
     got = prep.intermediate_qrows
 
@@ -1540,12 +1540,12 @@ function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Floa
     expected = Dict{Sector, Vector{Int}}()
     for (ri, r) in enumerate(ct.rows)
         qchoices = ntuple(length(symm(ct))) do n
-            left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
-            left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
+            left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
+            left_spaces, right_spaces = Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
 
             qs = Tuple{Vararg{Int}}[]
-            for block in QSpaces._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
-                reduced = QSpaces._reduce_svd_cgr_block(
+            for block in Telum._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
+                reduced = Telum._reduce_svd_cgr_block(
                     block, ri, left_spaces, right_spaces; tol=tol)
                 isnothing(reduced) || push!(qs, reduced.q)
             end
@@ -1570,25 +1570,25 @@ end
 function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOptions;
                                                          tol::Float64 = 1e-12)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 2)
-    prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
     qrows = prep.intermediate_qrows
     got_left_sigs, got_right_sigs = prep.left_signatures, prep.right_signatures
     got = prep.intermediate_qrow_classes
 
     left_sigs = [ntuple(length(symm(ct))) do n
-        left_legs_canon = QSpaces._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
-        QSpaces._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[1]
+        left_legs_canon = Telum._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
+        Telum._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[1]
     end for ri in 1:length(ct.rows)]
     right_sigs = [ntuple(length(symm(ct))) do n
-        left_legs_canon = QSpaces._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
-        QSpaces._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[2]
+        left_legs_canon = Telum._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
+        Telum._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[2]
     end for ri in 1:length(ct.rows)]
 
     @test got_left_sigs == left_sigs
@@ -1656,14 +1656,14 @@ end
 
 function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64 = 1e-12)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 4)
-    prep = QSpaces._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
 
     expected_signatures = [begin
         per_symm = ntuple(length(symm(ct))) do n
@@ -1699,7 +1699,7 @@ function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64
 end
 
 function test_svd_cgr_split_spaces_preserves_physical_leg_order()
-    cgr = QSpaces.CGR(
+    cgr = Telum.CGR(
         U1,
         ((10,), (20,), (30,), (40,)),
         LurTensor([1.0;;]),
@@ -1708,8 +1708,8 @@ function test_svd_cgr_split_spaces_preserves_physical_leg_order()
     )
 
     left_legs = (1, 2)
-    left_legs_canon = QSpaces._svd_cgr_leftlegs(cgr, left_legs)
-    left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(cgr, left_legs_canon)
+    left_legs_canon = Telum._svd_cgr_leftlegs(cgr, left_legs)
+    left_spaces, right_spaces = Telum._svd_cgr_split_spaces(cgr, left_legs_canon)
 
     @test left_spaces == (((20,), (10,)), ())
     @test right_spaces == ((), ((40,), (30,)))
@@ -1717,10 +1717,10 @@ end
 
 function _svd_cgtsvd_fixture(option::LocalSpaceOptions)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     ct  = qf * a
     return ct, (1, 2)
 end
@@ -1735,7 +1735,7 @@ function _svd_reconstruction_permutation(left_legs, rank::Int)
     return Tuple(perm)
 end
 
-function _diag_singular_values(q::QSpace)
+function _diag_singular_values(q::TLArray)
     isempty(q.rows) && return Float64[]
     vals = Float64[]
     for r in q.rows
@@ -1752,9 +1752,9 @@ function test_svd_cgtsvd_factorization(option::LocalSpaceOptions;
 
     U, S, Vd = svd_cgtsvd(ct, left_legs; cutoff=cutoff)
 
-    @test U isa QSpace
-    @test S isa QSpace
-    @test Vd isa QSpace
+    @test U isa TLArray
+    @test S isa TLArray
+    @test Vd isa TLArray
 
     @test U.inds[end].dir == '-'
     @test S.inds[1].dir == '+'
@@ -1801,19 +1801,19 @@ function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
                                          tol::Float64 = 1e-12,
                                          recon_tol::Float64 = 1e-10)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 2)
     for (ri, r) in enumerate(ct.rows)
         for n in 1:length(symm(ct))
-            left_legs_canon = QSpaces._svd_cgr_leftlegs(r.cgrs[n], left_legs)
-            left_spaces, right_spaces = QSpaces._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
-            raw_blocks = QSpaces._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
-            reduced_pairs = [(raw, QSpaces._reduce_svd_cgr_block(
+            left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
+            left_spaces, right_spaces = Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
+            raw_blocks = Telum._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
+            reduced_pairs = [(raw, Telum._reduce_svd_cgr_block(
                 raw, ri, left_spaces, right_spaces; tol=tol)) for raw in raw_blocks]
             filter!(pair -> !isnothing(pair[2]), reduced_pairs)
             reduced_blocks = [pair[2] for pair in reduced_pairs]
@@ -1836,7 +1836,7 @@ function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
                 @test left_gram ≈ Matrix{Float64}(I, size(left_gram, 1), size(left_gram, 2)) atol=recon_tol rtol=recon_tol
                 @test right_gram ≈ Matrix{Float64}(I, size(right_gram, 1), size(right_gram, 2)) atol=recon_tol rtol=recon_tol
 
-                recon = QSpaces._reconstruct_reduced_svd_cgr_block(reduced)
+                recon = Telum._reconstruct_reduced_svd_cgr_block(reduced)
                 denom = max(norm(raw.coeffs), 1.0)
                 @test norm(recon - raw.coeffs) / denom < recon_tol
             end
@@ -1845,19 +1845,15 @@ function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
 end
 
 # ─── test_truncate_svdQS ─────────────────────────────────────────────────────
-# Verify that Nkeep truncation keeps the largest singular values, and that
-# missing sectors are still counted as zero singular values when enough states
-# are kept to include them. Original-leg spaces on U and Vd must stay intact.
+# Verify that Nkeep truncation keeps the largest singular values.
+# Original-leg spaces on U and Vd must stay intact.
 # ─────────────────────────────────────────────────────────────────────────────
 function test_truncate_svdQS(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     @test !isempty(q.I.rows)
 
-    removed_row = q.I.rows[1]
-    removed_dim = size(removed_row.RMT.data, 1)
-
-    kept_rows = copy(q.I.rows[2:end])
-    A = QSpace(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
+    kept_rows = copy(q.I.rows)
+    A = TLArray(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
 
     offset = 0.0
     all_positive_vals = Float64[]
@@ -1883,42 +1879,12 @@ function test_truncate_svdQS(option::LocalSpaceOptions)
     expected_vals = sort(all_positive_vals; rev = true)[1:npositive_keep] |> sort
     @test kept_vals ≈ expected_vals
 
-    total_keep = length(all_positive_vals) + removed_dim
-    U, S, Vd = svd(A, (1,); Nkeep = total_keep)
+    U, S, Vd = svd(A, (1,); Nkeep = length(all_positive_vals))
 
     @test U.spaces[1] == A.spaces[1]
     @test Vd.spaces[2] == A.spaces[2]
     @test U.spaces[2] == S.spaces[1]
     @test Vd.spaces[1] == S.spaces[2]
-
-    s_left_row_sectors = Set(
-        Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(S)))
-        for r in S.rows
-    )
-    s_right_row_sectors = Set(
-        Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[2]] for n in 1:length(symm(S)))
-        for r in S.rows
-    )
-
-    missing_u_sector = only([
-        ql for (ql, dim) in U.spaces[2]
-        if dim == removed_dim && ql ∉ s_left_row_sectors
-    ])
-    missing_vd_sector = only([
-        ql for (ql, dim) in Vd.spaces[1]
-        if dim == removed_dim && ql ∉ s_right_row_sectors
-    ])
-
-    @test missing_u_sector in Set(ql for (ql, _) in S.spaces[1])
-    @test missing_vd_sector in Set(ql for (ql, _) in S.spaces[2])
-
-    u_row = only([r for r in U.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[end]] for n in 1:length(symm(U))) == missing_u_sector])
-    u_mat = reshape(u_row.RMT.data, size(u_row.RMT.data, 1), size(u_row.RMT.data, 2))
-    @test u_mat ≈ Matrix(I, removed_dim, removed_dim)
-
-    vd_row = only([r for r in Vd.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(Vd))) == missing_vd_sector])
-    vd_mat = reshape(vd_row.RMT.data, size(vd_row.RMT.data, 1), size(vd_row.RMT.data, 2))
-    @test vd_mat ≈ Matrix(I, removed_dim, removed_dim)
 end
 
 # ─── test_lock_reduce ─────────────────────────────────────────────────────────
@@ -1940,12 +1906,12 @@ function test_lock_reduce(option::LocalSpaceOptions)
     # A1: ("ct" '+' lock=0,  "free" '-' lock=1)
     # B1: ("ct" '-' lock=0,  "free" '+' lock=0)
     # Contract A1*B1 on "ct"; A1's "free" lock=1 has a match in B1 → lock → 0.
-    A1 = QSpace(q.I,
-        (QIndex("ct",   '+', 0, 0),
-         QIndex("free", '-', 0, 1)))
-    B1 = QSpace(q.I',
-        (QIndex("ct",   '-', 0, 0),
-         QIndex("free", '+', 0, 0)))
+    A1 = TLArray(q.I,
+        (TLIndex("ct",   '+', 0, 0),
+         TLIndex("free", '-', 0, 1)))
+    B1 = TLArray(q.I',
+        (TLIndex("ct",   '-', 0, 0),
+         TLIndex("free", '+', 0, 0)))
 
     C1 = A1 * B1
     free_pos1 = findfirst(idx -> idx.itags == "free" && idx.dir == '-', C1.inds)
@@ -1955,12 +1921,12 @@ function test_lock_reduce(option::LocalSpaceOptions)
     # ── Scenario 2: no matching leg → lock unchanged ─────────────────────────
     # A2: ("ct" '+' lock=0,  "unique" '-' lock=1)   — from q.I
     # B2: ("ct" '-' lock=0,  "other"  '+' lock=0)   — from q.I'; "unique" absent
-    A2 = QSpace(q.I,
-        (QIndex("ct",     '+', 0, 0),
-         QIndex("unique", '-', 0, 1)))
-    B2 = QSpace(q.I',
-        (QIndex("ct",    '-', 0, 0),
-         QIndex("other", '+', 0, 0)))
+    A2 = TLArray(q.I,
+        (TLIndex("ct",     '+', 0, 0),
+         TLIndex("unique", '-', 0, 1)))
+    B2 = TLArray(q.I',
+        (TLIndex("ct",    '-', 0, 0),
+         TLIndex("other", '+', 0, 0)))
 
     C2 = A2 * B2
     unique_pos = findfirst(idx -> idx.itags == "unique", C2.inds)
@@ -1970,9 +1936,9 @@ function test_lock_reduce(option::LocalSpaceOptions)
     # ── Scenario 3: lock already 0 with match → stays 0 ─────────────────────
     # A3's "free" lock=0 and B1 has a matching "free" leg, but 0 cannot go lower.
     # Must use explicit contract (not *) to avoid auto-contracting both "ct" and "free".
-    A3 = QSpace(q.I,
-        (QIndex("ct",   '+', 0, 0),
-         QIndex("free", '-', 0, 0)))
+    A3 = TLArray(q.I,
+        (TLIndex("ct",   '+', 0, 0),
+         TLIndex("free", '-', 0, 0)))
     C3 = contract(A3, (1,), B1, (1,))
     free_pos3 = findfirst(idx -> idx.itags == "free" && idx.dir == '-', C3.inds)
     @test C3.inds[free_pos3].lock == 0
@@ -1981,20 +1947,20 @@ end
 
 # ─── test_contract_requires_matching_spaces_in_star ─────────────────────────
 # Verify that automatic contraction via `*` does not match tagged legs when
-# their precomputed space metadata differs, even if the QIndex fields match.
+# their precomputed space metadata differs, even if the TLIndex fields match.
 function test_contract_requires_matching_spaces_in_star(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
 
-    A = QSpace(q.I,
-        (QIndex("ct", '+', 0, 0),
-         QIndex("",   '-', 0, 0)))
-    B = QSpace(q.I',
-        (QIndex("ct", '-', 0, 0),
-         QIndex("",   '+', 0, 0)))
+    A = TLArray(q.I,
+        (TLIndex("ct", '+', 0, 0),
+         TLIndex("",   '-', 0, 0)))
+    B = TLArray(q.I',
+        (TLIndex("ct", '-', 0, 0),
+         TLIndex("",   '+', 0, 0)))
 
     first_sector, first_dim = first(B.spaces[1])
     bad_leg1 = vcat([(first_sector, first_dim + 1)], B.spaces[1][2:end])
-    B_bad = QSpace(symm(B), B.rows, B.inds, (bad_leg1, B.spaces[2]))
+    B_bad = TLArray(symm(B), B.rows, B.inds, (bad_leg1, B.spaces[2]))
 
     @test_throws AssertionError A * B_bad
 end
@@ -2010,10 +1976,10 @@ end
 #   4. Large tensor  (ct × ct', contracting a subset of legs)
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Helper: replicate the matching logic of Base.:*(::QSpace, ::QSpace) to find
+# Helper: replicate the matching logic of Base.:*(::TLArray, ::TLArray) to find
 # the contracted leg pairs, then call both contract_old and contract with
 # those same explicit legs. Returns the comparison norm.
-function _compare_contract_old_vs_new(q1::QSpace, q2::QSpace;
+function _compare_contract_old_vs_new(q1::TLArray, q2::TLArray;
                                       tol::Float64 = 1e-10)
     QD1 = length(q1.inds)
     QD2 = length(q2.inds)
@@ -2059,9 +2025,9 @@ end
 
 function test_contract_default(option::LocalSpaceOptions; tol::Float64 = 1e-10)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
+    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
     a   = getIdentity((qi1, 2), (qi2, 2))
 
     # ── Case 1: F × Identity (3-leg × 4-leg, 1 contracted leg) ──────────────

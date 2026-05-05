@@ -1,4 +1,4 @@
-module QSpaces
+module Telum
 
 using LinearAlgebra
 using SparseArrays
@@ -16,14 +16,14 @@ import LurCGT: nzops, remove_zeros, totxt, transf_basis!
 ⊗(a::AbstractVector, b::AbstractVector) = kron(b, a)
 comm(A, B) = A * B - B * A
 
-include("QSpace.jl")
+include("TLArray.jl")
 
-export QSpace, LurTensor, QIndex, Itag, CGR, row
+export TLArray, LurTensor, TLIndex, Itag, CGR, row
 export ProductSymm, productsymm, product_symms, symm, nsymms
 export LocalSpaceOptions, SpinOptions, FermionOptions, FermionSOptions
 export Z, U1, SU, SO, Sp
 export getLocalSpace, getIdentity, get1jtensor, legflip, contract
-export eigen_full, discard_eigen
+export discard_eigen
 export svd_leg, svd_cgtsvd, get_new_cgp
 export empty_qspace, qlabeltype, zero_qlabels, getvac
 export addSingleton, deleteSingleton, ⊗

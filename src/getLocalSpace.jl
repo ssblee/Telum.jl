@@ -22,7 +22,7 @@
 #              |
 #              ▼
 #   4. compress_irops(...)           [internal helper below]
-#        └─► one QSpace object per IROP
+#        └─► one TLArray object per IROP
 #
 # To add a new space type:
 #   a) Define a new subtype of LocalSpaceOptions in options.jl.
@@ -175,7 +175,7 @@ function multiplyNreduce!(symm::NTuple{N, Any},
     return data_full
 end
 
-# Convert mult_ind from decompose_space to spaces format for QSpace
+# Convert mult_ind from decompose_space to spaces format for TLArray
 # mult_ind: Dict{qlabels => Vector{(start_idx, end_idx)}}
 # returns: Vector{Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}} - list of (qlabels, RMT_dim)
 # Sorted by qlabels for consistency
@@ -204,12 +204,12 @@ function getLocalSpace(opts::LocalSpaceOptions,
     # Step 2 – decompose local space into symmetry sectors
     ortho_vecs, space_list = decompose_space(symm, weights, lowering_ops)
     
-    # Convert space_list to splist format for QSpace.spaces field
+    # Convert space_list to splist format for TLArray.spaces field
     # First two legs share the same local space structure
     local_splist = _mult_ind_to_splist(symm, space_list)
 
     dir = ['+', '-', '-']
-    QSpaces = Dict{Symbol, QSpace}()
+    Telum = Dict{Symbol, TLArray}()
     for (name, (mwirop, float_fac)) in mwirops
         # Step 3 – get full IROP in the symmetry-adapted basis
         irop_full, irop_qlabel = get_IROP(symm, weights, lowering_ops, mwirop)
@@ -217,12 +217,12 @@ function getLocalSpace(opts::LocalSpaceOptions,
         #println("Tranformed IROP for $name:")
         #display(Array(irop_full))
 
-        # Step 4 – compress each IROP matrix into a QSpace object
+        # Step 4 – compress each IROP matrix into a TLArray object
         data_full = decompose_irop(symm, irop_full, space_list, irop_qlabel)
         # Multiply float factor and reduce to 2D if the third dimension is singleton
         reduced = multiplyNreduce!(symm, data_full, float_fac)
 
-        inds = Tuple(QIndex(tags[i], dir[i]) for i in 1:3)
+        inds = Tuple(TLIndex(tags[i], dir[i]) for i in 1:3)
         rows = get_rows(reduced, symm); qd = get_qd(rows[1])
         
         # Build spaces tuple: first two legs use local_splist, third leg (if exists) computed from rows
@@ -234,8 +234,8 @@ function getLocalSpace(opts::LocalSpaceOptions,
             spaces = (local_splist, local_splist, third_splist)
         end
         
-        q = QSpace(symm, rows, inds[1:qd], spaces)
-        QSpaces[name] = q
+        q = TLArray(symm, rows, inds[1:qd], spaces)
+        Telum[name] = q
     end
-    return NamedTuple(QSpaces)
+    return NamedTuple(Telum)
 end

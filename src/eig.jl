@@ -1,9 +1,9 @@
 ﻿# ─── eigen ────────────────────────────────────────────────────────────────────
 #
-# Perform symmetry-adapted eigendecomposition of a rank-2 QSpace object.
+# Perform symmetry-adapted eigendecomposition of a rank-2 TLArray object.
 #
 # Arguments:
-#   q          : QSpace{T, 2, N, RD} to decompose (rank 2, one incoming and one outgoing leg)
+#   q          : TLArray{T, 2, N, RD} to decompose (rank 2, one incoming and one outgoing leg)
 #   eig_tag    : itag for the new eigenvector bond leg (default "eig")
 #   hermitian  : if true, assume each RMT block is Hermitian and skip the
 #                Hermiticity check. If false (default), compute
@@ -11,9 +11,9 @@
 #                general eigensolver automatically.
 #
 # Returns `EigenResult(V, D, V_inv, eig_list)` where:
-#   D        : diagonal QSpace with legs normalized to ('+', '-')
-#   V        : eigenvector QSpace with legs normalized to ('+', '-')
-#   V_inv    : `nothing` on the Hermitian path, inverse eigenvector QSpace on
+#   D        : diagonal TLArray with legs normalized to ('+', '-')
+#   V        : eigenvector TLArray with legs normalized to ('+', '-')
+#   V_inv    : `nothing` on the Hermitian path, inverse eigenvector TLArray on
 #              the general path
 #   eig_list : Vector{Tuple{eigenval_type, Int, sector_qlabels, sector_index}}
 #              — (eigenvalue, degeneracy, sector, in-sector index) entries
@@ -38,7 +38,7 @@ struct EigenResult{TV, TD, TVI, TL}
     eig_list::TL
 end
 
-function EigenResult(V::QSpace, D::QSpace, V_inv, eig_list)
+function EigenResult(V::TLArray, D::TLArray, V_inv, eig_list)
     return EigenResult{typeof(V), typeof(D), typeof(V_inv), typeof(eig_list)}(
         V, D, V_inv, eig_list)
 end
@@ -102,36 +102,36 @@ function _renumber_eig_entries(eig_entries)
     return out
 end
 
-_retag_qindex(idx::QIndex, tag::AbstractString) = QIndex(tag, idx.dir, idx.plev, idx.lock, idx.dual)
+_retag_qindex(idx::TLIndex, tag::AbstractString) = TLIndex(tag, idx.dir, idx.plev, idx.lock, idx.dual)
 
 function _retag_eigen_result(result::EigenResult, eig_tag::AbstractString)
     d_inds = (_retag_qindex(result.D.inds[1], eig_tag), _retag_qindex(result.D.inds[2], eig_tag))
-    D = QSpace(result.D, d_inds)
+    D = TLArray(result.D, d_inds)
 
     v_inds = (result.V.inds[1], _retag_qindex(result.V.inds[2], eig_tag))
-    V = QSpace(result.V, v_inds)
+    V = TLArray(result.V, v_inds)
 
     V_inv = if isnothing(result.V_inv)
         nothing
     else
         vinv_inds = (_retag_qindex(result.V_inv.inds[1], eig_tag), result.V_inv.inds[2])
-        QSpace(result.V_inv, vinv_inds)
+        TLArray(result.V_inv, vinv_inds)
     end
 
     return EigenResult(V, D, V_inv, result.eig_list)
 end
 
-function _prepare_eigen_input(q::QSpace{T, 2, N, RD},
+function _prepare_eigen_input(q::TLArray{T, 2, N, RD},
                               opname::AbstractString) where {T, N, RD}
     dirs = (q.inds[1].dir, q.inds[2].dir)
     @assert (dirs == ('+', '-') || dirs == ('-', '+')) "$opname requires one incoming ('+') and one outgoing ('-') leg"
 
     q_work = dirs == ('+', '-') ? q : permutedims(q, (2, 1))
-    @assert q_work.spaces[1] == q_work.spaces[2] "$opname: both legs of input QSpace must have the same space list (same sectors and dimensions)"
+    @assert q_work.spaces[1] == q_work.spaces[2] "$opname: both legs of input TLArray must have the same space list (same sectors and dimensions)"
     return q_work
 end
 
-function _check_hermitian_eigen_legs(q::QSpace,
+function _check_hermitian_eigen_legs(q::TLArray,
                                      opname::AbstractString)
     idx1, idx2 = q.inds
     @assert idx1.itags == idx2.itags "$opname: Hermitian eigendecomposition requires both legs to have the same itag"
@@ -141,9 +141,9 @@ function _check_hermitian_eigen_legs(q::QSpace,
     return nothing
 end
 
-function _hermiticity_ratio(q::QSpace{T, 2, N, RD}) where {T, N, RD}
+function _hermiticity_ratio(q::TLArray{T, 2, N, RD}) where {T, N, RD}
     q_adj = permutedims(q', (2, 1))
-    q_adj = QSpace(symm(q_adj), q_adj.rows, q.inds, q_adj.spaces)
+    q_adj = TLArray(symm(q_adj), q_adj.rows, q.inds, q_adj.spaces)
 
     qnorm = norm(q)
     diffnorm = norm(q - q_adj)
@@ -153,7 +153,7 @@ function _hermiticity_ratio(q::QSpace{T, 2, N, RD}) where {T, N, RD}
     return diffnorm / qnorm
 end
 
-function _select_eig_rows(template::QSpace{T, 2, N, RD},
+function _select_eig_rows(template::TLArray{T, 2, N, RD},
                           picks::Dict{NTuple{N, Tuple{Vararg{Int}}}, Vector{Int}};
                           mode::Symbol) where {T, N, RD}
     rows_out = eltype(template.rows)[]
@@ -216,7 +216,7 @@ function _select_eig_rows(template::QSpace{T, 2, N, RD},
         error("Unknown eig row selection mode: $mode")
     end
 
-    return QSpace(symm(template), rows_out, template.inds, spaces_out)
+    return TLArray(symm(template), rows_out, template.inds, spaces_out)
 end
 
 function _effective_eigen_keep_count(eig_entries,
@@ -277,7 +277,7 @@ function _split_eigen_result(result::EigenResult,
     return kept, discarded
 end
 
-function _eigen_hermitian(q::QSpace{T, 2, N, RD},
+function _eigen_hermitian(q::TLArray{T, 2, N, RD},
                           eig_tag::AbstractString = "eig") where {T, N, RD}
 
     _check_hermitian_eigen_legs(q, "eigen")
@@ -349,20 +349,20 @@ function _eigen_hermitian(q::QSpace{T, 2, N, RD},
     spaces_D = (q.spaces[1], q.spaces[1])
     spaces_V = (q.spaces[1], q.spaces[1])
 
-    # ── Build output QIndex tuples ───────────────────────────────────────────
-    inds_D = (QIndex(eig_tag, dirs[1]), QIndex(eig_tag, dirs[2]))
+    # ── Build output TLIndex tuples ───────────────────────────────────────────
+    inds_D = (TLIndex(eig_tag, dirs[1]), TLIndex(eig_tag, dirs[2]))
 
     orig_out_ind = q.inds[out_leg]
-    inds_V = (QIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
-              QIndex(eig_tag, dirs[2]))
+    inds_V = (TLIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
+              TLIndex(eig_tag, dirs[2]))
 
-    D = QSpace(symmetries, rows_D, inds_D, spaces_D)
-    V = QSpace(symmetries, rows_V, inds_V, spaces_V)
+    D = TLArray(symmetries, rows_D, inds_D, spaces_D)
+    V = TLArray(symmetries, rows_V, inds_V, spaces_V)
 
     return EigenResult(V, D, nothing, eig_list)
 end
 
-function _eigen_general(q::QSpace{T, 2, N, RD},
+function _eigen_general(q::TLArray{T, 2, N, RD},
                         eig_tag::AbstractString = "eig") where {T, N, RD}
 
     symmetries = symm(q)
@@ -381,7 +381,7 @@ function _eigen_general(q::QSpace{T, 2, N, RD},
     for r in q.rows
         rmt = r.RMT.data
         sL, sR = size(rmt, 1), size(rmt, 2)
-        @assert sL == sR "eigen_full: RMT must be square"
+        @assert sL == sR "eigen_general: RMT must be square"
 
         mat = reshape(rmt, sL, sR)
 
@@ -442,24 +442,24 @@ function _eigen_general(q::QSpace{T, 2, N, RD},
     spaces_V    = (q.spaces[1], q.spaces[1])
     spaces_Vinv = (q.spaces[1], q.spaces[1])
 
-    inds_D = (QIndex(eig_tag, dirs[1]), QIndex(eig_tag, dirs[2]))
+    inds_D = (TLIndex(eig_tag, dirs[1]), TLIndex(eig_tag, dirs[2]))
 
     orig_out_ind = q.inds[out_leg]
-    inds_V = (QIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
-              QIndex(eig_tag, dirs[2]))
+    inds_V = (TLIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
+              TLIndex(eig_tag, dirs[2]))
 
     orig_in_ind = q.inds[in_leg]
-    inds_Vinv = (QIndex(eig_tag, dirs[1]),
-                 QIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.dual))
+    inds_Vinv = (TLIndex(eig_tag, dirs[1]),
+                 TLIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.dual))
 
-    D    = QSpace(symmetries, rows_D,    inds_D,    spaces_D)
-    V    = QSpace(symmetries, rows_V,    inds_V,    spaces_V)
-    Vinv = QSpace(symmetries, rows_Vinv, inds_Vinv, spaces_Vinv)
+    D    = TLArray(symmetries, rows_D,    inds_D,    spaces_D)
+    V    = TLArray(symmetries, rows_V,    inds_V,    spaces_V)
+    Vinv = TLArray(symmetries, rows_Vinv, inds_Vinv, spaces_Vinv)
 
     return EigenResult(V, D, Vinv, eig_list)
 end
 
-function LinearAlgebra.eigen(q::QSpace{T, 2, N, RD},
+function LinearAlgebra.eigen(q::TLArray{T, 2, N, RD},
                              eig_tag::AbstractString = "eig";
                              hermitian::Bool = false) where {T, N, RD}
     q_work = _prepare_eigen_input(q, "eigen")

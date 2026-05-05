@@ -1,8 +1,6 @@
-﻿# QSpaces.jl
+﻿# Telum.jl
 
-`QSpaces.jl` is the tensor-space layer extracted from `CGTfromInts`. It owns
-`QSpace`, `LurTensor`, local-space construction, tensor contraction, SVD/eigen
-helpers, and QIndex manipulation utilities.
+`Telum.jl` (TEnsor Library for Universal Many-body simulation) is a non-Abelian symmetric tensor network library.
 
 ## Installation
 
@@ -10,10 +8,10 @@ Once this repository is pushed to its own remote, install it with:
 
 ```julia
 using Pkg
-Pkg.add(url="<QSpaces-repo-url>")
+Pkg.add(url="<Telum-repo-url>")
 ```
 
-Because `QSpaces.jl` depends on `LurCGT.jl`, local development typically looks
+Because `Telum.jl` depends on `LurCGT.jl`, local development typically looks
 like this:
 
 ```julia
@@ -26,7 +24,7 @@ Typical usage:
 
 ```julia
 using LurCGT
-using QSpaces
+using Telum
 ```
 
 ## Testing

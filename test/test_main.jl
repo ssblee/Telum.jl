@@ -1,19 +1,19 @@
 @testset "re-exported LurCGT symmetries" begin
-    @test :Z in names(QSpaces)
-    @test :U1 in names(QSpaces)
-    @test :SU in names(QSpaces)
-    @test :SO in names(QSpaces)
-    @test :Sp in names(QSpaces)
+    @test :Z in names(Telum)
+    @test :U1 in names(Telum)
+    @test :SU in names(Telum)
+    @test :SO in names(Telum)
+    @test :Sp in names(Telum)
 
-    @test QSpaces.Z === LurCGT.Z
-    @test QSpaces.U1 === LurCGT.U1
-    @test QSpaces.SU === LurCGT.SU
-    @test QSpaces.SO === LurCGT.SO
-    @test QSpaces.Sp === LurCGT.Sp
+    @test Telum.Z === LurCGT.Z
+    @test Telum.U1 === LurCGT.U1
+    @test Telum.SU === LurCGT.SU
+    @test Telum.SO === LurCGT.SO
+    @test Telum.Sp === LurCGT.Sp
 end
 
 @testset "lock reduction in contract" begin
-    test_lock_reduce(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_lock_reduce(FermionSOptions(1, :U1, :SU2, nothing))
 end
 
 @testset "spin local space" begin
@@ -22,7 +22,7 @@ end
 
 struct NonCommutingSymmetryOptions <: LocalSpaceOptions end
 
-function QSpaces.getSymmetryInfo(::NonCommutingSymmetryOptions)
+function Telum.getSymmetryInfo(::NonCommutingSymmetryOptions)
     symm = (U1, SU{2})
     weights = ([(1,), (-1,)], [(1,), (-1,)])
     lowering_ops = (Matrix{Int}[], [sparse([0 0; 1 0])])
@@ -48,148 +48,148 @@ end
 
 @testset "auto contract requires matching spaces" begin
     test_contract_requires_matching_spaces_in_star(
-        FermionSOptions(U1, SU{2}, nothing, 1))
+        FermionSOptions(1, :U1, :SU2, nothing))
 end
 
 @testset "contract vs contract_old" begin
-    test_contract_default(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_contract_default(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_contract_default(FermionSOptions(1, :U1, :SU2, nothing))
+    test_contract_default(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "contract abelian w-matrices stay unit" begin
-    test_contract_abelian_wmats_are_unit(FermionSOptions(U1, SU{2}, nothing, 1))
+    test_contract_abelian_wmats_are_unit(FermionSOptions(1, :U1, :SU2, nothing))
 end
 
 @testset "getIdentity direct contraction" begin
-    test_getIdentity_direct_contract(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_getIdentity_direct_contract(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_getIdentity_direct_contract(FermionSOptions(1, :U1, :SU2, nothing))
+    test_getIdentity_direct_contract(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "spaces of svd" begin
-    test_spaces_svdQS(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_spaces_svdQS(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_spaces_svdQS(FermionSOptions(1, :U1, :SU2, nothing))
+    test_spaces_svdQS(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "CGTSVD preprocessing for svd" begin
-    test_svd_cgtsvd_preprocess(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_svd_cgtsvd_preprocess(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_svd_cgtsvd_preprocess(FermionSOptions(1, :U1, :SU2, nothing))
+    test_svd_cgtsvd_preprocess(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "CGTSVD intermediate qlabels for svd" begin
-    test_svd_cgtsvd_intermediate_qrows(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_svd_cgtsvd_intermediate_qrows(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_svd_cgtsvd_intermediate_qrows(FermionSOptions(1, :U1, :SU2, nothing))
+    test_svd_cgtsvd_intermediate_qrows(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "CGTSVD intermediate qlabel row classes for svd" begin
-    test_svd_cgtsvd_intermediate_qrow_equivclasses(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_svd_cgtsvd_intermediate_qrow_equivclasses(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_svd_cgtsvd_intermediate_qrow_equivclasses(FermionSOptions(1, :U1, :SU2, nothing))
+    test_svd_cgtsvd_intermediate_qrow_equivclasses(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "CGTSVD signature order for svd" begin
-    test_svd_cgtsvd_signature_order(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_svd_cgtsvd_signature_order(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_svd_cgtsvd_signature_order(FermionSOptions(1, :U1, :SU2, nothing))
+    test_svd_cgtsvd_signature_order(FermionSOptions(3, :U1, :SU2, :SU3))
     test_svd_cgr_split_spaces_preserves_physical_leg_order()
 end
 
 @testset "CGTSVD block reduction for svd" begin
-    test_svd_cgtsvd_block_reduction(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_svd_cgtsvd_block_reduction(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_svd_cgtsvd_block_reduction(FermionSOptions(1, :U1, :SU2, nothing))
+    test_svd_cgtsvd_block_reduction(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "CGTSVD full svd factorization" begin
-    test_svd_cgtsvd_factorization(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_svd_cgtsvd_factorization(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_svd_cgtsvd_factorization(FermionSOptions(1, :U1, :SU2, nothing))
+    test_svd_cgtsvd_factorization(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "CGTSVD truncation" begin
-    test_truncate_svd_cgtsvd(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_truncate_svd_cgtsvd(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_truncate_svd_cgtsvd(FermionSOptions(1, :U1, :SU2, nothing))
+    test_truncate_svd_cgtsvd(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "svd truncation of QSpace" begin
-    test_truncate_svdQS(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_truncate_svdQS(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "svd truncation of TLArray" begin
+    test_truncate_svdQS(FermionSOptions(1, :U1, :SU2, nothing))
+    test_truncate_svdQS(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 
 @testset "spaces of eigen" begin
-    test_spaces_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_spaces_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_spaces_eigen(FermionSOptions(1, :U1, :SU2, nothing))
+    test_spaces_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "missing spaces of eigen" begin
-    test_missing_spaces_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_missing_spaces_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_missing_spaces_eigen(FermionSOptions(1, :U1, :SU2, nothing))
+    test_missing_spaces_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "truncate missing zero spaces of eigen" begin
-    test_truncate_missing_zero_spaces_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_truncate_missing_zero_spaces_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_truncate_missing_zero_spaces_eigen(FermionSOptions(1, :U1, :SU2, nothing))
+    test_truncate_missing_zero_spaces_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 
-@testset "conjugation of QSpace test" begin
-    test_conj(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_conj(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "conjugation of TLArray test" begin
+    test_conj(FermionSOptions(1, :U1, :SU2, nothing))
+    test_conj(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "norm of QSpace" begin
-    test_norm(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_norm(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "norm of TLArray" begin
+    test_norm(FermionSOptions(1, :U1, :SU2, nothing))
+    test_norm(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 
 @testset "svd test" begin
-    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    option = FermionSOptions(3, :U1, :SU2, :SU3)
     q   = getLocalSpace(option)
-    qi1 = QSpace(q.I, ("lur1", "lur1"))
-    qi2 = QSpace(q.I, ("lur2", "lur2"))
+    qi1 = TLArray(q.I, ("lur1", "lur1"))
+    qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2))
-    qf  = QSpace(q.F, ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F123, ("lur2", "lur2", "op"))
     ct  = qf * a
     test_svdQS(ct, [2, 4])
     test_svdQS(ct, [1, 4])
     test_svdQS(ct, [1, 2])
 end
 
-@testset "eig of QSpace" begin
-    test_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "eig of TLArray" begin
+    test_eigen(FermionSOptions(1, :U1, :SU2, nothing))
+    test_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "eig autodetect of QSpace" begin
-    test_eigen_autodetect(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_eigen_autodetect(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "eig autodetect of TLArray" begin
+    test_eigen_autodetect(FermionSOptions(1, :U1, :SU2, nothing))
+    test_eigen_autodetect(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "eig permuted input of QSpace" begin
-    test_eigen_permuted_input(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_eigen_permuted_input(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "eig permuted input of TLArray" begin
+    test_eigen_permuted_input(FermionSOptions(1, :U1, :SU2, nothing))
+    test_eigen_permuted_input(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "eig Hermitian leg guard of QSpace" begin
-    test_eigen_hermitian_leg_guard(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_eigen_hermitian_leg_guard(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "eig Hermitian leg guard of TLArray" begin
+    test_eigen_hermitian_leg_guard(FermionSOptions(1, :U1, :SU2, nothing))
+    test_eigen_hermitian_leg_guard(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "eig truncation of QSpace" begin
-    test_discard_eigen(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_discard_eigen(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "eig truncation of TLArray" begin
+    test_discard_eigen(FermionSOptions(1, :U1, :SU2, nothing))
+    test_discard_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "eig truncation tol of QSpace" begin
-    test_discard_eigen_tol(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_discard_eigen_tol(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "eig truncation tol of TLArray" begin
+    test_discard_eigen_tol(FermionSOptions(1, :U1, :SU2, nothing))
+    test_discard_eigen_tol(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "eig full discard of QSpace" begin
-    test_eigen_full_discard(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_eigen_full_discard(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "eig full discard of TLArray" begin
+    test_eigen_general_discard(FermionSOptions(1, :U1, :SU2, nothing))
+    test_eigen_general_discard(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "eig discard itag of QSpace" begin
-    test_discard_eigen_itag(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_discard_eigen_itag(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "eig discard itag of TLArray" begin
+    test_discard_eigen_itag(FermionSOptions(1, :U1, :SU2, nothing))
+    test_discard_eigen_itag(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 function permtest()
@@ -199,7 +199,7 @@ function permtest()
 
     tags = ("1", "2", "3", "4", "5", "6", "7", "8", "9")
     dirs = ('-', '+', '-', '+', '-', '-', '-', '+', '-')
-    inds = Tuple(QIndex(tags[i], dirs[i]) for i=1:9)
+    inds = Tuple(TLIndex(tags[i], dirs[i]) for i=1:9)
 
     om = get_CGTom(S, upsp, dnsp).totalOM
     wmat = randn(om, 1); wmat /= norm(wmat)
@@ -216,7 +216,7 @@ function permtest()
     # Use _compute_spaces helper instead of manual construction
     spaces = _compute_spaces(rows)
     
-    q = QSpace((S,), rows, inds, spaces)
+    q = TLArray((S,), rows, inds, spaces)
     println("q created")
     pq = permutedims(q, (1, 2, 4, 8, 5, 6, 9, 3, 7))
     println("pq created")
@@ -367,58 +367,58 @@ end
 
 
 function lur(option::LocalSpaceOptions)
-    option = FermionSOptions(U1, SU{2}, nothing, 1)
+    option = FermionSOptions(1, :U1, :SU2, nothing)
     q, a, ct, arr1, arr2 = test_FAcont(option)
     println(norm(arr1 - arr2))
     @test arr1 ≈ arr2
 end
 
 
-@testset "Generating 1jtensor of QSpace test" begin
-    test_1jpair(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_1jpair(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "Generating 1jtensor of TLArray test" begin
+    test_1jpair(FermionSOptions(1, :U1, :SU2, nothing))
+    test_1jpair(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "Keyword get1jtensor and legflip" begin
-    test_get1jtensor_and_legflip_keywords(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_get1jtensor_and_legflip_keywords(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_get1jtensor_and_legflip_keywords(FermionSOptions(1, :U1, :SU2, nothing))
+    test_get1jtensor_and_legflip_keywords(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 @testset "contract verify_legs checks green" begin
-    test_contract_verify_legs_checks_green(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_contract_verify_legs_checks_green(FermionSOptions(U1, SU{2}, SU{3}, 3))
+    test_contract_verify_legs_checks_green(FermionSOptions(1, :U1, :SU2, nothing))
+    test_contract_verify_legs_checks_green(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
-@testset "contraction of QSpace test" begin
-    test_FAcont(FermionSOptions(U1, SU{2}, nothing, 1))
-    test_FAcont(FermionSOptions(U1, SU{2}, SU{3}, 3))
+@testset "contraction of TLArray test" begin
+    test_FAcont(FermionSOptions(1, :U1, :SU2, nothing))
+    test_FAcont(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
 function example()
-    opt = FermionSOptions(U1, SU{2}, nothing, 1)
+    opt = FermionSOptions(1, :U1, :SU2, nothing)
     q = getLocalSpace(opt, ("lur", "lur", "op"))
-    nloc = lock(q.F', 2) * q.F
+    nloc = lock(q.F1', 2) * q.F1
     return nloc
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Helper: build a 3-leg test QSpace with known QIndex properties.
+# Helper: build a 3-leg test TLArray with known TLIndex properties.
 #
 #   leg 1: dir='+', itag="site1", plev=0, lock=0
 #   leg 2: dir='-', itag="site2", plev=0, lock=0
 #   leg 3: dir='-', itag="op",    plev=0, lock=0
 #
-# Built from a real operator QSpace so the internal row data is valid.
+# Built from a real operator TLArray so the internal row data is valid.
 # ─────────────────────────────────────────────────────────────────────────────
 function _make_test_qspace()
-    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    option = FermionSOptions(3, :U1, :SU2, :SU3)
     q0 = getLocalSpace(option)
-    # q0.F is a 3-leg QSpace: dir=('+','-','-'), all plev=0, all lock=0.
-    # QSpace(q, tags) creates a copy with new tags (only the itags field changes).
-    return QSpace(q0.F, ("site1", "site2", "op"))
+    # q0.F123 is a 3-leg TLArray: dir=('+','-','-'), all plev=0, all lock=0.
+    # TLArray(q, tags) creates a copy with new tags (only the itags field changes).
+    return TLArray(q0.F123, ("site1", "site2", "op"))
 end
 
-@testset "QIndex modifier functions" begin
+@testset "TLIndex modifier functions" begin
     q = _make_test_qspace()
     # Fixture legs:
     #   leg 1: dir='+', itag="site1", plev=0, lock=0
@@ -450,7 +450,7 @@ end
         @test findlegs(q; dir='-', itag="op")           == [3]
         @test findlegs(q; dir='-', itag="op", rev=true) == [1, 2]
 
-        q_tagsets = QSpace(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
+        q_tagsets = TLArray(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
         @test findlegs(q_tagsets; itag="aaa,bbb") == [1]
         @test findlegs(q_tagsets; itag=("aaa,bbb", "aaa,ccc")) == [1, 2]
         @test findlegs(q_tagsets; itag=["aaa,ccc", "bbb,ccc"]) == [2, 3]
@@ -466,7 +466,7 @@ end
         @test findleg(q; plev=0, rev=true)   === nothing  # no leg with plev≠0
         @test findleg(q; itag="nope")        === nothing
 
-        q_tagsets = QSpace(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
+        q_tagsets = TLArray(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
         @test findleg(q_tagsets; itag=("aaa,ccc", "bbb,ccc")) == 2
         @test findleg(q_tagsets; itag=["missing", "bbb,ccc"]) == 3
     end
@@ -479,10 +479,10 @@ end
         @test unmatching(q, q_adj) === nothing
         @test unmatchings(q, q_adj) == Int[]
 
-        q_selective = QSpace(q_adj, (
-            QIndex("site1", '-', 1, 0, false),
-            QIndex("site2", '+', 0, 0, true),
-            QIndex("op", '+', 0, 7, false),
+        q_selective = TLArray(q_adj, (
+            TLIndex("site1", '-', 1, 0, false),
+            TLIndex("site2", '+', 0, 0, true),
+            TLIndex("op", '+', 0, 7, false),
         ))
 
         @test matching(q, q_selective) == 3
@@ -502,7 +502,7 @@ end
         @test matchings(q_match_locked, q_selective; lock=0) == Int[]
         @test unmatchings(q_unmatch_locked, q_selective; lock=1) == [1]
 
-        q_tagsets = QSpace(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
+        q_tagsets = TLArray(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
         q_tagsets_adj = q_tagsets'
         @test matchings(q_tagsets, q_tagsets_adj; itag=("aaa,bbb", "bbb,ccc")) == [1, 3]
         @test matchings(q_tagsets, q_tagsets_adj; itag=["aaa,ccc", "bbb,ccc"], rev=true) == [1]
@@ -516,10 +516,10 @@ end
         @test uncontractable(q, q_adj) === nothing
         @test uncontractables(q, q_adj) == Int[]
 
-        q_selective = QSpace(q_adj, (
-            QIndex("site1", '-', 1, 0, false),
-            QIndex("site2", '+', 0, 0, true),
-            QIndex("op", '+', 0, 7, false),
+        q_selective = TLArray(q_adj, (
+            TLIndex("site1", '-', 1, 0, false),
+            TLIndex("site2", '+', 0, 0, true),
+            TLIndex("op", '+', 0, 7, false),
         ))
 
         @test contractable(q, q_selective) === nothing
@@ -540,14 +540,14 @@ end
         @test uncontractables(q_a_locked, q_adj; lock=1) == [3]
         @test uncontractables(q, q_b_locked; dir='+', rev=true) == [2]
 
-        q_tagsets = QSpace(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
+        q_tagsets = TLArray(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
         q_tagsets_adj = q_tagsets'
         @test contractables(q_tagsets, q_tagsets_adj; itag=("aaa,bbb", "aaa,ccc")) == [1, 2]
         @test uncontractables(lock(q_tagsets, 2), q_tagsets_adj; itag=["aaa,ccc", "bbb,ccc"]) == [2]
     end
 
     @testset "Itag predicate equality" begin
-        q_unsorted = QSpace(q, ("beta,alpha", "site2", "op"))
+        q_unsorted = TLArray(q, ("beta,alpha", "site2", "op"))
 
         @test q_unsorted.inds[1].itags isa Itag
         @test q_unsorted.inds[1].itags == "alpha,beta"
@@ -703,13 +703,13 @@ end
 
     # ── setprime ──────────────────────────────────────────────────────────────
     @testset "setprime" begin
-        # LegList: vector (legs 1,2 differ in dir → unique QIndex)
+        # LegList: vector (legs 1,2 differ in dir → unique TLIndex)
         q2 = setprime(q, [1, 2], 7)
         @test q2.inds[1].plev == 7
         @test q2.inds[2].plev == 7
         @test q2.inds[3].plev == 0
 
-        # LegList: tuple (legs 1,3 differ in dir → unique QIndex)
+        # LegList: tuple (legs 1,3 differ in dir → unique TLIndex)
         q2 = setprime(q, (1, 3), 5)
         @test q2.inds[1].plev == 5
         @test q2.inds[3].plev == 5
@@ -825,7 +825,7 @@ end
         @test q2.inds[1].itags == "extra,site1"   # unchanged
 
         # tuple/vector tag queries only remove fully matched groups
-        q_grouped = QSpace(q, ("aaa,bbb", "aaa,bbb,ccc", "bbb,ccc"))
+        q_grouped = TLArray(q, ("aaa,bbb", "aaa,bbb,ccc", "bbb,ccc"))
         q2 = removeitag(q_grouped, ("aaa,bbb", "ccc"))
         @test q2.inds[1].itags == ""
         @test q2.inds[2].itags == ""
@@ -866,13 +866,13 @@ end
         @test q2.inds[3].itags == "phys"
         @test q2.inds[1].itags == "site1"
 
-        # LegList: vector (legs 1,2 differ in dir → unique QIndex)
+        # LegList: vector (legs 1,2 differ in dir → unique TLIndex)
         q2 = setitag(q, [1, 2], "lur")
         @test q2.inds[1].itags == "lur"
         @test q2.inds[2].itags == "lur"
         @test q2.inds[3].itags == "op"
 
-        # LegList: tuple (legs 1,3 differ in dir → unique QIndex)
+        # LegList: tuple (legs 1,3 differ in dir → unique TLIndex)
         q2 = setitag(q, (1, 3), "x")
         @test q2.inds[1].itags == "x"
         @test q2.inds[3].itags == "x"
@@ -923,12 +923,12 @@ end
     # ── rank-1 to rank-5 construction ────────────────────────────────────────
     @testset "rank-$QD construction" for QD in 1:5
         symm = (SU{2},)
-        inds = ntuple(i -> QIndex("l$i", i == 1 ? '+' : '-'), QD)
+        inds = ntuple(i -> TLIndex("l$i", i == 1 ? '+' : '-'), QD)
         q = empty_qspace(symm, inds)
 
         @test length(q.rows)  == 0
         @test length(q.inds)  == QD
-        @test QSpaces.symm(q) == symm
+        @test Telum.symm(q) == symm
         @test q.inds          == inds
         @test all(isempty(q.spaces[l]) for l in 1:QD)
     end
@@ -936,13 +936,13 @@ end
     # ── multiple symmetries ───────────────────────────────────────────────────
     @testset "multi-symmetry construction" begin
         symm = (U1, SU{2})
-        inds = (QIndex("a", '+'), QIndex("b", '-'), QIndex("c", '-'))
+        inds = (TLIndex("a", '+'), TLIndex("b", '-'), TLIndex("c", '-'))
         q = empty_qspace(symm, inds)
 
-        @test length(QSpaces.symm(q)) == 2
+        @test length(Telum.symm(q)) == 2
         @test length(q.rows) == 0
         @test length(q.inds) == 3
-        @test QSpaces.symm(q) == symm
+        @test Telum.symm(q) == symm
         # spaces: 3 empty vectors, one per leg
         @test length(q.spaces) == 3
         @test all(isempty(q.spaces[l]) for l in 1:3)
@@ -951,19 +951,19 @@ end
     # ── element type keyword ──────────────────────────────────────────────────
     @testset "element type" begin
         symm = (SU{2},)
-        inds = (QIndex("a", '+'), QIndex("b", '-'))
+        inds = (TLIndex("a", '+'), TLIndex("b", '-'))
         qf64 = empty_qspace(symm, inds; T=Float64)
         qc64 = empty_qspace(symm, inds; T=ComplexF64)
 
         # N=1, QD=2, RD=3
-        @test qf64.rows isa Vector{row{Float64,     2, 1, 3}}
-        @test qc64.rows isa Vector{row{ComplexF64,  2, 1, 3}}
+        @test eltype(qf64.rows) <: row{Float64, 2, 1, 3}
+        @test eltype(qc64.rows) <: row{ComplexF64, 2, 1, 3}
     end
 
-    # ── QIndex modifier operations on an empty QSpace ─────────────────────────
-    @testset "modifier ops on empty QSpace" begin
+    # ── TLIndex modifier operations on an empty TLArray ─────────────────────────
+    @testset "modifier ops on empty TLArray" begin
         symm = (SU{2}, U1)
-        inds = (QIndex("a", '+'), QIndex("b", '-'), QIndex("c", '-'))
+        inds = (TLIndex("a", '+'), TLIndex("b", '-'), TLIndex("c", '-'))
         q = empty_qspace(symm, inds)
 
         # prime
@@ -984,7 +984,7 @@ end
         @test additag(q, "x").inds[1].itags           == "a,x"
         @test removeitag(q, "a").inds[1].itags        == ""
         @test setitag(q, "new"; dir='+').inds[1].itags == "new"
-        @test !isdefined(QSpaces, :replaceitag)
+        @test !isdefined(Telum, :replaceitag)
 
         # findlegs / findleg
         @test findlegs(q; dir='+') == [1]
@@ -992,18 +992,18 @@ end
         @test findleg(q; dir='+')  == 1
         @test findleg(q; dir='-')  == 2
 
-        # scalar multiplication of empty QSpace produces empty QSpace
+        # scalar multiplication of empty TLArray produces empty TLArray
         q_scaled = 3.0 * q
         @test length(q_scaled.rows) == 0
     end
 
-    @testset "zero preserves metadata on QSpace" begin
-        option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    @testset "zero preserves metadata on TLArray" begin
+        option = FermionSOptions(3, :U1, :SU2, :SU3)
         q0 = getLocalSpace(option)
-        q = QSpace(q0.F, ("site1", "site2", "op"))
+        q = TLArray(q0.F123, ("site1", "site2", "op"))
         qz = zero(q)
 
-        @test qz isa QSpace
+        @test qz isa TLArray
         @test isempty(qz.rows)
         @test symm(qz) == symm(q)
         @test qz.inds == q.inds
@@ -1013,9 +1013,9 @@ end
     end
 
     # ── show does not error ───────────────────────────────────────────────────
-    @testset "show on empty QSpace" begin
+    @testset "show on empty TLArray" begin
         symm = (SU{2},)
-        inds = (QIndex("a", '+'), QIndex("b", '-'))
+        inds = (TLIndex("a", '+'), TLIndex("b", '-'))
         q = empty_qspace(symm, inds)
         buf = IOBuffer()
         # must not throw
@@ -1026,17 +1026,17 @@ end
 end
 
 @testset "zero_qlabels" begin
-    q_empty = empty_qspace((SU{2}, SU{3}), (QIndex('+'), QIndex('-')))
+    q_empty = empty_qspace((SU{2}, SU{3}), (TLIndex('+'), TLIndex('-')))
     @test zero_qlabels(q_empty) == ((0,), (0, 0))
     @test zero_qlabels(symm(q_empty)) == ((0,), (0, 0))
 
-    option = FermionSOptions(U1, SU{2}, nothing, 1)
+    option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option)
     @test zero_qlabels(q0.I) == ((0,), (0,))
 end
 
 @testset "qlabeltype" begin
-    q_empty = empty_qspace((U1, SU{3}), (QIndex('+'), QIndex('-')))
+    q_empty = empty_qspace((U1, SU{3}), (TLIndex('+'), TLIndex('-')))
     expected = Tuple{Tuple{Int}, NTuple{2, Int}}
     expected_ps = ProductSymm{Tuple{U1, SU{3}}}
 
@@ -1053,20 +1053,22 @@ end
     @test product_symms(q_empty) == (U1, SU{3})
     @test nsymms(q_empty) == 2
     @test eltype(q_empty.spaces[1]) == Tuple{expected, Int}
-    @test QSpaces._contracted_qlabel_entries(expected, q_empty.rows, (1,)) isa Vector{Tuple{Int, expected}}
-    @test QSpaces._contracted_qlabel_entries(expected, q_empty.rows, (1, 2)) isa Vector{Tuple{Int, NTuple{2, expected}}}
+    entries1 = Telum._contracted_qlabel_entries(expected, q_empty.rows, (1,))
+    entries2 = Telum._contracted_qlabel_entries(expected, q_empty.rows, (1, 2))
+    @test entries1 isa Vector
+    @test entries2 isa Vector
 
-    q_multi = empty_qspace((U1, SU{2}, SU{3}), (QIndex('+'),))
+    q_multi = empty_qspace((U1, SU{2}, SU{3}), (TLIndex('+'),))
     @test qlabeltype(q_multi) == Tuple{Tuple{Int}, Tuple{Int}, NTuple{2, Int}}
     @test typeof(q_multi).parameters[5] == Tuple{Tuple{Int}, Tuple{Int}, NTuple{2, Int}}
     @test productsymm(q_multi) == ProductSymm{Tuple{U1, SU{2}, SU{3}}}
     @test typeof(q_multi).parameters[7] == Tuple{CGR{1, 1, U1}, CGR{1, 1, SU{2}}, CGR{1, 2, SU{3}}}
 
-    q_local = getLocalSpace(FermionSOptions(U1, SU{2}, nothing, 1)).I
+    q_local = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing)).I
     @test !(:symm in fieldnames(typeof(q_local)))
     @test all(!(:symm in fieldnames(typeof(cgr))) for r in q_local.rows for cgr in r.cgrs)
     @test typeof(q_local.rows).parameters[1].parameters[5] == Tuple{CGR{2, 1, U1}, CGR{2, 1, SU{2}}}
-    info = QSpaces.leginfo(q_local, 1)
+    info = Telum.leginfo(q_local, 1)
     @test !(:symm in fieldnames(typeof(info)))
     @test symm(info) == symm(q_local)
     @test productsymm(info) == productsymm(q_local)
@@ -1076,11 +1078,11 @@ end
     @test typeof(info).parameters[2] == qlabeltype(q_local)
     @test typeof(info).parameters[3] == productsymm(q_local)
     @test eltype(info.splist) == Tuple{qlabeltype(q_local), Int}
-    @test typeof(QSpaces.leginfo(symm(q_local), q_local.inds[1], q_local.spaces[1])) == typeof(info)
+    @test typeof(Telum.leginfo(symm(q_local), q_local.inds[1], q_local.spaces[1])) == typeof(info)
 end
 
 @testset "getsub sector slicing" begin
-    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    option = FermionSOptions(3, :U1, :SU2, :SU3)
     q0 = getLocalSpace(option)
     candidate = nothing
     for base in values(q0)
@@ -1114,10 +1116,10 @@ end
     sector_full = candidate.sector_full
     dim_full = candidate.dim_full
 
-    row_sector(qs::QSpace, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(qs)))
-    rows_for_sector(qs::QSpace, sector) = [r for r in qs.rows if row_sector(qs, r) == sector]
+    row_sector(qs::TLArray, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(qs)))
+    rows_for_sector(qs::TLArray, sector) = [r for r in qs.rows if row_sector(qs, r) == sector]
 
-    q_pred_pairs = QSpaces.getsub(q, leg,
+    q_pred_pairs = Telum.getsub(q, leg,
                                   sector -> sector == sector_full ? Colon() :
                                             sector == sector_reorder ? (dim_reorder, 1) :
                                             nothing)
@@ -1151,7 +1153,7 @@ end
         @test reorder_row.RMT.data == orig_reorder_row.RMT.data[reorder_selector...]
     end
 
-    q_single = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? 2 : nothing)
+    q_single = Telum.getsub(q, leg, sector -> sector == sector_reorder ? 2 : nothing)
     single_rows = rows_for_sector(q_single, sector_reorder)
     @test q_single.spaces[leg] == [(sector_reorder, 1)]
     for other_leg in 1:length(q.spaces)
@@ -1164,7 +1166,7 @@ end
         @test single_row.RMT.data == orig_reorder_row.RMT.data[single_selector...]
     end
 
-    q_range = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? (1:2) : nothing)
+    q_range = Telum.getsub(q, leg, sector -> sector == sector_reorder ? (1:2) : nothing)
     @test q_range.spaces[leg] == [(sector_reorder, 2)]
     range_rows = rows_for_sector(q_range, sector_reorder)
     @test length(range_rows) == length(orig_reorder_rows)
@@ -1173,7 +1175,7 @@ end
         @test range_row.RMT.data == orig_reorder_row.RMT.data[range_selector...]
     end
 
-    q_negative = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? -1 : nothing)
+    q_negative = Telum.getsub(q, leg, sector -> sector == sector_reorder ? -1 : nothing)
     negative_rows = rows_for_sector(q_negative, sector_reorder)
     @test q_negative.spaces[leg] == [(sector_reorder, 1)]
     @test length(negative_rows) == length(orig_reorder_rows)
@@ -1182,7 +1184,7 @@ end
         @test negative_row.RMT.data == orig_reorder_row.RMT.data[negative_selector...]
     end
 
-    q_negative_range = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? (-2:-1) : nothing)
+    q_negative_range = Telum.getsub(q, leg, sector -> sector == sector_reorder ? (-2:-1) : nothing)
     negative_range_rows = rows_for_sector(q_negative_range, sector_reorder)
     @test q_negative_range.spaces[leg] == [(sector_reorder, 2)]
     @test length(negative_range_rows) == length(orig_reorder_rows)
@@ -1191,7 +1193,7 @@ end
         @test negative_range_row.RMT.data == orig_reorder_row.RMT.data[negative_range_selector...]
     end
 
-    q_mixed = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? [-1, 1] : nothing)
+    q_mixed = Telum.getsub(q, leg, sector -> sector == sector_reorder ? [-1, 1] : nothing)
     mixed_rows = rows_for_sector(q_mixed, sector_reorder)
     @test q_mixed.spaces[leg] == [(sector_reorder, 2)]
     @test length(mixed_rows) == length(orig_reorder_rows)
@@ -1200,7 +1202,7 @@ end
         @test mixed_row.RMT.data == orig_reorder_row.RMT.data[mixed_selector...]
     end
 
-    q_tuple_pick = QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? (dim_reorder, 1) : nothing)
+    q_tuple_pick = Telum.getsub(q, leg, sector -> sector == sector_reorder ? (dim_reorder, 1) : nothing)
     @test q_tuple_pick.spaces == q_mixed.spaces
     tuple_pick_rows = rows_for_sector(q_tuple_pick, sector_reorder)
     @test length(tuple_pick_rows) == length(mixed_rows)
@@ -1208,7 +1210,7 @@ end
         @test tuple_pick_row.RMT.data == mixed_row.RMT.data
     end
 
-    q_empty = QSpaces.getsub(q, leg, _ -> nothing)
+    q_empty = Telum.getsub(q, leg, _ -> nothing)
     @test isempty(q_empty.rows)
     @test isempty(q_empty.spaces[leg])
     for other_leg in 1:length(q.spaces)
@@ -1216,19 +1218,19 @@ end
         @test q_empty.spaces[other_leg] == q.spaces[other_leg]
     end
 
-    @test_throws ArgumentError QSpaces.getsub(q, 0, _ -> Colon())
-    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? [1, 1] : nothing)
-    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? [1, -dim_reorder] : nothing)
-    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? Int[] : nothing)
-    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? 0 : nothing)
-    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? (dim_reorder + 1) : nothing)
-    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? -(dim_reorder + 1) : nothing)
-    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? "bad" : nothing)
-    @test_throws ArgumentError QSpaces.getsub(q, leg, sector -> sector == sector_reorder ? 1 : nothing; preserve_space=true)
+    @test_throws ArgumentError Telum.getsub(q, 0, _ -> Colon())
+    @test_throws ArgumentError Telum.getsub(q, leg, sector -> sector == sector_reorder ? [1, 1] : nothing)
+    @test_throws ArgumentError Telum.getsub(q, leg, sector -> sector == sector_reorder ? [1, -dim_reorder] : nothing)
+    @test_throws ArgumentError Telum.getsub(q, leg, sector -> sector == sector_reorder ? Int[] : nothing)
+    @test_throws ArgumentError Telum.getsub(q, leg, sector -> sector == sector_reorder ? 0 : nothing)
+    @test_throws ArgumentError Telum.getsub(q, leg, sector -> sector == sector_reorder ? (dim_reorder + 1) : nothing)
+    @test_throws ArgumentError Telum.getsub(q, leg, sector -> sector == sector_reorder ? -(dim_reorder + 1) : nothing)
+    @test_throws ArgumentError Telum.getsub(q, leg, sector -> sector == sector_reorder ? "bad" : nothing)
+    @test_throws ArgumentError Telum.getsub(q, leg, sector -> sector == sector_reorder ? 1 : nothing; preserve_space=true)
 end
 
 @testset "getsub sector predicate" begin
-    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    option = FermionSOptions(3, :U1, :SU2, :SU3)
     q0 = getLocalSpace(option)
     candidate = nothing
     for base in values(q0)
@@ -1247,11 +1249,11 @@ end
     leg = candidate.leg
     target_sector = candidate.target_sector
 
-    row_sector(qs::QSpace, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(qs)))
+    row_sector(qs::TLArray, r) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[leg]] for n in 1:length(symm(qs)))
     expected_rows = [r for r in q.rows if row_sector(q, r) == target_sector]
     expected_leg_spaces = [entry for entry in q.spaces[leg] if entry[1] == target_sector]
 
-    q_exact = QSpaces.getsub(q, leg, sector -> sector == target_sector ? Colon() : nothing)
+    q_exact = Telum.getsub(q, leg, sector -> sector == target_sector ? Colon() : nothing)
     @test _rows_equal(q_exact.rows, expected_rows)
     @test q_exact.spaces[leg] == expected_leg_spaces
     for other_leg in 1:length(q.spaces)
@@ -1259,18 +1261,18 @@ end
         @test q_exact.spaces[other_leg] == q.spaces[other_leg]
     end
 
-    q_component = QSpaces.getsub(q, leg, sector -> sector[1] == target_sector[1] ? Colon() : nothing)
+    q_component = Telum.getsub(q, leg, sector -> sector[1] == target_sector[1] ? Colon() : nothing)
     expected_component_rows = [r for r in q.rows if row_sector(q, r)[1] == target_sector[1]]
     expected_component_spaces = [entry for entry in q.spaces[leg] if entry[1][1] == target_sector[1]]
     @test _rows_equal(q_component.rows, expected_component_rows)
     @test q_component.spaces[leg] == expected_component_spaces
 
-    q_preserved = QSpaces.getsub(q, leg, sector -> sector == target_sector ? Colon() : nothing; preserve_space=true)
+    q_preserved = Telum.getsub(q, leg, sector -> sector == target_sector ? Colon() : nothing; preserve_space=true)
     @test _rows_equal(q_preserved.rows, expected_rows)
     @test q_preserved.spaces == q.spaces
     @test all(q_preserved.spaces[legidx] !== q.spaces[legidx] for legidx in 1:length(q.spaces))
 
-    q_none = QSpaces.getsub(q, leg, _ -> nothing)
+    q_none = Telum.getsub(q, leg, _ -> nothing)
     @test isempty(q_none.rows)
     @test isempty(q_none.spaces[leg])
     for other_leg in 1:length(q.spaces)
@@ -1278,17 +1280,17 @@ end
         @test q_none.spaces[other_leg] == q.spaces[other_leg]
     end
 
-    q_none_preserved = QSpaces.getsub(q, leg, _ -> nothing; preserve_space=true)
+    q_none_preserved = Telum.getsub(q, leg, _ -> nothing; preserve_space=true)
     @test isempty(q_none_preserved.rows)
     @test q_none_preserved.spaces == q.spaces
 
-    @test_throws ArgumentError QSpaces.getsub(q, leg, _ -> false)
-    @test_throws ArgumentError QSpaces.getsub(q, leg, _ -> true)
-    @test_throws ArgumentError QSpaces.getsub(q, 0, _ -> Colon())
+    @test_throws ArgumentError Telum.getsub(q, leg, _ -> false)
+    @test_throws ArgumentError Telum.getsub(q, leg, _ -> true)
+    @test_throws ArgumentError Telum.getsub(q, 0, _ -> Colon())
 end
 
 @testset "getsub multi-leg sector predicate" begin
-    option = FermionSOptions(U1, SU{2}, SU{3}, 3)
+    option = FermionSOptions(3, :U1, :SU2, :SU3)
     base = getLocalSpace(option, ("sel,left", "sel,right", "op")).I
     q = oplus([base, 2.0 * base, 3.0 * base], (1, 2))
     legs = (1, 2)
@@ -1308,7 +1310,7 @@ end
     expected_spaces_1 = [entry for entry in q.spaces[1] if entry[1] in allowed]
     expected_spaces_2 = [entry for entry in q.spaces[2] if entry[1] in allowed]
 
-    q_multi = QSpaces.getsub(q, legs, pred)
+    q_multi = Telum.getsub(q, legs, pred)
     @test _rows_equal(q_multi.rows, expected_rows)
     @test q_multi.spaces[1] == expected_spaces_1
     @test q_multi.spaces[2] == expected_spaces_2
@@ -1318,7 +1320,7 @@ end
     end
 
     pred_slice = sector -> sector in allowed ? 1 : nothing
-    q_multi_sliced = QSpaces.getsub(q, legs, pred_slice)
+    q_multi_sliced = Telum.getsub(q, legs, pred_slice)
     @test q_multi_sliced.spaces[1] == [(entry[1], 1) for entry in q.spaces[1] if entry[1] in allowed]
     @test q_multi_sliced.spaces[2] == [(entry[1], 1) for entry in q.spaces[2] if entry[1] in allowed]
     for other_leg in 1:length(q.spaces)
@@ -1331,38 +1333,38 @@ end
         @test sliced_row.RMT.data == orig_row.RMT.data[slice_selector...]
     end
 
-    q_multi_range = QSpaces.getsub(q, 1:2, pred)
+    q_multi_range = Telum.getsub(q, 1:2, pred)
     @test _rows_equal(q_multi_range.rows, q_multi.rows)
     @test q_multi_range.spaces == q_multi.spaces
 
-    q_multi_preserved = QSpaces.getsub(q, legs, pred; preserve_space=true)
+    q_multi_preserved = Telum.getsub(q, legs, pred; preserve_space=true)
     @test _rows_equal(q_multi_preserved.rows, expected_rows)
     @test q_multi_preserved.spaces == q.spaces
 
-    q_multi_kw = QSpaces.getsub(q, pred; itag="sel")
+    q_multi_kw = Telum.getsub(q, pred; itag="sel")
     @test _rows_equal(q_multi_kw.rows, q_multi.rows)
     @test q_multi_kw.spaces == q_multi.spaces
 
-    q_multi_kw_preserved = QSpaces.getsub(q, pred; itag="sel", preserve_space=true)
+    q_multi_kw_preserved = Telum.getsub(q, pred; itag="sel", preserve_space=true)
     @test _rows_equal(q_multi_kw_preserved.rows, q_multi.rows)
     @test q_multi_kw_preserved.spaces == q.spaces
 
-    @test_throws ArgumentError QSpaces.getsub(q, Int[], pred)
-    @test_throws ArgumentError QSpaces.getsub(q, (1, 1), pred)
-    @test_throws ArgumentError QSpaces.getsub(q, (0, 1), pred)
-    @test_throws ArgumentError QSpaces.getsub(q, legs, pred_slice; preserve_space=true)
-    @test_throws ArgumentError QSpaces.getsub(q, pred; itag="missing")
+    @test_throws ArgumentError Telum.getsub(q, Int[], pred)
+    @test_throws ArgumentError Telum.getsub(q, (1, 1), pred)
+    @test_throws ArgumentError Telum.getsub(q, (0, 1), pred)
+    @test_throws ArgumentError Telum.getsub(q, legs, pred_slice; preserve_space=true)
+    @test_throws ArgumentError Telum.getsub(q, pred; itag="missing")
 end
 
 @testset "getvac" begin
     @testset "single trivial sector with default tags" begin
-        option = FermionSOptions(U1, SU{2}, nothing, 1)
+        option = FermionSOptions(1, :U1, :SU2, nothing)
         q0 = getLocalSpace(option)
         vac = getvac(q0.I)
 
         @test symm(vac) == symm(q0.I)
         @test length(vac.rows) == 1
-        @test vac.inds == (QIndex("", '+'), QIndex("", '-'))
+        @test vac.inds == (TLIndex("", '+'), TLIndex("", '-'))
         @test length(vac.spaces[1]) == 1
         @test length(vac.spaces[2]) == 1
 
@@ -1383,24 +1385,24 @@ end
     end
 
     @testset "optional tags are applied" begin
-        option = FermionSOptions(U1, SU{2}, nothing, 1)
+        option = FermionSOptions(1, :U1, :SU2, nothing)
         q0 = getLocalSpace(option)
-        vac = getvac(q0.F, ("vin", "vout"))
+        vac = getvac(q0.F1, ("vin", "vout"))
 
-        @test vac.inds[1] == QIndex("vin", '+')
-        @test vac.inds[2] == QIndex("vout", '-')
+        @test vac.inds[1] == TLIndex("vin", '+')
+        @test vac.inds[2] == TLIndex("vout", '-')
     end
 end
 
 @testset "addSingleton" begin
-    option = FermionSOptions(U1, SU{2}, nothing, 1)
+    option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option, ("ain", "aout", "op"))
-    q = q0.F
-    q_rank2 = QSpace(q0.I, ("lin", "lout"))
+    q = q0.F1
+    q_rank2 = TLArray(q0.I, ("lin", "lout"))
 
     q_default = addSingleton(q, 2)
     @test q_default.inds[1] == q.inds[1]
-    @test q_default.inds[2] == QIndex("", '+')
+    @test q_default.inds[2] == TLIndex("", '+')
     @test q_default.inds[3] == q.inds[2]
     @test q_default.inds[4] == q.inds[3]
 
@@ -1413,10 +1415,10 @@ end
                            lock=(0, 1),
                            dir=('-', '+'))
 
-    @test q_added.inds[1] == QIndex("left_aux", '-', 2, 0)
+    @test q_added.inds[1] == TLIndex("left_aux", '-', 2, 0)
     @test q_added.inds[2] == q.inds[1]
     @test q_added.inds[3] == q.inds[2]
-    @test q_added.inds[4] == QIndex("right_aux", '+', 3, 1)
+    @test q_added.inds[4] == TLIndex("right_aux", '+', 3, 1)
     @test q_added.inds[5] == q.inds[3]
     @test q_added.spaces[1] == [(trivial, 1)]
     @test q_added.spaces[4] == [(trivial, 1)]
@@ -1435,10 +1437,10 @@ end
 end
 
 @testset "deleteSingleton" begin
-    option = FermionSOptions(U1, SU{2}, nothing, 1)
+    option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option, ("ain", "aout", "op"))
-    q = q0.F
-    q_rank2 = QSpace(q0.I, ("lin", "lout"))
+    q = q0.F1
+    q_rank2 = TLArray(q0.I, ("lin", "lout"))
 
     q_one = addSingleton(q, 2; itag="aux", plev=3, dir='-')
     q_two = addSingleton(q, (1, 4);
@@ -1466,7 +1468,7 @@ end
     @test length(q_deleted_kw_tag.inds) == 4
     @test q_deleted_kw_tag.inds[1] == q.inds[1]
     @test q_deleted_kw_tag.inds[2] == q.inds[2]
-    @test q_deleted_kw_tag.inds[3] == QIndex("right_aux", '+', 5, 0)
+    @test q_deleted_kw_tag.inds[3] == TLIndex("right_aux", '+', 5, 0)
     @test q_deleted_kw_tag.inds[4] == q.inds[3]
     @test Array(to_sparse_array(q_deleted_kw_tag)) == Array(to_sparse_array(addSingleton(q, 3; itag="right_aux", plev=5, dir='+')))
 
@@ -1474,12 +1476,12 @@ end
     @test length(q_deleted_kw_dir.inds) == 4
     @test q_deleted_kw_dir.inds[1] == q.inds[1]
     @test q_deleted_kw_dir.inds[2] == q.inds[2]
-    @test q_deleted_kw_dir.inds[3] == QIndex("right_aux", '+', 5, 0)
+    @test q_deleted_kw_dir.inds[3] == TLIndex("right_aux", '+', 5, 0)
     @test q_deleted_kw_dir.inds[4] == q.inds[3]
 
     q_deleted_kw_plev = deleteSingleton(q_two; plev=5)
     @test length(q_deleted_kw_plev.inds) == 4
-    @test q_deleted_kw_plev.inds[1] == QIndex("left_aux", '-', 2, 0)
+    @test q_deleted_kw_plev.inds[1] == TLIndex("left_aux", '-', 2, 0)
     @test q_deleted_kw_plev.inds[2] == q.inds[1]
     @test q_deleted_kw_plev.inds[3] == q.inds[2]
     @test q_deleted_kw_plev.inds[4] == q.inds[3]
@@ -1499,13 +1501,13 @@ end
     @test_logs (:warn, r"no singleton legs matched") deleteSingleton(q_two; itag="ain")
 end
 
-@testset "QSpace tensor product" begin
-    option = FermionSOptions(U1, SU{2}, nothing, 1)
+@testset "TLArray tensor product" begin
+    option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option)
-    q1 = QSpace(q0.I, ("l1_in", "l1_out"))
-    q2 = QSpace(q0.F, ("l2_in", "l2_out", "l2_op"))
+    q1 = TLArray(q0.I, ("l1_in", "l1_out"))
+    q2 = TLArray(q0.F1, ("l2_in", "l2_out", "l2_op"))
 
-    q12 = QSpaces.:⊗(q1, q2)
+    q12 = Telum.:⊗(q1, q2)
     q12_kron = kron(q1, q2)
 
     @test symm(q12) == symm(q1) == symm(q2)
@@ -1522,33 +1524,33 @@ end
     @test norm(arr_q12_kron - arr_q12) < 1e-10
 end
 
-# Helper: build a rank-4 test QSpace from getIdentity with 3 input legs.
+# Helper: build a rank-4 test TLArray from getIdentity with 3 input legs.
 #
 #   leg 1 ('+', "l1"), leg 2 ('+', "l2"), leg 3 ('+', "l3"),
 #   leg 4 ('-', "fused")
 # ─────────────────────────────────────────────────────────────────────────────
 function _make_test_qspace_rank4()
-    option = FermionSOptions(U1, SU{2}, nothing, 1)
+    option = FermionSOptions(1, :U1, :SU2, nothing)
     q0  = getLocalSpace(option)
-    qi1 = QSpace(q0.I, ("b1a", "b1b"))
-    qi2 = QSpace(q0.I, ("b2a", "b2b"))
-    qi3 = QSpace(q0.I, ("b3a", "b3b"))
+    qi1 = TLArray(q0.I, ("b1a", "b1b"))
+    qi2 = TLArray(q0.I, ("b2a", "b2b"))
+    qi3 = TLArray(q0.I, ("b3a", "b3b"))
     a4  = getIdentity((qi1, 2), (qi2, 2), (qi3, 2); itag="fused")
-    return QSpace(a4, ("l1", "l2", "l3", "fused"))
+    return TLArray(a4, ("l1", "l2", "l3", "fused"))
 end
 
 
-@testset "scalar add/subtract on rank-2 QSpace" begin
-    option = FermionSOptions(U1, SU{2}, nothing, 1)
+@testset "scalar add/subtract on rank-2 TLArray" begin
+    option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option)
-    q = QSpace(q0.I, ("left", "right"))
+    q = TLArray(q0.I, ("left", "right"))
 
     idq_pairs = getIdentity((q, 2); itag=q.inds[2].itags)
     idq = getIdentity(q, 2; itag=q.inds[2].itags)
     @test idq.inds == idq_pairs.inds
     @test idq.spaces == idq_pairs.spaces
     @test _rows_equal(idq.rows, idq_pairs.rows)
-    idq = QSpace(idq, q.inds)
+    idq = TLArray(idq, q.inds)
 
     @test norm((q + 2.5) - (q + 2.5 * idq)) < 1e-10
     @test norm((q - 2.5) - (q - 2.5 * idq)) < 1e-10
@@ -1564,10 +1566,10 @@ end
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Tests for arbitrary-rank (rank ≥ 4) QSpace
+# Tests for arbitrary-rank (rank ≥ 4) TLArray
 # ─────────────────────────────────────────────────────────────────────────────
 
-@testset "arbitrary rank QSpace" begin
+@testset "arbitrary rank TLArray" begin
     q4 = _make_test_qspace_rank4()
 
     # ── basic structure ───────────────────────────────────────────────────────
@@ -1693,11 +1695,11 @@ end
     end
 
     # ── show does not error ───────────────────────────────────────────────────
-    @testset "show on rank-4 QSpace" begin
+    @testset "show on rank-4 TLArray" begin
         buf = IOBuffer()
         @test (show(buf, MIME"text/plain"(), q4); true)
         out = String(take!(buf))
-        @test occursin("4D QSpace", out)
+        @test occursin("4D TLArray", out)
     end
 end
 

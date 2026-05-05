@@ -8,7 +8,7 @@ end
 # Sort key: (free_leg_qlabels..., contr_leg_qlabels...)
 # Free legs first so rows with the same output sector are grouped together;
 # contracted legs second so within a group rows are ordered by charge sector
-# (enabling an efficient two-pointer sweep when pairing with the other QSpace).
+# (enabling an efficient two-pointer sweep when pairing with the other TLArray).
 function _contract_sort_key(r::row, free_legs, contr_legs)
     (Tuple(_row_qlabel(r, l) for l in free_legs),
      Tuple(_row_qlabel(r, l) for l in contr_legs))
@@ -135,7 +135,7 @@ end
 #   qlabels1/2  : NTuple{QD, NTuple{NZ,Int}} — stored qlabels of each CGT
 #   legdir1/2   : (m, k) — number of incoming / outgoing stored qlabels
 #   cgp1/2      : NTuple{QD, Int} — physical leg → stored qlabel index
-#   free1/2     : physical free leg indices (1-based in each source QSpace)
+#   free1/2     : physical free leg indices (1-based in each source TLArray)
 #   legs1/2     : physical contracted leg indices
 #
 # Returns (new_qlabels, new_cgp, new_legdir).
@@ -330,20 +330,20 @@ end
 contract_old(q1, l1::Int, q2, l2::Int) = contract_old(q1, (l1,), q2, (l2,))
 
 # Vector / LegList overload: convert to tuples and delegate to the NTuple method.
-function contract_old(q1::QSpace, legs1::AbstractVector{<:Integer},
-                      q2::QSpace, legs2::AbstractVector{<:Integer}; kwargs...)
+function contract_old(q1::TLArray, legs1::AbstractVector{<:Integer},
+                      q2::TLArray, legs2::AbstractVector{<:Integer}; kwargs...)
     return contract_old(q1, Tuple(legs1), q2, Tuple(legs2); kwargs...)
 end
 
 # ─── * operator ──────────────────────────────────────────────────────────────
-# Automatically contract two QSpace objects by matching their tagged, unlocked
+# Automatically contract two TLArray objects by matching their tagged, unlocked
 # indices.  An index on q1 is "contractible" when it has a nonempty tag AND
 # lock == 0; same criterion applies to q2.  Two contractible indices are matched
-# when they compare equal under QIndex == (same itags, dir, plev, green) and
+# when they compare equal under TLIndex == (same itags, dir, plev, green) and
 # their precomputed leg spaces are equal. The collected matching pairs define
 # legs1 / legs2 passed to `contract`.
-function Base.:*(q1::QSpace, q2::QSpace)
-    # Collect candidate indices from each QSpace.
+function Base.:*(q1::TLArray, q2::TLArray)
+    # Collect candidate indices from each TLArray.
     cands1 = [(i, q1.inds[i]) for i in 1:length(q1.inds)
               if !isempty(q1.inds[i].itags) && q1.inds[i].lock == 0]
     cands2 = [(j, q2.inds[j]) for j in 1:length(q2.inds)
@@ -359,7 +359,7 @@ function Base.:*(q1::QSpace, q2::QSpace)
         hits = [(pos, j, idx2) for (pos, (j, idx2)) in enumerate(cands2)
                 if idx1 == change_dir(idx2) &&
                    q1.spaces[i] == q2.spaces[j] &&
-                   pos ∉ matched2]::Vector{Tuple{Int, Int, QIndex}}
+                   pos ∉ matched2]::Vector{Tuple{Int, Int, TLIndex}}
         if length(hits) > 1
             error("Ambiguous contraction: tag \"$(idx1.itags)\" matches more than one index in q2")
         end
@@ -371,20 +371,20 @@ function Base.:*(q1::QSpace, q2::QSpace)
         end
     end
 
-    @assert length(legs1) > 0 "No matching contractible indices found between the two QSpace objects"
+    @assert length(legs1) > 0 "No matching contractible indices found between the two TLArray objects"
 
     return contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
 end
 
-function contract_old(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
+function contract_old(q1::TLArray{T1, QD1, N, RD1, QT, PS, CGR1},
                       legs1::NTuple{CN, Int},
-                      q2::QSpace{T2, QD2, N, RD2, QT, PS, CGR2},
+                      q2::TLArray{T2, QD2, N, RD2, QT, PS, CGR2},
                       legs2::NTuple{CN, Int};
                       reduce_lock::Bool=true,
                       verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, CGR1, CGR2, CN}
 
     symmetries = product_symms(PS)
-    @assert symmetries == symm(q2) "QSpace objects must share the same symmetry tuple"
+    @assert symmetries == symm(q2) "TLArray objects must share the same symmetry tuple"
     
     # Verify contracted legs have opposite arrow directions, matching itags/green, and same space info
     if verify_legs
@@ -523,7 +523,7 @@ function contract_old(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
             idx = inds_out[l]
             has_match = l <= nf1 ? (idx ∈ changed_inds2) : (idx ∈ changed_inds1)
             (idx.lock > 0 && has_match) ?
-                QIndex(idx.itags, idx.dir, idx.plev, idx.lock - 1, idx.dual) : idx
+                TLIndex(idx.itags, idx.dir, idx.plev, idx.lock - 1, idx.dual) : idx
         end
     else
         inds_out
@@ -532,7 +532,7 @@ function contract_old(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
     # Compute spaces for result: free legs from q1 followed by free legs from q2
     spaces_out = ([q1.spaces[l] for l in free1]..., [q2.spaces[l] for l in free2]...)
 
-    return QSpace(PS, result_rows, final_inds, spaces_out)
+    return TLArray(PS, result_rows, final_inds, spaces_out)
 end
 
 
@@ -542,7 +542,7 @@ end
 # small matrix multiplies with one large one.
 #
 # Algorithm sketch:
-#   1. Build sorted row-info vectors for each QSpace. Each entry carries the
+#   1. Build sorted row-info vectors for each TLArray. Each entry carries the
 #      row index, all physical-leg qlabels, and the contracted-qlabel key.
 #   2. Two-pointer scan over both sorted vectors and process common sectors:
 #      a) Pre-permute & reshape each row's RMT to (F·OM, C) matrix.
@@ -552,7 +552,7 @@ end
 #         (reshape, permute, merge-OM, w-matrix / X-symbol contraction).
 #      e) Accumulate results per output free-sector.
 #   3. Merge each output sector (SVD compression → output row).
-#   4. Lock reduction / build result QSpace.
+#   4. Lock reduction / build result TLArray.
 # The legacy implementation remains available as `contract_old` for tests.
 
 # ── Contracted-label helpers ─────────────────────────────────────────────────
@@ -922,15 +922,15 @@ end
 # ── Convenience overloads ─────────────────────────────────────────────────────
 contract(q1, l1::Int, q2, l2::Int) = contract(q1, (l1,), q2, (l2,))
 
-function contract(q1::QSpace, legs1::AbstractVector{<:Integer},
-                  q2::QSpace, legs2::AbstractVector{<:Integer}; kwargs...)
+function contract(q1::TLArray, legs1::AbstractVector{<:Integer},
+                  q2::TLArray, legs2::AbstractVector{<:Integer}; kwargs...)
     return contract(q1, Tuple(legs1), q2, Tuple(legs2); kwargs...)
 end
 
 # ── Main entry point ──────────────────────────────────────────────────────────
-function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
+function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, CGR1},
                   legs1::NTuple{CN, Int},
-                  q2::QSpace{T2, QD2, N, RD2, QT, PS, CGR2},
+                  q2::TLArray{T2, QD2, N, RD2, QT, PS, CGR2},
                   legs2::NTuple{CN, Int};
                   reduce_lock::Bool=true,
                   verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, CGR1, CGR2, CN}
@@ -939,8 +939,8 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
 
     if verify_legs
         for i in 1:CN
-            idx1::QIndex = q1.inds[legs1[i]::Int]
-            idx2::QIndex = q2.inds[legs2[i]::Int]
+            idx1::TLIndex = q1.inds[legs1[i]::Int]
+            idx2::TLIndex = q2.inds[legs2[i]::Int]
             @assert idx1.dir != idx2.dir "Contracted legs must have opposite arrow directions: " *
                 "q1 leg $(legs1[i]) has dir='$(idx1.dir)', q2 leg $(legs2[i]) has dir='$(idx2.dir)'"
             @assert idx1.itags == idx2.itags "Contracted legs must have matching itags: " *
@@ -1123,7 +1123,7 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
             idx = inds_out[l]
             has_match = l <= nf1 ? (idx ∈ changed_inds2) : (idx ∈ changed_inds1)
             (idx.lock > 0 && has_match) ?
-                QIndex(idx.itags, idx.dir, idx.plev, idx.lock - 1, idx.dual) : idx
+                TLIndex(idx.itags, idx.dir, idx.plev, idx.lock - 1, idx.dual) : idx
         end
     else
         inds_out
@@ -1132,7 +1132,7 @@ function contract(q1::QSpace{T1, QD1, N, RD1, QT, PS, CGR1},
     spaces_out = (ntuple(i -> q1.spaces[free1[i]], Val(QD1 - CN))...,
                   ntuple(i -> q2.spaces[free2[i]], Val(QD2 - CN))...)
 
-    return QSpace(PS, result_rows, final_inds, spaces_out)::QSpace{T, QD_out, N, RD_out, QT, PS, CGRS_out}
+    return TLArray(PS, result_rows, final_inds, spaces_out)::TLArray{T, QD_out, N, RD_out, QT, PS, CGRS_out}
 end
 
 

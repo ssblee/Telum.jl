@@ -1,22 +1,22 @@
 # ─── permutedims ─────────────────────────────────────────────────────────
 #
-# Permute the legs of a QSpace object.
+# Permute the legs of a TLArray object.
 #
 # Arguments:
-#   q    : QSpace to permute
+#   q    : TLArray to permute
 #   perm : permutation tuple/vector of length QD
 #          perm[new_pos] = old_pos means the leg at old_pos moves to new_pos
 #
-# Returns: new QSpace with permuted legs
+# Returns: new TLArray with permuted legs
 #
 # Algorithm:
-#   1. Permute QIndex tuple according to perm.
+#   1. Permute TLIndex tuple according to perm.
 #   2. For each row, permute CGRs:
 #      - Update cgp: new_cgp[new_leg] = old_cgp[perm[new_leg]]
 #      - Check if _check_cgr_qlabel_order would pass with the new cgp
 #      - If not, reorder stored qlabels and apply CGTperm transformation to wmat
 #   3. Permute RMT first QD dimensions according to perm.
-#   4. Assemble and return new QSpace.
+#   4. Assemble and return new TLArray.
 # ─────────────────────────────────────────────────────────────────────────────
 
 function _reorder_perm_part(qlabels::NTuple{N, NTuple{NZ, Int}},
@@ -112,24 +112,24 @@ function _permute_row(r::row{T, QD, N, RD}, perm::NTuple{QD, Int}, symm) where {
 end
 
 """
-    permutedims(q::QSpace, perm)
+    permutedims(q::TLArray, perm)
 
-Permute the legs of a QSpace object.
+Permute the legs of a TLArray object.
 
 # Arguments
-- `q`: QSpace to permute
+- `q`: TLArray to permute
 - `perm`: permutation (tuple or vector) of length equal to the rank of q.
           `perm[new_pos] = old_pos` means the leg at `old_pos` moves to `new_pos`.
 
 # Returns
-New QSpace with permuted legs.
+New TLArray with permuted legs.
 """
-function Base.permutedims(q::QSpace{T, QD, N, RD}, perm) where {T, QD, N, RD}
+function Base.permutedims(q::TLArray{T, QD, N, RD}, perm) where {T, QD, N, RD}
     perm = Tuple(perm)
-    @assert length(perm) == QD "permutation length $(length(perm)) != QSpace rank $QD"
+    @assert length(perm) == QD "permutation length $(length(perm)) != TLArray rank $QD"
     @assert sort(collect(perm)) == collect(1:QD) "perm must be a valid permutation of 1:$QD"
     
-    # 1. Permute QIndex tuple
+    # 1. Permute TLIndex tuple
     new_inds = Tuple(q.inds[perm[l]] for l in 1:QD)
     
     # 2. Permute spaces tuple
@@ -138,7 +138,7 @@ function Base.permutedims(q::QSpace{T, QD, N, RD}, perm) where {T, QD, N, RD}
     # 3 & 4. Permute each row (CGRs and RMT)
     new_rows = row{T, QD, N, RD}[_permute_row(r, perm, symm(q)) for r in q.rows]
     
-    # 5. Assemble and return new QSpace with precomputed spaces
-    return QSpace(symm(q), new_rows, new_inds, new_spaces)
+    # 5. Assemble and return new TLArray with precomputed spaces
+    return TLArray(symm(q), new_rows, new_inds, new_spaces)
 end
 
