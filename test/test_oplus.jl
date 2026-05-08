@@ -54,6 +54,37 @@ end
         @test norm(arr_qsum - arr_ref) < 1e-10
     end
 
+    @testset "vector permutes inputs to reference index order" begin
+        B_perm = permutedims(B, (2, 1, 3))
+        qsum = oplus([A, B_perm], 3)
+        arr_ref, spaces_ref = _dense_vector_oplus_ref([A, B], 3)
+        arr_qsum = Array(to_sparse_array(qsum))
+
+        @test qsum.inds == A.inds
+        @test qsum.spaces == (A.spaces[1], A.spaces[2], spaces_ref[3])
+        @test size(arr_qsum) == size(arr_ref)
+        @test norm(arr_qsum - arr_ref) < 1e-10
+    end
+
+    @testset "keyword leg selection" begin
+        qsum = oplus([A, B]; itag="op")
+        arr_ref, spaces_ref = _dense_vector_oplus_ref([A, B], 3)
+        arr_qsum = Array(to_sparse_array(qsum))
+
+        @test qsum.inds == A.inds
+        @test qsum.spaces == (A.spaces[1], A.spaces[2], spaces_ref[3])
+        @test size(arr_qsum) == size(arr_ref)
+        @test norm(arr_qsum - arr_ref) < 1e-10
+
+        qsum_dir = oplus(A, B; dir='-')
+        arr_ref_dir, spaces_ref_dir = _dense_vector_oplus_ref([A, B], (2, 3))
+        arr_qsum_dir = Array(to_sparse_array(qsum_dir))
+
+        @test qsum_dir.spaces == (A.spaces[1], spaces_ref_dir[2], spaces_ref_dir[3])
+        @test size(arr_qsum_dir) == size(arr_ref_dir)
+        @test norm(arr_qsum_dir - arr_ref_dir) < 1e-10
+    end
+
     @testset "vector allows different green fields" begin
         B_green = TLArray(B, (Telum.change_green(B.inds[1]), B.inds[2], Telum.change_green(B.inds[3])))
         qsum = oplus([A, B_green], 3)
@@ -82,6 +113,24 @@ end
 
         qsum = oplus(mat, (3, 4))
         arr_ref, spaces_ref = _dense_matrix_oplus_ref(mat, (3, 4))
+        arr_qsum = Array(to_sparse_array(qsum))
+
+        @test qsum.inds == q4.inds
+        @test qsum.spaces == (q4.spaces[1], q4.spaces[2], spaces_ref[3], spaces_ref[4])
+        @test size(arr_qsum) == size(arr_ref)
+        @test norm(arr_qsum - arr_ref) < 1e-10
+    end
+
+    @testset "matrix permutes entries to reference index order" begin
+        q4 = _make_test_qspace_rank4_oplus()
+        mat = Matrix{TLArray}(undef, 2, 2)
+        mat[1, 1] = q4
+        mat[2, 1] = permutedims(2.0 * q4, (2, 1, 3, 4))
+        mat[1, 2] = 3.0 * q4
+        mat[2, 2] = 4.0 * q4
+
+        qsum = oplus(mat, (3, 4))
+        arr_ref, spaces_ref = _dense_matrix_oplus_ref([q4 3.0 * q4; 2.0 * q4 4.0 * q4], (3, 4))
         arr_qsum = Array(to_sparse_array(qsum))
 
         @test qsum.inds == q4.inds

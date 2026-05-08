@@ -1884,6 +1884,46 @@ function _inds_match_for_oplus(inds1, inds2)
     return all(_qindex_match_for_oplus(idx1, idx2) for (idx1, idx2) in zip(inds1, inds2))
 end
 
+function _find_oplus_leg_permutation(ref_inds, inds, entry::Int)
+    length(inds) == length(ref_inds) || throw(ArgumentError(
+        "TLArray entry $entry has rank $(length(inds)), expected $(length(ref_inds))"))
+
+    QD = length(ref_inds)
+    candidates = Vector{Vector{Int}}(undef, QD)
+    for i in 1:QD
+        candidates[i] = [j for j in 1:QD if _qindex_match_for_oplus(inds[j], ref_inds[i])]
+        isempty(candidates[i]) && throw(ArgumentError(
+            "TLArray entry $entry has no leg matching reference leg $i " *
+            "(same itag, direction, prime level, and lock required; green ignored)"))
+    end
+
+    results = Vector{NTuple{QD, Int}}()
+    _enum_leg_perms!(results, candidates, Int[], Set{Int}(), QD)
+    isempty(results) && throw(ArgumentError(
+        "TLArray entry $entry has no bijective leg permutation matching the reference indices"))
+    length(results) > 1 && throw(ArgumentError(
+        "TLArray entry $entry has ambiguous leg permutation matching the reference indices"))
+    return results[1]
+end
+
+function _align_oplus_inputs(qs)
+    isempty(qs) && throw(ArgumentError("oplus requires at least one TLArray"))
+    first(qs) isa TLArray || throw(ArgumentError("oplus entry 1 is not a TLArray"))
+
+    ref = first(qs)
+    aligned = Vector{TLArray}(undef, length(qs))
+    aligned[1] = ref
+    for i in 2:length(qs)
+        q = qs[i]
+        q isa TLArray || throw(ArgumentError("oplus entry $i is not a TLArray"))
+        symm(q) == symm(ref) || throw(ArgumentError(
+            "TLArray entry $i has a different symmetry tuple"))
+        perm = _find_oplus_leg_permutation(ref.inds, q.inds, i)
+        aligned[i] = perm == ntuple(identity, length(ref.inds)) ? q : permutedims(q, perm)
+    end
+    return aligned
+end
+
 function _validate_oplus_common(qs)
     isempty(qs) && throw(ArgumentError("oplus requires at least one TLArray"))
     first(qs) isa TLArray || throw(ArgumentError("oplus entry 1 is not a TLArray"))
@@ -1896,10 +1936,20 @@ function _validate_oplus_common(qs)
         length(q.inds) == length(ref.inds) || throw(ArgumentError(
             "TLArray entry $i has rank $(length(q.inds)), expected $(length(ref.inds))"))
         _inds_match_for_oplus(q.inds, ref.inds) || throw(ArgumentError(
-            "TLArray entry $i has different indices (ignoring green)"))
+            "TLArray entry $i has different indices " *
+            "(same itag, direction, prime level, and lock required; green ignored)"))
     end
 
     return ref
+end
+
+function _oplus_dims_from_keywords(ref::TLArray; dir=nothing, itag=nothing,
+                                   plev=nothing, lock=nothing, rev::Bool=false)
+    isnothing(dir) && isnothing(itag) && isnothing(plev) && isnothing(lock) &&
+        throw(ArgumentError("oplus keyword selection requires at least one selector"))
+    dims = Tuple(findlegs(ref; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev))
+    isempty(dims) && throw(ArgumentError("oplus keyword selectors did not match any legs"))
+    return dims
 end
 
 function _build_vector_oplus_spaces(qs, dims_tuple)
@@ -1981,13 +2031,33 @@ function oplus(qs::AbstractVector, dimensions)
     any(q -> q === nothing || q === missing, qs) && throw(ArgumentError(
         "vector oplus requires every entry to be well defined"))
 
-    ref = _validate_oplus_common(collect(qs))
+    aligned = _align_oplus_inputs(collect(qs))
+    ref = _validate_oplus_common(aligned)
     dims_tuple = _normalize_oplus_dims(dimensions, length(ref.inds))
-    return _materialize_vector_oplus(collect(qs), dims_tuple)
+    return _materialize_vector_oplus(aligned, dims_tuple)
+end
+
+function oplus(qs::AbstractVector; dir=nothing, itag=nothing, plev=nothing,
+               lock=nothing, rev::Bool=false)
+    isempty(qs) && throw(ArgumentError("oplus requires at least one TLArray"))
+    any(q -> q === nothing || q === missing, qs) && throw(ArgumentError(
+        "vector oplus requires every entry to be well defined"))
+
+    aligned = _align_oplus_inputs(collect(qs))
+    ref = _validate_oplus_common(aligned)
+    dims_tuple = _oplus_dims_from_keywords(ref; dir=dir, itag=itag, plev=plev,
+                                           lock=lock, rev=rev)
+    return _materialize_vector_oplus(aligned, dims_tuple)
 end
 
 function oplus(q1::TLArray, q2::TLArray, dimensions)
     return oplus(TLArray[q1, q2], dimensions)
+end
+
+function oplus(q1::TLArray, q2::TLArray; dir=nothing, itag=nothing,
+               plev=nothing, lock=nothing, rev::Bool=false)
+    return oplus(TLArray[q1, q2]; dir=dir, itag=itag, plev=plev,
+                 lock=lock, rev=rev)
 end
 
 function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
@@ -2005,7 +2075,9 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
     isempty(defined_qs) && throw(ArgumentError(
         "matrix oplus requires at least one defined TLArray to infer spaces"))
 
-    ref = _validate_oplus_common(defined_qs)
+    aligned_qs = _align_oplus_inputs(defined_qs)
+    aligned_by_position = Dict(pos => q for (pos, q) in zip(defined_positions, aligned_qs))
+    ref = _validate_oplus_common(aligned_qs)
     row_dims, col_dims = _normalize_oplus_matrix_dims(dimensions, length(ref.inds))
     row_dims_set = Set(row_dims)
     col_dims_set = Set(col_dims)
@@ -2042,7 +2114,7 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
             spaces = _infer_zero_matrix_spaces(row_sources, col_sources, i, j, length(ref.inds))
             filled[i, j] = _zero_qspace_with_spaces(symm(ref), ref.inds, spaces; T=T)
         else
-            filled[i, j] = q
+            filled[i, j] = aligned_by_position[(i, j)]
         end
     end
 

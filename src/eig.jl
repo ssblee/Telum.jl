@@ -223,16 +223,15 @@ function _effective_eigen_keep_count(eig_entries,
                                      Nkeep::Integer,
                                      tol::Real;
                                      hermitian::Bool)
-    nkeep_eff = min(Nkeep, length(eig_entries))
-    if !(tol > 0) || nkeep_eff == 0 || nkeep_eff == length(eig_entries)
+    total = length(eig_entries)
+    nkeep_eff = min(Nkeep, total)
+    if !(tol > 0) || nkeep_eff == 0 || nkeep_eff == total
         return nkeep_eff
     end
 
-    extra = min(length(eig_entries) - nkeep_eff, floor(Int, Nkeep * Float64(tol)))
-    extra == 0 && return nkeep_eff
-
-    candidate_end = nkeep_eff + extra
-    candidate_end == length(eig_entries) && return candidate_end
+    candidate_end = min(total, ceil(Int, Nkeep * (1 + Float64(tol))))
+    candidate_end <= nkeep_eff && return nkeep_eff
+    candidate_end == total && return candidate_end
 
     sort_vals = [_eig_sort_value(eig_entries[i][1], hermitian) for i in nkeep_eff:candidate_end+1]
     _, gap_idx = findmax(diff(sort_vals))
@@ -479,9 +478,9 @@ Keep the `Nkeep` smallest eigenvalues, ignoring degeneracy, and return two
 `EigenResult` objects: the kept part and the discarded part.
 
 If `tol > 0`, keep at least `Nkeep` eigenvalues and consider up to
-`floor(Int, Nkeep * tol)` additional next-smallest eigenvalues. The actual cut is
-chosen from that extra window by the largest adjacent gap, so the truncation can
-move later but never earlier than `Nkeep`.
+`ceil(Int, Nkeep * (1 + tol))` total next-smallest eigenvalues, capped by the
+total number available. The actual cut is chosen from that window by the largest
+adjacent gap, so the truncation can move later but never earlier than `Nkeep`.
 """
 function discard_eigen(result::EigenResult,
                        Nkeep::Integer,

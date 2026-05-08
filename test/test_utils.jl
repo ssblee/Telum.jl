@@ -1184,6 +1184,10 @@ function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
 end
 
 function test_discard_eigen_tol(option::LocalSpaceOptions)
+    entries = [(v, 1, (), i) for (i, v) in enumerate([1.0, 2.0, 3.0, 3.1, 10.0])]
+    @test Telum._effective_eigen_keep_count(entries, 3, 0.1; hermitian=true) == 4
+    @test Telum._effective_eigen_keep_count(entries[1:3], 5, 0.1; hermitian=true) == 3
+
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
 
