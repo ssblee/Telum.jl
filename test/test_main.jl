@@ -20,6 +20,30 @@ end
     test_spin_local_space()
 end
 
+@testset "FermionS full-channel IROP names omit channel suffixes" begin
+    q1 = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing))
+    @test hasproperty(q1, :F)
+    @test !hasproperty(q1, :F1)
+
+    q3 = getLocalSpace(FermionSOptions(3, :U1, :SU2, :SU3))
+    @test hasproperty(q3, :F)
+    @test !hasproperty(q3, :F123)
+end
+
+@testset "Fermion local space IROPs" begin
+    q1 = getLocalSpace(FermionOptions(U1))
+    @test hasproperty(q1, :F)
+    @test hasproperty(q1, :Z)
+    @test hasproperty(q1, :I)
+    @test !hasproperty(q1, :F1)
+    @test size(to_sparse_array(q1.I)) == (2, 2)
+
+    q3 = getLocalSpace(FermionOptions(3, :U1, :SU3))
+    @test hasproperty(q3, :F)
+    @test !hasproperty(q3, :F123)
+    @test size(to_sparse_array(q3.I)) == (8, 8)
+end
+
 struct NonCommutingSymmetryOptions <: LocalSpaceOptions end
 
 function Telum.getSymmetryInfo(::NonCommutingSymmetryOptions)
@@ -145,7 +169,7 @@ end
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2))
-    qf  = TLArray(q.F123, ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a
     test_svdQS(ct, [2, 4])
     test_svdQS(ct, [1, 4])
@@ -397,7 +421,7 @@ end
 function example()
     opt = FermionSOptions(1, :U1, :SU2, nothing)
     q = getLocalSpace(opt, ("lur", "lur", "op"))
-    nloc = lock(q.F1', 2) * q.F1
+    nloc = lock(q.F', 2) * q.F
     return nloc
 end
 
@@ -413,9 +437,9 @@ end
 function _make_test_qspace()
     option = FermionSOptions(3, :U1, :SU2, :SU3)
     q0 = getLocalSpace(option)
-    # q0.F123 is a 3-leg TLArray: dir=('+','-','-'), all plev=0, all lock=0.
+    # q0.F is a 3-leg TLArray: dir=('+','-','-'), all plev=0, all lock=0.
     # TLArray(q, tags) creates a copy with new tags (only the itags field changes).
-    return TLArray(q0.F123, ("site1", "site2", "op"))
+    return TLArray(q0.F, ("site1", "site2", "op"))
 end
 
 @testset "TLIndex modifier functions" begin
@@ -915,6 +939,7 @@ end
     end
 end
 
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Tests for empty_qspace
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1000,7 +1025,7 @@ end
     @testset "zero preserves metadata on TLArray" begin
         option = FermionSOptions(3, :U1, :SU2, :SU3)
         q0 = getLocalSpace(option)
-        q = TLArray(q0.F123, ("site1", "site2", "op"))
+        q = TLArray(q0.F, ("site1", "site2", "op"))
         qz = zero(q)
 
         @test qz isa TLArray
@@ -1387,7 +1412,7 @@ end
     @testset "optional tags are applied" begin
         option = FermionSOptions(1, :U1, :SU2, nothing)
         q0 = getLocalSpace(option)
-        vac = getvac(q0.F1, ("vin", "vout"))
+        vac = getvac(q0.F, ("vin", "vout"))
 
         @test vac.inds[1] == TLIndex("vin", '+')
         @test vac.inds[2] == TLIndex("vout", '-')
@@ -1397,7 +1422,7 @@ end
 @testset "addSingleton" begin
     option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option, ("ain", "aout", "op"))
-    q = q0.F1
+    q = q0.F
     q_rank2 = TLArray(q0.I, ("lin", "lout"))
 
     q_default = addSingleton(q, 2)
@@ -1408,6 +1433,32 @@ end
 
     trivial = zero_qlabels(q)
     @test q_default.spaces[2] == [(trivial, 1)]
+
+    q_append_default = addSingleton(q)
+    @test q_append_default.inds[1:3] == q.inds
+    @test q_append_default.inds[4] == TLIndex("", '+')
+    @test q_append_default.spaces[4] == [(trivial, 1)]
+    @test Array(to_sparse_array(q_append_default)) ==
+          Array(to_sparse_array(addSingleton(q, 4)))
+
+    q_append_two = addSingleton(q; nlegs=2,
+                                itag=("tail_left", "tail_right"),
+                                plev=(1, 2),
+                                lock=(0, 1),
+                                dir=('+', '-'))
+    @test q_append_two.inds[1:3] == q.inds
+    @test q_append_two.inds[4] == TLIndex("tail_left", '+', 1, 0)
+    @test q_append_two.inds[5] == TLIndex("tail_right", '-', 2, 1)
+    @test q_append_two.spaces[4] == [(trivial, 1)]
+    @test q_append_two.spaces[5] == [(trivial, 1)]
+    @test Array(to_sparse_array(q_append_two)) ==
+          Array(to_sparse_array(addSingleton(q, (4, 5);
+                                             itag=("tail_left", "tail_right"),
+                                             plev=(1, 2),
+                                             lock=(0, 1),
+                                             dir=('+', '-'))))
+
+    @test_throws ArgumentError addSingleton(q; nlegs=0)
 
     q_added = addSingleton(q, (1, 4);
                            itag=("left_aux", "right_aux"),
@@ -1439,7 +1490,7 @@ end
 @testset "deleteSingleton" begin
     option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option, ("ain", "aout", "op"))
-    q = q0.F1
+    q = q0.F
     q_rank2 = TLArray(q0.I, ("lin", "lout"))
 
     q_one = addSingleton(q, 2; itag="aux", plev=3, dir='-')
@@ -1505,7 +1556,7 @@ end
     option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option)
     q1 = TLArray(q0.I, ("l1_in", "l1_out"))
-    q2 = TLArray(q0.F1, ("l2_in", "l2_out", "l2_op"))
+    q2 = TLArray(q0.F, ("l2_in", "l2_out", "l2_op"))
 
     q12 = Telum.:⊗(q1, q2)
     q12_kron = kron(q1, q2)
@@ -1702,4 +1753,3 @@ end
         @test occursin("4D TLArray", out)
     end
 end
-

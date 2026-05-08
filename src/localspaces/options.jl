@@ -45,15 +45,41 @@ end
 # ── Spinless fermion ──────────────────────────────────────────────────────────
 
 """
-    FermionOptions(; symmetry)
+    FermionOptions(N::Int=1, charge_symm=:U1, channel_symm=nothing)
 
-Options for a spinless (single-component) fermionic site.
+Options for a spinless fermionic local space with `N` channels.
+
+Each symmetry option is either `nothing`, a `Symbol`, or a vector of
+`(symmetry_symbol, channel_indices)` tuples. A plain symbol is applied to all
+channels. Charge symmetry is currently Abelian only, so `:U1` is supported.
+
+For compatibility, `FermionOptions(U1)` is equivalent to
+`FermionOptions(1, :U1, nothing)`.
 
 # Fields
-- `symmetry :: Type{<:Symmetry}` – symmetry group (typically `U1` for particle number).
+- `nchannels` – number of channels / flavors. The local Hilbert-space
+  dimension is `2^nchannels`.
+- `charge_symm` – Abelian charge symmetries on selected channel groups.
+- `channel_symm` – channel / flavor symmetry groups on selected channels.
+  Symbols of the form `:SU3`, `:SU4`, ... request the corresponding SU(N)
+  channel symmetry; `nothing` disables channel symmetry.
 """
 struct FermionOptions <: LocalSpaceOptions
-    symmetry::Type{<:Symmetry}
+    nchannels::Int
+    charge_symm::Union{Vector{Tuple{Symbol, Vector{Int}}}, Nothing}
+    channel_symm::Union{Vector{Tuple{Symbol, Vector{Int}}}, Nothing}
+end
+
+function FermionOptions(N::Int=1, charge_symm=:U1, channel_symm=nothing)
+    @assert N > 0 "Number of channels must be positive"
+    charge_symm_ = standardize_option(charge_symm, N)
+    channel_symm_ = standardize_option(channel_symm, N)
+    return FermionOptions(N, charge_symm_, channel_symm_)
+end
+
+function FermionOptions(symmetry::Type{<:Symmetry})
+    @assert symmetry == U1 "FermionOptions currently only supports U1 charge symmetry"
+    return FermionOptions(1, :U1, nothing)
 end
 
 # ── Spinful fermion ───────────────────────────────────────────────────────────

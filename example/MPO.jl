@@ -39,16 +39,16 @@ end
 function HubbardMPO(U, μ, t, N)
     opt = FermionSOptions(1, :U1, :SU2, nothing)
     q = getLocalSpace(opt, ("site", "site", "op"))
-    nloc = lock(q.F1', 2) * q.F1
+    nloc = lock(q.F', 2) * q.F
 
     qss = Matrix{TLArray{Float64, 4, 2, 6}}(undef, 4, 4)
     i4d = addSingleton(q.I, (3, 4); itag=("left", "right"), dir=('+', '-'))
-    ZF_flip = setitag(legflip(lock(q.Z, 1) * q.F1, 3), 3, "left")
-    FcZ = permutedims(q.F1' * lock(q.Z, 2), (1, 3, 2))
+    ZF_flip = setitag(legflip(lock(q.Z, 1) * q.F, 3), 3, "left")
+    FcZ = permutedims(q.F' * lock(q.Z, 2), (1, 3, 2))
 
-    f4d = addSingleton(q.F1, 3; itag="left", dir='+')
+    f4d = addSingleton(q.F, 3; itag="left", dir='+')
     f4d = setitag(f4d, 4, "right")
-    fc_flip = addSingleton(legflip(q.F1', 3), 3; itag="left", dir='+')
+    fc_flip = addSingleton(legflip(q.F', 3), 3; itag="left", dir='+')
     fc_flip = setitag(permutedims(fc_flip, (2, 1, 3, 4)), 4, "right")
 
     qss[1, 1] = qss[4, 4] = i4d

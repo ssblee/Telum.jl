@@ -236,7 +236,7 @@ function NRG_test()
 
     option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option, ("s,0", "s,0", "op"))
-    n0 = lock(q0.F1', 2) * q0.F1
+    n0 = lock(q0.F', 2) * q0.F
 
     H0 = U/2*lock(n0, 1) * (n0 - q0.I) + epsd * n0 
     v = getvac(q0.I, ("K,vac", "K,vac"))
@@ -244,7 +244,7 @@ function NRG_test()
 
     H0 = A0' * lock(A0 * H0, 2)
 
-    return NRG_IterDiag(H0, A0, λ, ff, q0.F1, gg, n0, q0.Z, Nkeep)
+    return NRG_IterDiag(H0, A0, λ, ff, q0.F, gg, n0, q0.Z, Nkeep)
 end
 
 function NRG_IterDiag(H0::TLArray{T, 2, N}, 
@@ -448,4 +448,3 @@ plot_NRG_EK(result::Tuple; kwargs...) = plot_NRG_EK(result[1]; kwargs...)
 
 EK, AK, ED, AD, E0 = NRG_test()
 plot_NRG_EK(EK; ymax=3.0, linewidth=1.5, show_legend=true)
-

@@ -6,3 +6,4 @@ Manifest.toml
 SESSION_NOTES.md
 scratch_julia_worker.jl
 *.txt
+docs/*

@@ -132,7 +132,7 @@ Typical fields used in the examples:
 - `q.I`: identity
 - `q.S`: spin operator multiplet
 - `q.Sp`, `q.Sm`, `q.Sz`: spin components in `U1` examples
-- `q.F1`: fermion operator
+- `q.F`: fermion operator
 - `q.Z`: fermion parity operator
 
 ## Boundary and Sector Helpers
@@ -347,8 +347,8 @@ Purpose:
 Examples:
 
 ```julia
-ZF_flip = setitag(legflip(lock(q.Z, 1) * q.F1, 3), 3, "left")
-fc_flip = addSingleton(legflip(q.F1', 3), 3; itag="left", dir='+')
+ZF_flip = setitag(legflip(lock(q.Z, 1) * q.F, 3), 3, "left")
+fc_flip = addSingleton(legflip(q.F', 3), 3; itag="left", dir='+')
 ```
 
 Typical role:
@@ -389,7 +389,7 @@ Examples:
 ```julia
 Hnow = Anow' * lock(Anow * Hprev * MPO[i]; itag="SL,$i")
 Hlr[i+1] = MPS[i]' * lock(Hlr[i] * MPO[i] * MPS[i]; itag="SB,$i")
-n0 = lock(q0.F1', 2) * q0.F1
+n0 = lock(q0.F', 2) * q0.F
 ```
 
 Why it appears so often:
@@ -431,7 +431,7 @@ Examples:
 ```julia
 Anew'
 MPS[i]'
-q.F1'
+q.F'
 ```
 
 Typical role:

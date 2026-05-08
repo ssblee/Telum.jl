@@ -375,11 +375,11 @@ function test_FAcont(option::LocalSpaceOptions)
     q = getLocalSpace(option);
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
-    qf = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf = TLArray(q.F, ("lur2", "lur2", "op"))
     a = getIdentity((qi1, 2), (qi2, 2));
 
     ct = qf * a
-    Farr = to_sparse_array(getproperty(q, Symbol("F", join(1:option.nchannels))))
+    Farr = to_sparse_array(q.F)
     Aarr = to_sparse_array(a)
 
     ctarr1 = contract_sparse(Farr, Aarr, (2,), (2,))
@@ -395,7 +395,7 @@ function test_contract_abelian_wmats_are_unit(option::LocalSpaceOptions)
     q = getLocalSpace(option)
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
-    qf = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf = TLArray(q.F, ("lur2", "lur2", "op"))
     a = getIdentity((qi1, 2), (qi2, 2))
 
     ct = qf * a
@@ -469,7 +469,7 @@ end
 
 function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     q0 = getLocalSpace(option, ("site1", "site2", "op"))
-    q = getproperty(q0, Symbol("F", join(1:option.nchannels)))
+    q = q0.F
 
     function test_same_qspace_structure(q1::TLArray, q2::TLArray)
         @test q1.inds == q2.inds
@@ -528,7 +528,7 @@ end
 
 function test_contract_verify_legs_checks_green(option::LocalSpaceOptions)
     q0 = getLocalSpace(option, ("site1", "site2", "op"))
-    q = getproperty(q0, Symbol("F", join(1:option.nchannels)))
+    q = q0.F
     j = get1jtensor(q, 2)
 
     @test contract(q, (2,), j, (1,); reduce_lock=false) isa TLArray
@@ -542,7 +542,7 @@ end
 #
 # Tested TLArray objects (drawn from existing test helpers):
 #   1. q.I       — 2-leg identity operator
-#   2. getproperty(q, Symbol("F", join(1:option.nchannels)))       — 3-leg creation/annihilation operator
+#   2. q.F       — 3-leg creation/annihilation operator
 #   3. a         — 4-leg identity from getIdentity (tensor product of two I legs)
 #   4. ct        — 4-leg contraction result F ⊗ a from test_FAcont
 #
@@ -557,13 +557,13 @@ function test_conj(option::LocalSpaceOptions)
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2))
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a
 
     # Pairs (label, TLArray) to test
     cases = [
         ("I",  q.I),
-        ("F",  getproperty(q, Symbol("F", join(1:option.nchannels)))),
+        ("F",  q.F),
         ("a",  a),
         ("ct", ct),
     ]
@@ -718,7 +718,7 @@ end
 #
 # Cases tested per call:
 #   q.I  – rank-2 identity (QD = 2, exercises the dim·‖RMT‖² formula)
-#   getproperty(q, Symbol("F", join(1:option.nchannels)))  – rank-3 operator (QD = 3, standard CGT-orthonormal formula)
+#   q.F  – rank-3 operator (QD = 3, standard CGT-orthonormal formula)
 #   ct   – rank-4 tensor   (QD = 4, after F * identity contraction)
 #
 # For (b) to work every pair (q leg l, conj(q) leg l) must form a valid
@@ -731,12 +731,12 @@ function test_norm(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a   # rank-4: legs (lur1_in, lur2_in, lur2_out, op)
 
     cases = [
         ("I",  q.I),
-        ("F",  getproperty(q, Symbol("F", join(1:option.nchannels)))),
+        ("F",  q.F),
         ("ct", ct),
     ]
 
@@ -1325,7 +1325,7 @@ function test_spaces_svdQS(option::LocalSpaceOptions)
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a   # rank-4: legs (lur1_in, lur2_in, lur2_out, op)
 
     # qlabel set from a splist
@@ -1412,7 +1412,7 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 2)
@@ -1532,7 +1532,7 @@ function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Floa
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 2)
@@ -1577,7 +1577,7 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 2)
@@ -1663,7 +1663,7 @@ function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 4)
@@ -1724,7 +1724,7 @@ function _svd_cgtsvd_fixture(option::LocalSpaceOptions)
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a
     return ct, (1, 2)
 end
@@ -1808,7 +1808,7 @@ function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a   = getIdentity((qi1, 2), (qi2, 2); itag="lurlur")
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     ct  = qf * a
 
     left_legs = (1, 2)
@@ -2031,7 +2031,7 @@ function test_contract_default(option::LocalSpaceOptions; tol::Float64 = 1e-10)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
-    qf  = TLArray(getproperty(q, Symbol("F", join(1:option.nchannels))), ("lur2", "lur2", "op"))
+    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
     a   = getIdentity((qi1, 2), (qi2, 2))
 
     # ── Case 1: F × Identity (3-leg × 4-leg, 1 contracted leg) ──────────────
@@ -2060,6 +2060,5 @@ function test_contract_default(option::LocalSpaceOptions; tol::Float64 = 1e-10)
 
     println("test_contract_default passed (all cases).")
 end
-
 
 

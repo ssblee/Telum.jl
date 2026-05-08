@@ -10,7 +10,7 @@ function benchmark_smallRMT()
     q = getLocalSpace(option);
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
-    qf = TLArray(q.F123, ("lur2", "lur2", "op"))
+    qf = TLArray(q.F, ("lur2", "lur2", "op"))
     a = getIdentity((qi1, 2), (qi2, 2));
     return qf, a
 end

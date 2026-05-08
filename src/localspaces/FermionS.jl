@@ -203,53 +203,29 @@ function chan_symmops(opts::FermionSOptions, basic_ops)
     return weights, symms, lops
 end
 
-_channel_suffix(channs::AbstractVector{<:Integer}) = join(channs)
-_spin_symbol(channs::AbstractVector{<:Integer}, component::AbstractString="") =
-    Symbol("S", _channel_suffix(channs), component)
-_fermion_symbol(channs::AbstractVector{<:Integer}, component::AbstractString="") =
-    Symbol("F", _channel_suffix(channs), component)
-
-function _check_channels(channs::AbstractVector{<:Integer}, N::Int, label)
-    isempty(channs) && error("$label must contain at least one channel")
-    length(unique(channs)) == length(channs) ||
-        error("$label contains duplicate channels: $channs")
-    all(1 .<= channs .<= N) ||
-        error("$label contains channels outside 1:$N: $channs")
-end
-
-function _check_disjoint_channel_groups(groups, N::Int, label::AbstractString)
-    seen = Set{Int}()
-    for (ssymbol, channs) in groups
-        _check_channels(channs, N, "$label $ssymbol")
-        overlap = intersect(seen, channs)
-        isempty(overlap) ||
-            error("$label groups overlap on channels $(sort!(collect(overlap)))")
-        union!(seen, channs)
-    end
-    return seen
-end
-
 function _add_spin_components!(
     mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
     channs::AbstractVector{<:Integer},
+    N::Int,
     basic_ops)
 
     suffix_channs = collect(channs)
-    mwirops[_spin_symbol(suffix_channs, "p")] =
+    mwirops[_spin_symbol(suffix_channs, N, "p")] =
         (sum(basic_ops.SS[i]' for i in suffix_channs), -1 / sqrt(2))
-    mwirops[_spin_symbol(suffix_channs, "z")] =
+    mwirops[_spin_symbol(suffix_channs, N, "z")] =
         (sum(basic_ops.SZ[i] for i in suffix_channs), 1 / 2)
-    mwirops[_spin_symbol(suffix_channs, "m")] =
+    mwirops[_spin_symbol(suffix_channs, N, "m")] =
         (sum(basic_ops.SS[i] for i in suffix_channs), 1 / sqrt(2))
 end
 
 function _add_spin_irop!(
     mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
     channs::AbstractVector{<:Integer},
+    N::Int,
     basic_ops)
 
     suffix_channs = collect(channs)
-    mwirops[_spin_symbol(suffix_channs)] =
+    mwirops[_spin_symbol(suffix_channs, N)] =
         (sum(basic_ops.SS[i]' for i in suffix_channs), -1 / sqrt(2))
 end
 
@@ -259,7 +235,8 @@ end
 Add spin operators to the maximal-weight IROP dictionary.
 
 Channels that are not selected by any spin or channel symmetry group get
-explicit component operators named `S<idx>p`, `S<idx>z`, and `S<idx>m`.
+explicit component operators named `S<idx>p`, `S<idx>z`, and `S<idx>m`, except
+when the operator covers all channels where the channel suffix is omitted.
 Grouped `:U1` spin symmetries and SU(N) channel symmetries add channel-summed
 component operators named `S<indices>p`, `S<indices>z`, and `S<indices>m`,
 where `<indices>` is the juxtaposed channel list.  Grouped `:SU2` spin
@@ -283,9 +260,9 @@ function add_spin_irop!(mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
 
     for (ssymbol, channs) in spin_groups
         if ssymbol == :SU2
-            _add_spin_irop!(mwirops, channs, basic_ops)
+            _add_spin_irop!(mwirops, channs, N, basic_ops)
         elseif ssymbol == :U1
-            _add_spin_components!(mwirops, channs, basic_ops)
+            _add_spin_components!(mwirops, channs, N, basic_ops)
         else
             error("Unsupported spin symmetry: $ssymbol")
         end
@@ -317,7 +294,7 @@ function add_spin_irop!(mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
         end
 
         if !contained_in_su2_spin
-            _add_spin_components!(mwirops, channs, basic_ops)
+            _add_spin_components!(mwirops, channs, N, basic_ops)
         end
         union!(channel_selected, channs)
     end
@@ -325,7 +302,7 @@ function add_spin_irop!(mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
     selected = union(spin_selected, channel_selected)
     for i in 1:N
         if !(i in selected)
-            _add_spin_components!(mwirops, [i], basic_ops)
+            _add_spin_components!(mwirops, [i], N, basic_ops)
         end
     end
 end
@@ -452,26 +429,27 @@ end
 function _add_annihilation_block!(
     mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
     block,
+    N::Int,
     basic_ops)
 
     channs = block.channs
     op_channs = block.channel_symm ? [last(channs)] : channs
 
     if !block.charge_su2 && !block.spin_su2
-        mwirops[_fermion_symbol(channs, "u")] =
+        mwirops[_fermion_symbol(channs, N, "u")] =
             (sum(basic_ops.FF[1, i] for i in op_channs), 1.0)
-        mwirops[_fermion_symbol(channs, "d")] =
+        mwirops[_fermion_symbol(channs, N, "d")] =
             (sum(basic_ops.FF[2, i] for i in op_channs), 1.0)
     elseif block.charge_su2 && !block.spin_su2
-        mwirops[_fermion_symbol(channs, "u")] =
+        mwirops[_fermion_symbol(channs, N, "u")] =
             (sum(basic_ops.FF[2, i]' for i in op_channs), 1.0)
-        mwirops[_fermion_symbol(channs, "d")] =
+        mwirops[_fermion_symbol(channs, N, "d")] =
             (sum(basic_ops.FF[1, i]' for i in op_channs), 1.0)
     elseif !block.charge_su2 && block.spin_su2
-        mwirops[_fermion_symbol(channs)] =
+        mwirops[_fermion_symbol(channs, N)] =
             (sum(basic_ops.FF[2, i] for i in op_channs), 1.0)
     else
-        mwirops[_fermion_symbol(channs)] =
+        mwirops[_fermion_symbol(channs, N)] =
             (sum(basic_ops.FF[1, i]' for i in op_channs), 1.0)
     end
 end
@@ -485,6 +463,7 @@ Charge symmetries and SU(2) spin symmetries first generate channel sets.  SU(N)
 channel symmetries may either select only otherwise unselected channels, or be
 contained in one existing multi-channel set, in which case that set is split.
 Unselected channels get individual default `F<idx>u` and `F<idx>d` operators.
+When a generated operator covers all channels, the channel suffix is omitted.
 
 For each generated set, `F<indices>u`/`F<indices>d` are emitted when charge and
 spin are not both SU(2)-fused.  `F<indices>` is emitted when SU(2) spin fuses
@@ -500,7 +479,7 @@ function add_annihilation_irop!(mwirops::Dict{Symbol, Tuple{AbstractMatrix, Floa
 
     selected = Set{Int}()
     for block in blocks
-        _add_annihilation_block!(mwirops, block, basic_ops)
+        _add_annihilation_block!(mwirops, block, N, basic_ops)
         union!(selected, block.channs)
     end
 
@@ -509,6 +488,7 @@ function add_annihilation_irop!(mwirops::Dict{Symbol, Tuple{AbstractMatrix, Floa
             _add_annihilation_block!(
                 mwirops,
                 (; channs = [i], charge_su2 = false, spin_su2 = false, channel_symm = false),
+                N,
                 basic_ops)
         end
     end

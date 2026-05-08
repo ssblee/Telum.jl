@@ -11,7 +11,7 @@ end
 @testset "TLArray constructor wmat orientation" begin
     option = FermionSOptions(3, :U1, :SU2, :SU3)
     q0 = getLocalSpace(option)
-    q = TLArray(q0.F123, ("site1", "site2", "op"))
+    q = TLArray(q0.F, ("site1", "site2", "op"))
 
     rows_neg = deepcopy(q.rows)
     for r in rows_neg
@@ -29,7 +29,7 @@ end
 @testset "TLArray direct sum" begin
     option = FermionSOptions(3, :U1, :SU2, :SU3)
     q0 = getLocalSpace(option)
-    A = TLArray(q0.F123, ("site1", "site2", "op"))
+    A = TLArray(q0.F, ("site1", "site2", "op"))
     B = 2.0 * A
 
     @testset "binary wrapper" begin

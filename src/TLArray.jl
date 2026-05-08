@@ -2705,6 +2705,24 @@ function _convert_rank2_singleton_normalization!(new_cgrs, new_rmt::LurTensor, o
 end
 
 """
+    addSingleton(q::TLArray; nlegs=1, itag="", plev=0, lock=0, dir='+')
+
+Append one or more singleton trivial legs to `q`.
+
+The `nlegs` keyword controls how many singleton legs are created. New legs are
+added to the end of the leg list. `itag`, `plev`, `lock`, and `dir` may each be
+either a scalar applied to every added leg or an iterable with one value per
+inserted leg.
+"""
+function addSingleton(q::TLArray{T, QD}; nlegs::Integer=1,
+                      itag="", plev=0, lock=0, dir='+') where {T, QD}
+    count = Int(nlegs)
+    count >= 1 || throw(ArgumentError("nlegs must be at least 1, got $nlegs"))
+    positions = (QD + 1):(QD + count)
+    return addSingleton(q, positions; itag=itag, plev=plev, lock=lock, dir=dir)
+end
+
+"""
     addSingleton(q::TLArray, legs; itag="", plev=0, lock=0, dir='+')
 
 Insert one or more singleton trivial legs into `q`.
@@ -2805,5 +2823,4 @@ include("get1jtensor.jl")
 include("svd.jl")
 include("eig.jl")
 include("permute.jl")
-
 
