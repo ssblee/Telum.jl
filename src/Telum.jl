@@ -33,7 +33,6 @@ export findlegs, findleg, matchings, matching, unmatchings, unmatching
 export contractables, contractable, uncontractables, uncontractable
 export prime, setprime, noprime
 export lock, lockp, unlock
-export additag, removeitag, setitag
+export additag, removeitag, replaceitag, setitag
 
 end
-

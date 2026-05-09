@@ -883,6 +883,51 @@ end
         @test q2.inds[3].itags == "op"
     end
 
+    # ── replaceitag ──────────────────────────────────────────────────────────
+    @testset "replaceitag" begin
+        # criteria form: replace one tag on every matching leg
+        q2 = replaceitag(q, "site1"=>"phys")
+        @test q2.inds[1].itags == "phys"
+        @test q2.inds[2].itags == "site2"
+        @test q2.inds[3].itags == "op"
+
+        # multiple pair objects are applied in order
+        q2 = replaceitag(q, "site1"=>"left", "site2"=>"right")
+        @test q2.inds[1].itags == "left"
+        @test q2.inds[2].itags == "right"
+        @test q2.inds[3].itags == "op"
+
+        # replacements are computed from the original tags, not cascaded
+        q_chain = TLArray(q, ("aaa,bbb", "aaa", "bbb"))
+        q2 = replaceitag(q_chain, "aaa"=>"bbb", "bbb"=>"ccc")
+        @test q2.inds[1].itags == "bbb,ccc"
+        @test q2.inds[2].itags == "bbb"
+        @test q2.inds[3].itags == "ccc"
+
+        # grouped source tags only match legs containing the full source query
+        q_grouped = TLArray(q, ("aaa,bbb", "aaa,bbb,ddd", "bbb,ddd"))
+        q2 = replaceitag(q_grouped, "aaa,bbb"=>"ccc")
+        @test q2.inds[1].itags == "ccc"
+        @test q2.inds[2].itags == "ccc,ddd"
+        @test q2.inds[3].itags == "bbb,ddd"
+
+        # dictionary input maps every key to the corresponding value
+        q2 = replaceitag(q, Dict("site1"=>"left", "op"=>"operator"))
+        @test q2.inds[1].itags == "left"
+        @test q2.inds[2].itags == "site2"
+        @test q2.inds[3].itags == "operator"
+
+        # explicit legs and keyword selectors share the existing tag API shape
+        q2 = replaceitag(q, 2, "site2"=>"phys")
+        @test q2.inds[1].itags == "site1"
+        @test q2.inds[2].itags == "phys"
+
+        q2 = replaceitag(q, "site2"=>"phys"; dir='+', rev=true)
+        @test q2.inds[1].itags == "site1"
+        @test q2.inds[2].itags == "phys"
+        @test q2.inds[3].itags == "op"
+    end
+
     # ── setitag ───────────────────────────────────────────────────────────────
     @testset "setitag" begin
         # single leg
@@ -1008,8 +1053,8 @@ end
         # tag operations
         @test additag(q, "x").inds[1].itags           == "a,x"
         @test removeitag(q, "a").inds[1].itags        == ""
+        @test replaceitag(q, "a"=>"x").inds[1].itags  == "x"
         @test setitag(q, "new"; dir='+').inds[1].itags == "new"
-        @test !isdefined(Telum, :replaceitag)
 
         # findlegs / findleg
         @test findlegs(q; dir='+') == [1]

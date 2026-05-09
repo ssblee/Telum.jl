@@ -115,6 +115,23 @@ function _remove_itag(base::AbstractString,
     return Itag(join(filter(tag -> tag ∉ rm, base_tags), ','))
 end
 
+function _replace_itag(base::AbstractString, replacements)
+    base_tags = _parse_itag(base)
+    base_set = Set(base_tags)
+    replaced = Set{String}()
+    new_tags = String[]
+
+    for (from, to) in replacements
+        from_tags = _parse_itag(from)
+        all(tag -> tag ∈ base_set, from_tags) || continue
+        union!(replaced, from_tags)
+        append!(new_tags, _parse_itag(to))
+    end
+
+    append!(new_tags, (tag for tag in base_tags if tag ∉ replaced))
+    return Itag(join(sort!(unique!(new_tags)), ','))
+end
+
 struct TLIndex
     # Tags associated with the leg, similar to ITensor
     itags::Itag
@@ -1237,6 +1254,7 @@ end
 #
 #   additag(q, newtags; kw...)     – add tag(s) to matching legs
 #   removeitag(q, tags; kw...)     – remove tag(s) from matching legs
+#   replaceitag(q, old=>new...)    – replace tag queries on matching legs
 #   setitag(q, tags; kw...)        – replace entire tag string of matching legs
 #
 # Keyword selectors (all optional): dir, itag, plev, lock
@@ -1245,6 +1263,8 @@ end
 const ITagQuerySpec = Union{AbstractString,
                             Tuple{Vararg{AbstractString}},
                             AbstractVector{<:AbstractString}}
+const ITagReplacementPair = Pair{<:AbstractString, <:AbstractString}
+const ITagReplacementDict = AbstractDict{<:AbstractString, <:AbstractString}
 
 function _modify_itag(q::TLArray{T, QD, N, RD}, legs, modify_fn::Function) where {T, QD, N, RD}
     new_inds = collect(q.inds)
@@ -1344,6 +1364,90 @@ Remove tags from legs satisfying predicate.
 """
 function removeitag(q::TLArray{T, QD}, pred::Function, tags::ITagQuerySpec) where {T, QD}
     return _modify_itag(q, findlegs(q, pred), base -> _remove_itag(base, tags))
+end
+
+"""
+    replaceitag(q::TLArray, replacements::Pair...; dir, itag, plev, lock, rev=false)
+    replaceitag(q::TLArray, replacements::AbstractDict; dir, itag, plev, lock, rev=false)
+
+Replace tags on matching legs. Each replacement removes the tags in the source
+query and adds the destination tags when the leg contains all tags in the source
+query. For example, `"aaa,bbb"=>"ccc"` removes both `aaa` and `bbb` and adds
+`ccc` only on legs containing both source tags.
+
+Dictionary input applies each `key => value` replacement in iteration order.
+Use `rev=true` to act on legs that do *not* match the criteria.
+
+# Examples
+```julia
+replaceitag(q, "site"=>"phys")
+replaceitag(q, "aaa,bbb"=>"ccc")
+replaceitag(q, "site1"=>"left", "site2"=>"right"; dir='-')
+replaceitag(q, Dict("site"=>"phys"))
+```
+"""
+function replaceitag(q::TLArray{T, QD}, replacements::ITagReplacementPair...;
+                     dir=nothing, itag=nothing, plev=nothing, lock=nothing,
+                     rev::Bool=false) where {T, QD}
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+
+function replaceitag(q::TLArray{T, QD}, replacements::ITagReplacementDict;
+                     dir=nothing, itag=nothing, plev=nothing, lock=nothing,
+                     rev::Bool=false) where {T, QD}
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+
+"""    replaceitag(q::TLArray, leg::Integer, replacements)
+
+Replace tags on a single specified leg.
+"""
+function replaceitag(q::TLArray{T, QD}, leg::Integer,
+                     replacements::ITagReplacementPair...) where {T, QD}
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    return _modify_itag(q, (leg,), base -> _replace_itag(base, replacements))
+end
+
+function replaceitag(q::TLArray{T, QD}, leg::Integer,
+                     replacements::ITagReplacementDict) where {T, QD}
+    return _modify_itag(q, (leg,), base -> _replace_itag(base, replacements))
+end
+
+"""    replaceitag(q::TLArray, legs::LegList, replacements)
+
+Replace tags on the specified legs. `legs` can be any vector, range, or tuple.
+"""
+function replaceitag(q::TLArray{T, QD}, legs::LegList,
+                     replacements::ITagReplacementPair...) where {T, QD}
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+
+function replaceitag(q::TLArray{T, QD}, legs::LegList,
+                     replacements::ITagReplacementDict) where {T, QD}
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+
+"""    replaceitag(q::TLArray, pred::Function, replacements)
+
+Replace tags on legs satisfying predicate.
+"""
+function replaceitag(q::TLArray{T, QD}, pred::Function,
+                     replacements::ITagReplacementPair...) where {T, QD}
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    return _modify_itag(q, findlegs(q, pred), base -> _replace_itag(base, replacements))
+end
+
+function replaceitag(q::TLArray{T, QD}, pred::Function,
+                     replacements::ITagReplacementDict) where {T, QD}
+    return _modify_itag(q, findlegs(q, pred), base -> _replace_itag(base, replacements))
 end
 
 """
@@ -2823,4 +2927,3 @@ include("get1jtensor.jl")
 include("svd.jl")
 include("eig.jl")
 include("permute.jl")
-
