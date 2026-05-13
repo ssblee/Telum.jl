@@ -22,8 +22,8 @@ end
 _lurtensor_wrap_like(::AbstractArray, arr::AbstractArray) = arr
 
 # Basic array interface
-Base.size(t::LurTensor) = size(t.data)
-Base.size(t::LurTensor, d::Int) = size(t.data, d)
+Base.size(t::LurTensor{T, N}) where {T, N} = size(t.data)::NTuple{N, Int}
+Base.size(t::LurTensor, d::Int) = size(t.data, d)::Int
 Base.ndims(::LurTensor{T, N, A}) where {T, N, A} = N
 Base.eltype(::LurTensor{T, N, A}) where {T, N, A} = T
 
@@ -47,4 +47,3 @@ Base.:-(t1::LurTensor, t2::LurTensor) = LurTensor(t1.data - t2.data)
 # to automatically move the underlying data to the GPU.
 # using Adapt
 # Adapt.adapt_structure(to, t::LurTensor) = LurTensor(Adapt.adapt(to, t.data))
-

@@ -1,7 +1,11 @@
 module Telum
 
+using MKL
+using HPTT_jll
 using LinearAlgebra
 using SparseArrays
+using LoopVectorization
+using Tullio
 
 import Base: lock, unlock
 import LurCGT

@@ -4,10 +4,14 @@ version = "0.1.0"
 authors = ["Kiyeon Kim <lurlur2000@snu.ac.kr>"]
 
 [deps]
+HPTT_jll = "0d2ef6bb-bd72-5e2e-be6b-e06c14f6a480"
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
+LoopVectorization = "bdcacae8-1622-11e9-2a5c-532679323890"
 LurCGT = "4f3ab192-95b7-495a-a0ca-04b4b33dd828"
+MKL = "33e6dc65-8f57-5167-99aa-e5a354878fb2"
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 SparseArrays = "2f01184e-e22b-5df5-ae63-d93ebab69eaf"
+Tullio = "bc48ee85-29a4-5162-ae0b-a64e1601d4bc"
 
 [compat]
 LurCGT = "0.2"

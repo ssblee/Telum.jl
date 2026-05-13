@@ -539,19 +539,27 @@ function _drop_small_rows!(q::TLArray{T, QD, N}; cutoff::Float64 = QSPACE_ROW_CU
     rows = q.rows
     isempty(rows) && return
 
-    row_norms_sq = [
-        QD == 2 ? _cgt_size_2d(r.cgrs, symm(q)) * sum(abs2, r.RMT.data) : sum(abs2, r.RMT.data)
-        for r in rows
-    ]
-    total = sum(row_norms_sq)
+    symmetries = symm(q)
+    total = 0.0
+    for r in rows
+        total += QD == 2 ? _cgt_size_2d(r.cgrs, symmetries) * sum(abs2, r.RMT.data) :
+                 sum(abs2, r.RMT.data)
+    end
     iszero(total) && return   # zero tensor: keep all
 
     thresh  = (cutoff^2) * total
-    keepidx = findall(x -> x > thresh, row_norms_sq)
-    length(keepidx) == length(rows) && return   # nothing to drop
-
-    # Filter rows in-place.
-    splice!(rows, 1:length(rows), rows[keepidx])
+    i = length(rows)
+    while i >= 1
+        r = rows[i]
+        row_norm_sq = QD == 2 ? _cgt_size_2d(r.cgrs, symmetries) * sum(abs2, r.RMT.data) :
+                      sum(abs2, r.RMT.data)
+        if row_norm_sq <= thresh
+            rows[i] = rows[end]
+            pop!(rows)
+        end
+        i -= 1
+    end
+    return
 end
 
 # Construct a TLArray with the same rows but with itags replaced.

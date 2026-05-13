@@ -371,6 +371,208 @@ function test_qr_shared_isometry_rank1_fastpath()
     println("test_qr_shared_isometry_rank1_fastpath passed.")
 end
 
+function test_contract_xsym_wmat_tullio()
+    Random.seed!(423)
+
+    function check_case(OM1::Int, OM2::Int, OM3::Int, d1::Int, d2::Int)
+        wm1 = randn(OM1, d1)
+        wm2 = randn(OM2, d2)
+        xarr = randn(OM1, OM2, OM3)
+
+        result = Telum._contract_xsym_wmat(wm1, xarr, wm2)
+        reference = zeros(Float64, OM3, d1, d2)
+        @inbounds for a in 1:OM3, b in 1:d1, c in 1:d2
+            acc = 0.0
+            for cc in 1:OM2, bb in 1:OM1
+                acc += xarr[bb, cc, a] * wm1[bb, b] * wm2[cc, c]
+            end
+            reference[a, b, c] = acc
+        end
+
+        @test result.data ≈ reference
+    end
+
+    check_case(1, 1, 1, 1, 1)
+    check_case(2, 3, 4, 5, 2)
+    check_case(4, 2, 3, 1, 6)
+
+    @test_throws DimensionMismatch Telum._contract_xsym_wmat(
+        randn(3, 2), randn(2, 2, 1), randn(2, 2))
+    @test_throws DimensionMismatch Telum._contract_xsym_wmat(
+        randn(2, 2), randn(2, 2, 1), randn(3, 2))
+
+    println("test_contract_xsym_wmat_tullio passed.")
+end
+
+function test_accumulate_mkl_matches_small_all_orders()
+    Random.seed!(424)
+
+    function check_case(; fdim::Int, gdim::Int, cdim::Int,
+                         o1dim::Int, o2dim::Int, rdim::Int)
+        A = randn(fdim, cdim, o1dim)
+        B = randn(gdim, cdim, o2dim)
+        K = randn(rdim, o1dim, o2dim)
+        initial = randn(fdim, gdim, rdim)
+
+        mkl_results = Dict{Symbol, Array{Float64, 3}}()
+        small_results = Dict{Symbol, Array{Float64, 3}}()
+        for order in (:AB, :AK, :BK)
+            temp_len = Telum._rmt_contract_temp_len(
+                fdim, gdim, cdim, o1dim, o2dim, rdim, order)
+
+            out_mkl = copy(initial)
+            Telum._accumulate_mkl!(
+                out_mkl, A, B, K, order, Vector{Float64}(undef, temp_len))
+
+            out_small = copy(initial)
+            Telum._accumulate_small!(
+                out_small, A, B, K, order, Vector{Float64}(undef, temp_len))
+
+            @test out_mkl ≈ out_small atol=1e-10 rtol=1e-10
+            mkl_results[order] = out_mkl
+            small_results[order] = out_small
+        end
+
+        @test mkl_results[:AB] ≈ mkl_results[:AK] atol=1e-10 rtol=1e-10
+        @test mkl_results[:AB] ≈ mkl_results[:BK] atol=1e-10 rtol=1e-10
+        @test small_results[:AB] ≈ small_results[:AK] atol=1e-10 rtol=1e-10
+        @test small_results[:AB] ≈ small_results[:BK] atol=1e-10 rtol=1e-10
+    end
+
+    check_case(fdim=3, gdim=4, cdim=5, o1dim=2, o2dim=3, rdim=4)
+    check_case(fdim=1, gdim=5, cdim=3, o1dim=4, o2dim=2, rdim=3)
+    check_case(fdim=6, gdim=2, cdim=4, o1dim=3, o2dim=1, rdim=5)
+
+    println("test_accumulate_mkl_matches_small_all_orders passed.")
+end
+
+function test_qr_shared_isometry_rank3_splits_factors()
+    tensors = [
+        LurTensor(reshape(collect(1.0:24.0), 3, 2, 4)),
+        LurTensor(reshape(collect(25.0:42.0), 3, 3, 2)),
+    ]
+    mats = [LurTensor(reshape(t.data, size(t, 1), size(t, 2) * size(t, 3))) for t in tensors]
+
+    Q3, factors3 = _qr_shared_isometry(tensors; tol=0.0)
+    Q2, factors2 = _qr_shared_isometry(mats; tol=0.0)
+
+    @test Q3.data ≈ Q2.data
+    @test length(factors3) == length(tensors)
+    for i in eachindex(tensors)
+        @test size(factors3[i]) == (size(factors2[i], 1), size(tensors[i], 2), size(tensors[i], 3))
+        @test reshape(factors3[i].data, size(factors2[i])) ≈ factors2[i].data
+        @test Q3.data * reshape(factors3[i].data, size(factors2[i])) ≈ mats[i].data
+    end
+
+    println("test_qr_shared_isometry_rank3_splits_factors passed.")
+end
+
+function test_contract_compress_sector_rmt_optimizer()
+    Random.seed!(422)
+
+    function check_case(; f1::Int, f2::Int, c::Int,
+                         o1::Int, o2::Int, om3::Int,
+                         perm1::NTuple{3, Int}, perm2::NTuple{3, Int})
+        nf1 = 1
+        nf2 = 1
+        cn = 1
+        N = 1
+        QD_out = 2
+
+        dims1 = Vector{Int}(undef, 3)
+        dims1[perm1[1]] = f1
+        dims1[perm1[2]] = c
+        dims1[perm1[3]] = o1
+
+        dims2 = Vector{Int}(undef, 3)
+        dims2[perm2[1]] = f2
+        dims2[perm2[2]] = c
+        dims2[perm2[3]] = o2
+
+        rmt1 = LurTensor(randn(dims1...))
+        rmt2 = LurTensor(randn(dims2...))
+        wmat = LurTensor(randn(om3, o1, o2))
+
+        new_wmats = (LurTensor{Float64, 3, Array{Float64, 3}}[wmat],)
+        row_pairs = [(1, 1)]
+        work1 = Dict(1 => Telum._permuted_rmt_data(rmt1, perm1, nf1, cn, N))
+        work2 = Dict(1 => Telum._permuted_rmt_data(rmt2, perm2, nf2, cn, N))
+        kept_sizes1 = (f1,)
+        kept_sizes2 = (f2,)
+
+        U_mats, result_RMT = _compress_sector(new_wmats, row_pairs,
+                                              work1, work2,
+                                              kept_sizes1, kept_sizes2, 0.0)
+        reconstructed = _contract_om_axis(result_RMT, U_mats[1], QD_out + 1)
+        P1 = permutedims(rmt1.data, perm1)
+        P2 = permutedims(rmt2.data, perm2)
+        reference = zeros(Float64, f1, f2, om3)
+        @inbounds for r in 1:om3, g in 1:f2, f in 1:f1
+            acc = 0.0
+            for o2idx in 1:o2, o1idx in 1:o1, cidx in 1:c
+                acc += P1[f, cidx, o1idx] * P2[g, cidx, o2idx] * wmat[r, o1idx, o2idx]
+            end
+            reference[f, g, r] = acc
+        end
+
+        @test maximum(abs, reconstructed .- reference) < 1e-10
+    end
+
+    check_case(f1=3, f2=4, c=2, o1=3, o2=2, om3=5,
+               perm1=(2, 1, 3), perm2=(1, 2, 3))
+    check_case(f1=12, f2=12, c=10, o1=10, o2=10, om3=8,
+               perm1=(1, 2, 3), perm2=(1, 2, 3))
+    check_case(f1=4, f2=3, c=5, o1=1, o2=1, om3=1,
+               perm1=(3, 1, 2), perm2=(2, 3, 1))
+
+    function check_multi_pair_reuses_temp()
+        f1 = 3
+        f2 = 2
+        c = 4
+        om3 = 5
+        QD_out = 2
+
+        work1 = Dict(
+            1 => randn(f1, c, 2),
+            2 => randn(f1, c, 3),
+        )
+        work2 = Dict(
+            1 => randn(f2, c, 4),
+            2 => randn(f2, c, 1),
+        )
+        row_pairs = [(1, 1), (2, 1), (1, 2)]
+        wmats = LurTensor{Float64, 3, Array{Float64, 3}}[
+            LurTensor(randn(om3, size(work1[idx1], 3), size(work2[idx2], 3)))
+            for (idx1, idx2) in row_pairs
+        ]
+        new_wmats = (wmats,)
+
+        U_mats, result_RMT = _compress_sector(new_wmats, row_pairs,
+                                              work1, work2, (f1,), (f2,), 0.0)
+        reconstructed = _contract_om_axis(result_RMT, U_mats[1], QD_out + 1)
+
+        reference = zeros(Float64, f1, f2, om3)
+        @inbounds for (p, (idx1, idx2)) in pairs(row_pairs)
+            A = work1[idx1]
+            B = work2[idx2]
+            W = wmats[p].data
+            for r in 1:om3, g in 1:f2, f in 1:f1
+                acc = 0.0
+                for o2idx in 1:size(B, 3), o1idx in 1:size(A, 3), cidx in 1:c
+                    acc += A[f, cidx, o1idx] * B[g, cidx, o2idx] * W[r, o1idx, o2idx]
+                end
+                reference[f, g, r] += acc
+            end
+        end
+
+        @test maximum(abs, reconstructed .- reference) < 1e-10
+    end
+
+    check_multi_pair_reuses_temp()
+
+    println("test_contract_compress_sector_rmt_optimizer passed.")
+end
+
 function test_FAcont(option::LocalSpaceOptions)
     q = getLocalSpace(option);
     qi1 = TLArray(q.I, ("lur1", "lur1"))
@@ -2060,5 +2262,3 @@ function test_contract_default(option::LocalSpaceOptions; tol::Float64 = 1e-10)
 
     println("test_contract_default passed (all cases).")
 end
-
-

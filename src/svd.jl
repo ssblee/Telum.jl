@@ -193,16 +193,16 @@ end
 function _copy_hcat_mats(mats::Vector{LurTensor{Float64, 2, Array{Float64, 2}}}) 
     nrows = size(first(mats), 1)
     ncols = sum(size(mat, 2) for mat in mats)
-    concat = similar(first(mats), Float64, (nrows, ncols))
+    concat = Matrix{Float64}(undef, nrows, ncols)
 
     col = 1
     @views for mat in mats
         width = size(mat, 2)
-        copyto!(view(concat, :, col:col+width-1), mat)
+        copyto!(view(concat, :, col:col+width-1), mat.data)
         col += width
     end
     @assert col == ncols + 1
-    return LurTensor(concat)
+    return concat
 end
 
 function _qr_shared_isometry(mats::Vector{LurTensor{Float64, 2, AW}}; tol::Float64 = 1e-12
@@ -219,15 +219,29 @@ function _qr_shared_isometry(mats::Vector{LurTensor{Float64, 2, AW}}; tol::Float
 
     concat = _copy_hcat_mats(mats)
     F = qr(concat)
-    Q = AW(F.Q)
-    R = AW(F.R)
+    Qfull = Matrix(F.Q)
+    Rfull = Matrix(F.R)
 
-    row_norms::Vector{Float64} = [norm(@view R[i, :]) for i in 1:size(R, 1)]
-    max_norm = maximum(row_norms; init=0.0)
+    max_norm = 0.0
+    @inbounds for i in axes(Rfull, 1)
+        nrm_sq = 0.0
+        for j in axes(Rfull, 2)
+            nrm_sq += abs2(Rfull[i, j])
+        end
+        max_norm = max(max_norm, sqrt(nrm_sq))
+    end
     max_norm == 0.0 && return nothing
-    used = something(findlast(x -> x > tol * max_norm, row_norms), 1)
-    Q = LurTensor(Q[:, 1:used])
-    R = LurTensor(R[1:used, :])
+    threshold = tol * max_norm
+    used = 1
+    @inbounds for i in axes(Rfull, 1)
+        nrm_sq = 0.0
+        for j in axes(Rfull, 2)
+            nrm_sq += abs2(Rfull[i, j])
+        end
+        sqrt(nrm_sq) > threshold && (used = i)
+    end
+    Q = LurTensor(Qfull[:, 1:used])
+    R = Rfull[1:used, :]
 
     factors = Vector{LurTensor{Float64, 2, AW}}(undef, length(mats))
     col = 0
@@ -237,6 +251,30 @@ function _qr_shared_isometry(mats::Vector{LurTensor{Float64, 2, AW}}; tol::Float
         col += width
     end
     @assert col == size(concat, 2)
+
+    return Q, factors
+end
+
+function _qr_shared_isometry(tensors::Vector{LurTensor{Float64, 3, AW}}; tol::Float64 = 1e-12
+    ) where {AW<:AbstractArray{Float64, 3}}
+    nrows = size(first(tensors), 1)
+    @assert all(size(tensor, 1) == nrows for tensor in tensors) "_qr_shared_isometry requires a common row dimension"
+
+    mats = Vector{LurTensor{Float64, 2, Matrix{Float64}}}(undef, length(tensors))
+    for (i, tensor) in pairs(tensors)
+        d2, d3 = size(tensor, 2), size(tensor, 3)
+        mats[i] = LurTensor(reshape(tensor.data, nrows, d2 * d3))
+    end
+
+    shared = _qr_shared_isometry(mats; tol=tol)
+    isnothing(shared) && return nothing
+    Q, mat_factors = shared
+
+    factors = Vector{LurTensor{Float64, 3, Array{Float64, 3}}}(undef, length(tensors))
+    for i in eachindex(tensors)
+        d2, d3 = size(tensors[i], 2), size(tensors[i], 3)
+        factors[i] = LurTensor(reshape(mat_factors[i].data, size(mat_factors[i], 1), d2, d3))
+    end
 
     return Q, factors
 end
