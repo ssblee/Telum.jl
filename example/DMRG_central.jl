@@ -36,21 +36,25 @@ MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
 #MPO = XYMPO(1.0, 40)
 #MPO = XXZMPO(0.3, 0.5, 40)
 
-function do_dmrg(MPO, Nkeep_init=50, Nkeep_DMRG=50, Nsweep=4)
+function do_dmrg(MPO, Nkeep_init=50, Nkeep_DMRG=50, Nsweep=4; time_blocks=true)
     MPS, E, sp = init_MPS(MPO, Nkeep_init; tol=0.0)
     println("Initial energy: $E")
-    DMRG_GS_2site!(MPS, MPO, Nkeep_DMRG, Nsweep)
+    DMRG_GS_2site!(MPS, MPO, Nkeep_DMRG, Nsweep; time_blocks)
     return MPS
 end
 
-function run()
+function run(; time_blocks=true)
     #MPO = MajumdarGhoshMPO(1.0, 40)
     MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
     #MPO = XYMPO(1.0, 40)
     #MPO = XXZMPO(0.3, 0.5, 40)
-    for Nkeep_DMRG = 20:10:70
+    for Nkeep_DMRG = [20, 50]
         println("Nkeep_DMRG = $Nkeep_DMRG")
-        @time do_dmrg(MPO, 50, Nkeep_DMRG, 4)
+        if time_blocks
+            @time do_dmrg(MPO, 50, Nkeep_DMRG, 4; time_blocks)
+        else
+            do_dmrg(MPO, 50, Nkeep_DMRG, 4; time_blocks)
+        end
         GC.gc()
     end
 end
