@@ -11,7 +11,7 @@
 #
 # Algorithm:
 #   1. Permute TLIndex tuple according to perm.
-#   2. For each row, permute CGRs:
+#   2. For each sector, permute CGRs:
 #      - Update cgp: new_cgp[new_leg] = old_cgp[perm[new_leg]]
 #      - Check if _check_cgr_qlabel_order would pass with the new cgp
 #      - If not, reorder stored qlabels and apply CGTperm transformation to wmat
@@ -98,17 +98,36 @@ function _permute_cgr(cgr::CGR{QD, NZ},
     return CGR(symm(cgr), cgr.qlabels, new_wmat, final_cgp, cgr.legdir)
 end
 
-# Permute a row: permute CGRs and RMT
-function _permute_row(r::row{T, QD, N, RD}, perm::NTuple{QD, Int}, symm) where {T, QD, N, RD}
-    # Permute each CGR
-    new_cgrs = ntuple(n -> _permute_cgr(r.cgrs[n], perm, symm[n]), N)
-    
-    # Permute RMT: first QD dimensions according to perm, keep OM dimensions at the end
+function _permute_sector_wmat(q::TLArray{T, QD, N, RD}, sector_index::Int,
+                              perm::NTuple{QD, Int}, n::Int, symm) where {T, QD, N, RD}
+    qlabels, cgp, legdir = _sector_cgr_metadata(q, sector_index, n)
+    cgr = CGR(symm[n], qlabels, sector_wmat(q, sector_index, n), cgp, legdir)
+    return _permute_cgr(cgr, perm, symm[n]).wmat
+end
+
+function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
+                             perm::NTuple{QD, Int}) where {T, QD, N, RD}
     rmt_perm = (perm..., ntuple(n -> QD + n, N)...)
-    new_rmt_data = permutedims(r.RMT.data, rmt_perm)
-    new_rmt = LurTensor(new_rmt_data)
-    
-    return row(new_cgrs, new_rmt)
+    return LurTensor(permutedims(sector_rmt(q, sector_index).data, rmt_perm))
+end
+
+function _permute_sector_wmats(q::TLArray{T, QD, N}, perm::NTuple{QD, Int}, symm) where {T, QD, N}
+    return ntuple(Val(N)) do n
+        src = q.wmats[n]
+        out = similar(src, nsectors(q))
+        for sector_index in 1:nsectors(q)
+            out[sector_index] = _permute_sector_wmat(q, sector_index, perm, n, symm)
+        end
+        out
+    end
+end
+
+function _permute_sector_rmts(q::TLArray{T, QD, N, RD}, perm::NTuple{QD, Int}) where {T, QD, N, RD}
+    out = similar(q.RMTs, nsectors(q))
+    for sector_index in 1:nsectors(q)
+        out[sector_index] = _permute_sector_rmt(q, sector_index, perm)
+    end
+    return out
 end
 
 """
@@ -135,10 +154,11 @@ function Base.permutedims(q::TLArray{T, QD, N, RD}, perm) where {T, QD, N, RD}
     # 2. Permute spaces tuple
     new_spaces = Tuple(q.spaces[perm[l]] for l in 1:QD)
     
-    # 3 & 4. Permute each row (CGRs and RMT)
-    new_rows = row{T, QD, N, RD}[_permute_row(r, perm, symm(q)) for r in q.rows]
+    # 3 & 4. Permute each sector (CGR metadata and RMT)
+    new_qlabels = copy(q.qlabels[:, collect(perm)])
+    new_wmats = _permute_sector_wmats(q, perm, symm(q))
+    new_RMTs = _permute_sector_rmts(q, perm)
     
     # 5. Assemble and return new TLArray with precomputed spaces
-    return TLArray(symm(q), new_rows, new_inds, new_spaces)
+    return _field_tlarray(symm(q), new_qlabels, new_wmats, new_RMTs, new_inds, new_spaces)
 end
-

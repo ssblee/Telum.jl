@@ -50,11 +50,7 @@ function run(; time_blocks=true)
     #MPO = XXZMPO(0.3, 0.5, 40)
     for Nkeep_DMRG = [20, 50]
         println("Nkeep_DMRG = $Nkeep_DMRG")
-        if time_blocks
-            @time do_dmrg(MPO, 50, Nkeep_DMRG, 4; time_blocks)
-        else
-            do_dmrg(MPO, 50, Nkeep_DMRG, 4; time_blocks)
-        end
+        @time do_dmrg(MPO, 50, Nkeep_DMRG, 4; time_blocks)
         GC.gc()
     end
 end

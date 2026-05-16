@@ -39,28 +39,27 @@ function get1jtensor(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
 end
 
 function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
-    rows1 = row{Float64, 2, N, 2+N}[]
-
     symm, ind = product_symms(PS), info.ind
     inds1 = (change_dir(ind), change_dir(change_dual(ind)))
     dir1 = inds1[1].dir
-    for (qlabels, RMTd) in info.splist
+
+    nr = length(info.splist)
+    qlabels1 = Matrix{QT}(undef, nr, 2)
+    wmats1 = ntuple(_ -> Vector{LurTensor{Float64, 2, Matrix{Float64}}}(undef, nr), Val(N))
+    RMTs1 = Vector{LurTensor{Float64, 2 + N, Array{Float64, 2 + N}}}(undef, nr)
+
+    for (sector_index, (qlabels, RMTd)) in enumerate(info.splist)
         RMT1 = LurTensor(reshape(Matrix{Float64}(I, RMTd, RMTd), RMTd, RMTd, (1 for _=1:N)...))
         dual_qlabels = Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N)
+        qlabels1[sector_index, 1] = qlabels
+        qlabels1[sector_index, 2] = dual_qlabels
 
-        cgrs1 = ntuple(N) do n
+        for n in 1:N
             spdim = dimension(symm[n], qlabels[n])
-            cgr_qs1 = sort((qlabels[n], dual_qlabels[n]))
-            if qlabels[n] == dual_qlabels[n] cgp1 = (1, 2)
-            elseif qlabels[n] < dual_qlabels[n] cgp1 = (1, 2)
-            else cgp1 = (2, 1) end
-            wmat1 = LurTensor([sqrt(spdim);;])
-            legdir1 = dir1 == '+' ? (2, 0) : (0, 2)
-
-            CGR(symm[n], cgr_qs1, wmat1, cgp1, legdir1)
+            wmats1[n][sector_index] = LurTensor([sqrt(spdim);;])
         end
 
-        push!(rows1, row(cgrs1, RMT1))
+        RMTs1[sector_index] = RMT1
     end
 
     # leg 1 = original space, leg 2 = dual space
@@ -69,7 +68,7 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
                            for (qlabels, RMTd) in info.splist], by=x->x[1])
     spaces1 = (info.splist, dual_splist)
 
-    q1 = TLArray(symm, rows1, inds1, spaces1)
+    q1 = _field_tlarray(symm, qlabels1, wmats1, RMTs1, inds1, spaces1)
     return q1
 end
 
@@ -96,4 +95,3 @@ function legflip(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
                                   rev=rev, opname="legflip")
     return legflip(q, legs)
 end
-

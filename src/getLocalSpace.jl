@@ -222,19 +222,27 @@ function getLocalSpace(opts::LocalSpaceOptions,
         # Multiply float factor and reduce to 2D if the third dimension is singleton
         reduced = multiplyNreduce!(symm, data_full, float_fac)
 
+        qd = length(first(reduced)[1])
         inds = Tuple(TLIndex(tags[i], dir[i]) for i in 1:3)
-        rows = get_rows(reduced, symm); qd = get_qd(rows[1])
         
-        # Build spaces tuple: first two legs use local_splist, third leg (if exists) computed from rows
+        # Build spaces tuple: first two legs use local_splist, third leg (if exists) is read from the decomposed blocks.
         if qd == 2
             spaces = (local_splist, local_splist)
         else
-            # For 3-leg operators, third leg space is computed from rows
-            third_splist = _compute_spaces(rows)[3]
+            third_spset = Set{qlabeltype(symm)}()
+            third_splist = eltype(local_splist)[]
+            for (sector_qlabels, block) in reduced
+                qlabel = sector_qlabels[3]
+                qlabel in third_spset && continue
+                push!(third_spset, qlabel)
+                push!(third_splist, (qlabel, size(block, 3)))
+            end
+            sort!(third_splist; by = first, alg=MergeSort)
             spaces = (local_splist, local_splist, third_splist)
         end
         
-        q = TLArray(symm, rows, inds[1:qd], spaces)
+        fields = _localspace_cgr_fields(reduced, symm, spaces)
+        q = TLArray(symm, fields.qlabels, fields.wmats, fields.RMTs, inds[1:qd], spaces)
         Telum[name] = q
     end
     return NamedTuple(Telum)

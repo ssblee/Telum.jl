@@ -4,9 +4,7 @@ using Test
 const _compress_sector = Telum._compress_sector
 const _contract_om_axis = Telum._contract_om_axis
 const _qr_shared_isometry = Telum._qr_shared_isometry
-const _row_qlabel = Telum._row_qlabel
 const change_dir = Telum.change_dir
-const contract_old = Telum.contract_old
 ⊗(a, b) = kron(b, a)
 
 
@@ -127,8 +125,6 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
     ::Type{FT} = Float64) where {T, QD, N, RD, FT}
 
     symmetries = symm(q)
-    rows = q.rows
-
     # ── Step 1: offset map ──────────────────────────────────────────────────
     # Use spaces field directly for each leg's offset computation.
     leg_info = [get_offset(symmetries, q.spaces[l]) for l in 1:QD]
@@ -138,8 +134,8 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
     # ── Step 2: allocate output array ───────────────────────────────────────
     result = SparseArray(zeros(FT, leg_total...))
 
-    # ── Step 3: accumulate each row's contribution ───────────────────────────
-    for r in rows
+    # ── Step 3: accumulate each sector's contribution ────────────────────────
+    for sector_index in 1:Telum.nsectors(q)
         # For each symmetry n, build the CGT contracted with its w-matrix.
         # After contracting, cgt_wmats[n] has shape
         #   (d_phys_1^(n), ..., d_phys_QD^(n), M_n)
@@ -148,26 +144,27 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
         cgt_wmats = Vector{Array{FT}}(undef, N)
         for n in 1:N
             S   = symmetries[n]
-            cgr = r.cgrs[n]
-            M   = size(cgr.wmat.data, 2)
+            qlabels, cgp, legdir = Telum._sector_cgr_metadata(q, sector_index, n)
+            wmat = Telum.sector_wmat(q, sector_index, n)
+            M   = size(wmat.data, 2)
 
             if isabelian(S)
                 # Abelian symmetry: irrep dim = 1 at every leg, outer multiplicity = 1.
                 # CGT is trivially the scalar 1; the contracted result is just the
-                # w-matrix row reshaped to (1,...,1, M).
+                # w-matrix sector reshaped to (1,...,1, M).
                 @assert M == 1 "Unexpected bond dimension for abelian symmetry $n"
-                cgt_wmats[n] = reshape(FT.(cgr.wmat.data), ones(Int, QD)..., M)
+                cgt_wmats[n] = reshape(FT.(wmat.data), ones(Int, QD)..., M)
             else
                 # a. Extract CGT qlabels from this CGR.
-                nin, nout = cgr.legdir
-                insp  = Tuple(cgr.qlabels[i] for i in 1:nin)
-                outsp = Tuple(cgr.qlabels[i] for i in nin+1:QD)
+                nin, nout = legdir
+                insp  = Tuple(qlabels[i] for i in 1:nin)
+                outsp = Tuple(qlabels[i] for i in nin+1:QD)
                 insp_, _ = remove_zeros(S, insp)
                 outsp_, _ = remove_zeros(S, outsp)
 
                 CGTom = get_CGTom(S, insp_, outsp_)
                 om    = CGTom.totalOM
-                @assert om == size(cgr.wmat.data, 1) "outer multiplicity mismatch for symmetry $n"
+                @assert om == size(wmat.data, 1) "outer multiplicity mismatch for symmetry $n"
 
                 canbasis = get_canonical_basis(S, insp, outsp, CGTom)
 
@@ -182,15 +179,15 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
                 #    cgt_arr: (...cgt_shape..., om)  →  flatten to (prod_shape, om)
                 #    wmat:    (om, M)
                 #    result:  (prod_shape, M)  →  reshaped to (cgt_shape..., M)
-                wmat_data   = cgr.wmat.data                        # (om, M)
+                wmat_data   = wmat.data                            # (om, M)
                 cgt_flat    = reshape(cgt_arr, :, om)              # (prod(cgt_shape), om)
                 result_flat = cgt_flat * wmat_data                 # (prod(cgt_shape), M)
                 cgt_wmat_canon = reshape(result_flat, cgt_shape..., M)
 
                 # Permute from canonical leg order to physical leg order using cgp.
-                # cgr.cgp[l] = canonical axis that corresponds to physical leg l,
+                # cgp[l] = canonical axis that corresponds to physical leg l,
                 # so permutedims with perm = (cgp..., QD+1) maps canonical → physical.
-                perm = (cgr.cgp..., QD+1)
+                perm = (cgp..., QD+1)
                 cgt_wmats[n] = permutedims(cgt_wmat_canon, perm)
             end
         end
@@ -210,7 +207,8 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
         # RMT shape: (s_1, ..., s_QD, M_1, ..., M_N)  →  (s_1, ..., s_QD, chi)
         # Julia column-major reshape: M_1 varies fastest, consistent with how
         # _leg_kron built up the bond dimension in cgt_block.
-        rmt_merged = reshape(r.RMT.data, size(r.RMT.data)[1:QD]..., chi)
+        rmt = Telum.sector_rmt(q, sector_index)
+        rmt_merged = reshape(rmt.data, size(rmt.data)[1:QD]..., chi)
 
         # ── Step 3b: Σ_i kron(CGT[:,...,:,i], RMT[:,...,:,i]) ────────────────
         d_phys = ntuple(l -> size(cgt_block,  l), QD)   # irep dims per leg
@@ -222,7 +220,7 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
         end
 
         # ── Step 3c: Scatter block into result at the correct qlabel offsets ─
-        ranges = Tuple(leg_offsets[l][_row_qlabel(r, l)] for l in 1:QD)
+        ranges = Tuple(leg_offsets[l][Telum.sector_qlabel(q, sector_index, l)] for l in 1:QD)
         result[ranges...] .+= block
     end
 
@@ -258,7 +256,7 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
         println("  Parameters: N=$N, K=$K, QD_out=$QD_out")
         println("  free_sizes  = $free_sizes")
         println("  OM3_sizes   = $OM3_sizes")
-        println("  om12_sizes  = $om12_sizes  (rows=symmetry, cols=pair)")
+        println("  om12_sizes  = $om12_sizes  (sectors=symmetry, cols=pair)")
         for n in 1:N, p in 1:K
             println("  W[$n][$p]   size = $(size(W[n][p]))")
         end
@@ -332,7 +330,7 @@ function test_compress_sector_zero_wmat_shortcircuits(; N::Int = 3,
     @test isnothing(_compress_sector(new_wmats, new_RMTs, QD_out, 0.0))
     dummy_qlabels = ntuple(_ -> (ntuple(_ -> (0,), QD_out), ntuple(identity, QD_out), (QD_out, 0)), N)
     dummy_ps = ProductSymm((ntuple(_ -> U1, N))...)
-    @test isnothing(Telum.merge_new_row(new_wmats, new_RMTs, dummy_qlabels,
+    @test isnothing(Telum.merge_new_sector(new_wmats, new_RMTs, dummy_qlabels,
                                           dummy_ps, QD_out, 0.0))
 
     direct = nothing
@@ -494,13 +492,13 @@ function test_contract_compress_sector_rmt_optimizer()
         wmat = LurTensor(randn(om3, o1, o2))
 
         new_wmats = (LurTensor{Float64, 3, Array{Float64, 3}}[wmat],)
-        row_pairs = [(1, 1)]
+        sector_pairs = [(1, 1)]
         work1 = Dict(1 => Telum._permuted_rmt_data(rmt1, perm1, nf1, cn, N))
         work2 = Dict(1 => Telum._permuted_rmt_data(rmt2, perm2, nf2, cn, N))
         kept_sizes1 = (f1,)
         kept_sizes2 = (f2,)
 
-        U_mats, result_RMT = _compress_sector(new_wmats, row_pairs,
+        U_mats, result_RMT = _compress_sector(new_wmats, sector_pairs,
                                               work1, work2,
                                               kept_sizes1, kept_sizes2, 0.0)
         reconstructed = _contract_om_axis(result_RMT, U_mats[1], QD_out + 1)
@@ -540,19 +538,19 @@ function test_contract_compress_sector_rmt_optimizer()
             1 => randn(f2, c, 4),
             2 => randn(f2, c, 1),
         )
-        row_pairs = [(1, 1), (2, 1), (1, 2)]
+        sector_pairs = [(1, 1), (2, 1), (1, 2)]
         wmats = LurTensor{Float64, 3, Array{Float64, 3}}[
             LurTensor(randn(om3, size(work1[idx1], 3), size(work2[idx2], 3)))
-            for (idx1, idx2) in row_pairs
+            for (idx1, idx2) in sector_pairs
         ]
         new_wmats = (wmats,)
 
-        U_mats, result_RMT = _compress_sector(new_wmats, row_pairs,
+        U_mats, result_RMT = _compress_sector(new_wmats, sector_pairs,
                                               work1, work2, (f1,), (f2,), 0.0)
         reconstructed = _contract_om_axis(result_RMT, U_mats[1], QD_out + 1)
 
         reference = zeros(Float64, f1, f2, om3)
-        @inbounds for (p, (idx1, idx2)) in pairs(row_pairs)
+        @inbounds for (p, (idx1, idx2)) in pairs(sector_pairs)
             A = work1[idx1]
             B = work2[idx2]
             W = wmats[p].data
@@ -601,8 +599,8 @@ function test_contract_abelian_wmats_are_unit(option::LocalSpaceOptions)
     a = getIdentity((qi1, 2), (qi2, 2))
 
     ct = qf * a
-    @test !isempty(ct.rows)
-    for r in ct.rows
+    @test !isempty(ct.sectors)
+    for r in ct.sectors
         @test size(r.cgrs[1].wmat.data) == (1, 1)
         @test r.cgrs[1].wmat.data ≈ [1.0;;] atol=1e-12 rtol=1e-12
     end
@@ -616,7 +614,7 @@ function test_getIdentity_direct_contract(option::LocalSpaceOptions)
 
     @test a.inds == a_pairs.inds
     @test a.spaces == a_pairs.spaces
-    @test _rows_equal(a.rows, a_pairs.rows)
+    @test _rows_equal(a.sectors, a_pairs.sectors)
     @test a.inds[1] == TLIndex(qi.inds[1].itags, '-', qi.inds[1].plev, qi.inds[1].lock, qi.inds[1].dual)
     @test a.spaces[1] == qi.spaces[1]
     @test a.inds[2] == TLIndex("fused", '-')
@@ -626,7 +624,7 @@ function test_getIdentity_direct_contract(option::LocalSpaceOptions)
     @test ct.inds[1] == qi.inds[2]
     @test ct.inds[2] == TLIndex("fused", '-')
     @test ct.spaces[1] == qi.spaces[2]
-    @test !isempty(ct.rows)
+    @test !isempty(ct.sectors)
 end
 
 function test_spin_local_space()
@@ -676,8 +674,8 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     function test_same_qspace_structure(q1::TLArray, q2::TLArray)
         @test q1.inds == q2.inds
         @test q1.spaces == q2.spaces
-        @test length(q1.rows) == length(q2.rows)
-        for (row1, row2) in zip(q1.rows, q2.rows)
+        @test length(q1.sectors) == length(q2.sectors)
+        for (row1, row2) in zip(q1.sectors, q2.sectors)
             @test row1.RMT.data == row2.RMT.data
             @test length(row1.cgrs) == length(row2.cgrs)
             for n in eachindex(row1.cgrs)
@@ -795,7 +793,7 @@ end
 #
 # Returns: (diff_norm, max_rmt_diff) where
 #   diff_norm     : norm of (original - reconstructed) as sparse array
-#   max_rmt_diff  : maximum per-RMT norm of difference (after matching rows)
+#   max_rmt_diff  : maximum per-RMT norm of difference (after matching sectors)
 #
 # Algorithm:
 #   1. Perform svd(q, left_legs; cutoff)
@@ -819,9 +817,9 @@ function test_svdQS(q::TLArray{T, QD, N, RD},
     
     if verbose
         println("SVD completed:")
-        println("  U  : $(length(U.rows)) rows, $(NL+1) legs")
-        println("  S  : $(length(S.rows)) rows, 2 legs")
-        println("  Vd : $(length(Vd.rows)) rows, $(NR+1) legs")
+        println("  U  : $(length(U.sectors)) sectors, $(NL+1) legs")
+        println("  S  : $(length(S.sectors)) sectors, 2 legs")
+        println("  Vd : $(length(Vd.sectors)) sectors, $(NR+1) legs")
     end
     
     # Step 2: Contract U * S
@@ -831,7 +829,7 @@ function test_svdQS(q::TLArray{T, QD, N, RD},
     US = U * S
     
     if verbose
-        println("  US : $(length(US.rows)) rows after U*S")
+        println("  US : $(length(US.sectors)) sectors after U*S")
     end
     
     # Step 3: Contract US * Vd
@@ -841,7 +839,7 @@ function test_svdQS(q::TLArray{T, QD, N, RD},
     rec = US * Vd
     
     if verbose
-        println("  rec: $(length(rec.rows)) rows after (U*S)*Vd")
+        println("  rec: $(length(rec.sectors)) sectors after (U*S)*Vd")
     end
     
     # Step 4: Permute reconstructed to match original leg order
@@ -972,7 +970,7 @@ end
 # Checks:
 #   (a) Reconstruction  : ‖V * D * V' - A‖ / ‖A‖ < tol  (relative)
 #   (b) Orthonormality  : ‖V' * V - I‖ < tol
-#   (c) eig_list size   : total count == sum of RMT row block sizes
+#   (c) eig_list size   : total count == sum of RMT sector block sizes
 #   (d) eig_list order  : sorted ascending by eigenvalue
 #   (e) eig_list space  : each entry carries its sector and in-sector index
 # ─────────────────────────────────────────────────────────────────────────────
@@ -985,7 +983,7 @@ function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     # sort-descending check is unambiguous.
     A = copy(q.I)
     rng = Random.MersenneTwister(42)
-    for r in A.rows
+    for r in A.sectors
         sz = size(r.RMT.data)   # (n, n, 1, …, 1)
         n  = sz[1]
         M  = randn(rng, n, n)
@@ -998,7 +996,7 @@ function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     D = result.D
     V = result.V
     eig_list = result.eig_list
-    println("test_eigen: $(length(eig_list)) eigenvalues, $(length(D.rows)) D-rows, $(length(V.rows)) V-rows")
+    println("test_eigen: $(length(eig_list)) eigenvalues, $(length(D.sectors)) D-sectors, $(length(V.sectors)) V-sectors")
 
     # ── (a) Reconstruction: V * D * V' ≈ A ──────────────────────────────────
     rec      = lock(V, 1) * (D * V')
@@ -1018,7 +1016,7 @@ function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     @test diff_b < tol
 
     # ── (c) eig_list size matches total RMT dimension ────────────────────────
-    total_eig_count = sum(size(r.RMT.data, 1) for r in A.rows)
+    total_eig_count = sum(size(r.RMT.data, 1) for r in A.sectors)
     @test length(eig_list) == total_eig_count
 
     # ── (d) eig_list is sorted ascending ─────────────────────────────────────
@@ -1029,7 +1027,7 @@ function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     # ── (e) eig_list entries include sector metadata ────────────────────────
     sector_dims = Dict(
         Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(A))) => size(r.RMT.data, 1)
-        for r in D.rows
+        for r in D.sectors
     )
     for entry in eig_list
         _, deg, sector, idx = entry
@@ -1046,7 +1044,7 @@ function test_eigen_autodetect(option::LocalSpaceOptions; tol::Float64 = 1e-9)
 
     A = copy(q.I)
     rng = Random.MersenneTwister(7)
-    for r in A.rows
+    for r in A.sectors
         sz = size(r.RMT.data)
         n  = sz[1]
         M  = randn(rng, n, n)
@@ -1065,7 +1063,7 @@ function test_eigen_autodetect(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     B = copy(q.I)
     rng = Random.MersenneTwister(8)
     made_nonsymmetric = false
-    for r in B.rows
+    for r in B.sectors
         sz = size(r.RMT.data)
         n  = sz[1]
         M  = randn(rng, n, n)
@@ -1092,7 +1090,7 @@ function test_eigen_permuted_input(option::LocalSpaceOptions; tol::Float64 = 1e-
 
     A = copy(q.I)
     rng = Random.MersenneTwister(11)
-    for r in A.rows
+    for r in A.sectors
         sz = size(r.RMT.data)
         n  = sz[1]
         M  = randn(rng, n, n)
@@ -1119,7 +1117,7 @@ function test_eigen_hermitian_leg_guard(option::LocalSpaceOptions)
 
     A = copy(q.I)
     rng = Random.MersenneTwister(13)
-    for r in A.rows
+    for r in A.sectors
         sz = size(r.RMT.data)
         n  = sz[1]
         M  = randn(rng, n, n)
@@ -1151,7 +1149,7 @@ function test_spaces_eigen(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
     rng = Random.MersenneTwister(0)
-    for r in A.rows
+    for r in A.sectors
         sz = size(r.RMT.data)
         n  = sz[1]
         M  = randn(rng, n, n)
@@ -1184,17 +1182,17 @@ end
 
 # ─── test_missing_spaces_eigen ───────────────────────────────────────────────
 # Verify that sectors present only in the space list are treated as zero blocks:
-# zero eigenvalues appear in eig_list and identity rows are inserted in V.
+# zero eigenvalues appear in eig_list and identity sectors are inserted in V.
 # ─────────────────────────────────────────────────────────────────────────────
 function test_missing_spaces_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     q = getLocalSpace(option, ("lur", "lur", "op"))
-    @test !isempty(q.I.rows)
+    @test !isempty(q.I.sectors)
 
-    removed_row = q.I.rows[1]
+    removed_row = q.I.sectors[1]
     removed_sector = Tuple(removed_row.cgrs[n].qlabels[removed_row.cgrs[n].cgp[1]] for n in 1:length(symm(q.I)))
     removed_dim = size(removed_row.RMT.data, 1)
 
-    kept_rows = copy(q.I.rows[2:end])
+    kept_rows = copy(q.I.sectors[2:end])
     A = TLArray(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
 
     result = eigen(A; hermitian = true)
@@ -1206,12 +1204,12 @@ function test_missing_spaces_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-
     @test length(zero_entries) == removed_dim
     @test all(iszero(entry[1]) for entry in zero_entries)
 
-    v_row = only([r for r in V.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(V))) == removed_sector])
+    v_row = only([r for r in V.sectors if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(V))) == removed_sector])
     v_mat = reshape(v_row.RMT.data, size(v_row.RMT.data, 1), size(v_row.RMT.data, 2))
     @test v_mat ≈ Matrix(I, removed_dim, removed_dim)
     @test all(cgr.cgp == expected_cgp for cgr in v_row.cgrs)
 
-    d_rows = [r for r in D.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(D))) == removed_sector]
+    d_rows = [r for r in D.sectors if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(D))) == removed_sector]
     for d_row in d_rows
         @test all(cgr.cgp == expected_cgp for cgr in d_row.cgrs)
     end
@@ -1225,17 +1223,17 @@ end
 
 # ─── test_truncate_missing_zero_spaces_eigen ────────────────────────────────
 # Verify that truncation preserves sectors selected only through zero
-# eigenvalues, even when the corresponding D rows are absent.
+# eigenvalues, even when the corresponding D sectors are absent.
 # ─────────────────────────────────────────────────────────────────────────────
 function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
-    @test !isempty(q.I.rows)
+    @test !isempty(q.I.sectors)
 
-    removed_row = q.I.rows[1]
+    removed_row = q.I.sectors[1]
     removed_sector = Tuple(removed_row.cgrs[n].qlabels[removed_row.cgrs[n].cgp[1]] for n in 1:length(symm(q.I)))
     removed_dim = size(removed_row.RMT.data, 1)
 
-    kept_rows = copy(q.I.rows[2:end])
+    kept_rows = copy(q.I.sectors[2:end])
     A = TLArray(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
 
     result = eigen(A; hermitian = true)
@@ -1249,7 +1247,7 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     @test all(entry[3] == removed_sector for entry in kept.eig_list)
     @test all(iszero(entry[1]) for entry in kept.eig_list)
 
-    @test isempty(kept.D.rows)
+    @test isempty(kept.D.sectors)
     @test kept.D.spaces[1] == [(removed_sector, removed_dim)]
     @test kept.D.spaces[2] == [(removed_sector, removed_dim)]
 
@@ -1257,7 +1255,7 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     @test discarded.V.spaces[v_orig_leg] == result.V.spaces[v_orig_leg]
     @test kept.V.spaces[v_eig_leg] == [(removed_sector, removed_dim)]
     @test all(ql != removed_sector for (ql, _) in discarded.V.spaces[v_eig_leg])
-    kept_v_rows = [r for r in kept.V.rows if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(kept.V))) == removed_sector]
+    kept_v_rows = [r for r in kept.V.sectors if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(kept.V))) == removed_sector]
     for r in kept_v_rows
         @test all(cgr.cgp == expected_cgp for cgr in r.cgrs)
     end
@@ -1294,7 +1292,7 @@ function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     A = copy(q.I)
 
     offset = 0.0
-    for r in A.rows
+    for r in A.sectors
         sz = size(r.RMT.data)
         n  = sz[1]
         vals = collect(offset .+ (1.0:n))
@@ -1339,16 +1337,16 @@ function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
         end
     end
 
-    keep_vals = isempty(Dkeep.rows) ? eltype(D.rows[1].RMT.data)[] :
-        sort(vcat([diag(reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))) for r in Dkeep.rows]...))
-    disc_vals = isempty(Ddiscard.rows) ? eltype(D.rows[1].RMT.data)[] :
-        sort(vcat([diag(reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))) for r in Ddiscard.rows]...))
+    keep_vals = isempty(Dkeep.sectors) ? eltype(D.sectors[1].RMT.data)[] :
+        sort(vcat([diag(reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))) for r in Dkeep.sectors]...))
+    disc_vals = isempty(Ddiscard.sectors) ? eltype(D.sectors[1].RMT.data)[] :
+        sort(vcat([diag(reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))) for r in Ddiscard.sectors]...))
 
     @test keep_vals ≈ sort([x[1] for x in eig_keep])
     @test disc_vals ≈ sort([x[1] for x in eig_discard])
 
-    n_keep_cols = sum((size(r.RMT.data, 2) for r in Vkeep.rows); init = 0)
-    n_disc_cols = sum((size(r.RMT.data, 2) for r in Vdiscard.rows); init = 0)
+    n_keep_cols = sum((size(r.RMT.data, 2) for r in Vkeep.sectors); init = 0)
+    n_disc_cols = sum((size(r.RMT.data, 2) for r in Vdiscard.sectors); init = 0)
     @test n_keep_cols == length(eig_keep)
     @test n_disc_cols == length(eig_discard)
 
@@ -1357,24 +1355,24 @@ function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     @test issubset(keep_qls, Set(ql for (ql, _) in D.spaces[1]))
     @test issubset(discard_qls, Set(ql for (ql, _) in D.spaces[1]))
 
-    if !isempty(Dkeep.rows)
+    if !isempty(Dkeep.sectors)
         rec_keep = lock(Vkeep, 1) * (Dkeep * Vkeep')
         arr_keep = Array(to_sparse_array(rec_keep))
         @test isfinite(norm(arr_keep))
     end
 
-    if !isempty(Ddiscard.rows)
+    if !isempty(Ddiscard.sectors)
         rec_discard = lock(Vdiscard, 1) * (Ddiscard * Vdiscard')
         arr_discard = Array(to_sparse_array(rec_discard))
         @test isfinite(norm(arr_discard))
     end
 
     rec_total = nothing
-    if !isempty(Dkeep.rows)
+    if !isempty(Dkeep.sectors)
         rec_keep = lock(Vkeep, 1) * (Dkeep * Vkeep')
         rec_total = isnothing(rec_total) ? rec_keep : rec_total + rec_keep
     end
-    if !isempty(Ddiscard.rows)
+    if !isempty(Ddiscard.sectors)
         rec_discard = lock(Vdiscard, 1) * (Ddiscard * Vdiscard')
         rec_total = isnothing(rec_total) ? rec_discard : rec_total + rec_discard
     end
@@ -1393,7 +1391,7 @@ function test_discard_eigen_tol(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
 
-    dims = [size(r.RMT.data, 1) for r in A.rows]
+    dims = [size(r.RMT.data, 1) for r in A.sectors]
     total_dim = sum(dims)
     @assert total_dim >= 3
 
@@ -1401,7 +1399,7 @@ function test_discard_eigen_tol(option::LocalSpaceOptions)
     append!(vals_all, (30.0 + i for i in 0:total_dim-length(vals_all)-1))
 
     offset = 1
-    for r in A.rows
+    for r in A.sectors
         n = size(r.RMT.data, 1)
         vals = vals_all[offset:offset+n-1]
         r.RMT.data .= reshape(Matrix(Diagonal(vals)), size(r.RMT.data))
@@ -1431,7 +1429,7 @@ function test_eigen_general_discard(option::LocalSpaceOptions)
     A = copy(q.I)
     rng = Random.MersenneTwister(7)
 
-    for r in A.rows
+    for r in A.sectors
         sz = size(r.RMT.data)
         n  = sz[1]
         M  = randn(rng, n, n) + 0.2 * Matrix(I, n, n)
@@ -1446,16 +1444,17 @@ function test_eigen_general_discard(option::LocalSpaceOptions)
 
     @test !isnothing(kept.V_inv)
     @test !isnothing(discarded.V_inv)
-    @test length(kept.eig_list) <= Nkeep
+    expected_keep = Telum._effective_eigen_keep_count(result.eig_list, Nkeep, 0.1; hermitian = false)
+    @test length(kept.eig_list) == expected_keep
     @test length(kept.eig_list) + length(discarded.eig_list) == length(result.eig_list)
 
-    n_keep_v_cols = sum((size(r.RMT.data, 2) for r in kept.V.rows); init = 0)
-    n_keep_vinv_rows = isnothing(kept.V_inv) ? 0 : sum((size(r.RMT.data, 1) for r in kept.V_inv.rows); init = 0)
+    n_keep_v_cols = sum((size(r.RMT.data, 2) for r in kept.V.sectors); init = 0)
+    n_keep_vinv_rows = isnothing(kept.V_inv) ? 0 : sum((size(r.RMT.data, 1) for r in kept.V_inv.sectors); init = 0)
     @test n_keep_v_cols == length(kept.eig_list)
     @test n_keep_vinv_rows == length(kept.eig_list)
 
-    n_disc_v_cols = sum((size(r.RMT.data, 2) for r in discarded.V.rows); init = 0)
-    n_disc_vinv_rows = isnothing(discarded.V_inv) ? 0 : sum((size(r.RMT.data, 1) for r in discarded.V_inv.rows); init = 0)
+    n_disc_v_cols = sum((size(r.RMT.data, 2) for r in discarded.V.sectors); init = 0)
+    n_disc_vinv_rows = isnothing(discarded.V_inv) ? 0 : sum((size(r.RMT.data, 1) for r in discarded.V_inv.sectors); init = 0)
     @test n_disc_v_cols == length(discarded.eig_list)
     @test n_disc_vinv_rows == length(discarded.eig_list)
 end
@@ -1469,7 +1468,7 @@ function test_discard_eigen_itag(option::LocalSpaceOptions)
     A = copy(q.I)
     rng = Random.MersenneTwister(17)
 
-    for r in A.rows
+    for r in A.sectors
         sz = size(r.RMT.data)
         n  = sz[1]
         M  = randn(rng, n, n) + 0.3 * Matrix(I, n, n)
@@ -1618,15 +1617,15 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
     ct  = qf * a
 
     left_legs = (1, 2)
-    split_blocks = Telum._get_svd_cgt_split_rows(ct, left_legs; tol)
-    expected_blocks = Telum._get_svd_cgt_split_rows(ct, left_legs; tol)
-    Telum._share_svd_row_isometries!(expected_blocks, symm(ct); tol=tol)
+    split_blocks = Telum._get_svd_cgt_split_sectors(ct, left_legs; tol)
+    expected_blocks = Telum._get_svd_cgt_split_sectors(ct, left_legs; tol)
+    Telum._share_svd_sector_isometries!(expected_blocks, symm(ct); tol=tol)
     prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
     split_blocks_via_svd = prep.blocks_by_symm
 
     direct_pairs_by_symm = ntuple(_ -> Tuple{Any, Any}[], length(symm(ct)))
-    for (ri, r) in enumerate(ct.rows)
-        row_pairs = ntuple(length(symm(ct))) do n
+    for (ri, r) in enumerate(ct.sectors)
+        sector_pairs = ntuple(length(symm(ct))) do n
             left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
             left_spaces, right_spaces = Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
 
@@ -1638,9 +1637,9 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
             end
             pairs
         end
-        any(isempty, row_pairs) && continue
+        any(isempty, sector_pairs) && continue
         for n in 1:length(symm(ct))
-            append!(direct_pairs_by_symm[n], row_pairs[n])
+            append!(direct_pairs_by_symm[n], sector_pairs[n])
         end
     end
 
@@ -1658,7 +1657,7 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
         @test length(shared_blocks) == length(direct_pairs)
         @test length(shared_blocks) == length(shared_blocks_via_svd)
 
-        blockkey(block) = (block.row_index, block.left_spaces, block.right_spaces, block.q)
+        blockkey(block) = (block.sector_index, block.left_spaces, block.right_spaces, block.q)
         raw_info_map = Dict{Any, Any}()
         direct_map = Dict{Any, Any}()
         for (raw_block_info, direct_block) in direct_pairs
@@ -1689,7 +1688,7 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
             @test haskey(raw_info_map, key)
             raw_block_info = raw_info_map[key]
 
-            r = ct.rows[shared_block.row_index]
+            r = ct.sectors[shared_block.sector_index]
             left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
             expected_left_spaces, expected_right_spaces =
                 Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
@@ -1740,11 +1739,11 @@ function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Floa
     left_legs = (1, 2)
     prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
     split_blocks = prep.blocks_by_symm
-    got = prep.intermediate_qrows
+    got = prep.intermediate_qsectors
 
     Sector = NTuple{length(symm(ct)), Tuple{Vararg{Int}}}
     expected = Dict{Sector, Vector{Int}}()
-    for (ri, r) in enumerate(ct.rows)
+    for (ri, r) in enumerate(ct.sectors)
         qchoices = ntuple(length(symm(ct))) do n
             left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
             left_spaces, right_spaces = Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
@@ -1768,7 +1767,7 @@ function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Floa
 
     @test got == expected
     for blocks in split_blocks
-        row_q_pairs = [(block.row_index, block.q) for block in blocks]
+        row_q_pairs = [(block.sector_index, block.q) for block in blocks]
         @test row_q_pairs == sort(copy(row_q_pairs); alg=MergeSort)
     end
 end
@@ -1784,18 +1783,18 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
 
     left_legs = (1, 2)
     prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
-    qrows = prep.intermediate_qrows
+    qsectors = prep.intermediate_qsectors
     got_left_sigs, got_right_sigs = prep.left_signatures, prep.right_signatures
-    got = prep.intermediate_qrow_classes
+    got = prep.intermediate_qsector_classes
 
     left_sigs = [ntuple(length(symm(ct))) do n
-        left_legs_canon = Telum._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
-        Telum._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[1]
-    end for ri in 1:length(ct.rows)]
+        left_legs_canon = Telum._svd_cgr_leftlegs(ct.sectors[ri].cgrs[n], left_legs)
+        Telum._svd_cgr_split_spaces(ct.sectors[ri].cgrs[n], left_legs_canon)[1]
+    end for ri in 1:length(ct.sectors)]
     right_sigs = [ntuple(length(symm(ct))) do n
-        left_legs_canon = Telum._svd_cgr_leftlegs(ct.rows[ri].cgrs[n], left_legs)
-        Telum._svd_cgr_split_spaces(ct.rows[ri].cgrs[n], left_legs_canon)[2]
-    end for ri in 1:length(ct.rows)]
+        left_legs_canon = Telum._svd_cgr_leftlegs(ct.sectors[ri].cgrs[n], left_legs)
+        Telum._svd_cgr_split_spaces(ct.sectors[ri].cgrs[n], left_legs_canon)[2]
+    end for ri in 1:length(ct.sectors)]
 
     @test got_left_sigs == left_sigs
     @test got_right_sigs == right_sigs
@@ -1805,19 +1804,19 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
     LeftSig = eltype(left_sigs)
     RightSig = eltype(right_sigs)
 
-    for sector in sort!(collect(keys(qrows)); alg=MergeSort)
-        rows = sort!(copy(qrows[sector]); alg=MergeSort)
+    for sector in sort!(collect(keys(qsectors)); alg=MergeSort)
+        sectors = sort!(copy(qsectors[sector]); alg=MergeSort)
         left_groups = Dict{LeftSig, Vector{Int}}()
         right_groups = Dict{RightSig, Vector{Int}}()
 
-        for ri in rows
+        for ri in sectors
             push!(get!(left_groups, left_sigs[ri], Int[]), ri)
             push!(get!(right_groups, right_sigs[ri], Int[]), ri)
         end
 
         classes = Vector{Vector{Int}}()
-        unassigned = Set(rows)
-        for seed in rows
+        unassigned = Set(sectors)
+        for seed in sectors
             seed in unassigned || continue
             component = Int[seed]
             frontier = Int[seed]
@@ -1895,7 +1894,7 @@ function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64
         end
         (ntuple(n -> per_symm[n][1], length(symm(ct))),
          ntuple(n -> per_symm[n][2], length(symm(ct))))
-    end for r in ct.rows]
+    end for r in ct.sectors]
 
     expected_left = first.(expected_signatures)
     expected_right = last.(expected_signatures)
@@ -1942,9 +1941,9 @@ function _svd_reconstruction_permutation(left_legs, rank::Int)
 end
 
 function _diag_singular_values(q::TLArray)
-    isempty(q.rows) && return Float64[]
+    isempty(q.sectors) && return Float64[]
     vals = Float64[]
-    for r in q.rows
+    for r in q.sectors
         mat = reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))
         append!(vals, diag(mat))
     end
@@ -2014,7 +2013,7 @@ function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
     ct  = qf * a
 
     left_legs = (1, 2)
-    for (ri, r) in enumerate(ct.rows)
+    for (ri, r) in enumerate(ct.sectors)
         for n in 1:length(symm(ct))
             left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
             left_spaces, right_spaces = Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
@@ -2026,7 +2025,7 @@ function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
             kept_raw_blocks = [pair[1] for pair in reduced_pairs]
 
             for (raw, reduced) in zip(kept_raw_blocks, reduced_blocks)
-                @test reduced.row_index == ri
+                @test reduced.sector_index == ri
                 @test reduced.left_spaces == left_spaces
                 @test reduced.right_spaces == right_spaces
                 @test reduced.q == raw.q
@@ -2056,14 +2055,14 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 function test_truncate_svdQS(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
-    @test !isempty(q.I.rows)
+    @test !isempty(q.I.sectors)
 
-    kept_rows = copy(q.I.rows)
+    kept_rows = copy(q.I.sectors)
     A = TLArray(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
 
     offset = 0.0
     all_positive_vals = Float64[]
-    for r in A.rows
+    for r in A.sectors
         sz = size(r.RMT.data)
         n  = sz[1]
         vals = collect(offset .+ (1.0:n))
@@ -2080,8 +2079,8 @@ function test_truncate_svdQS(option::LocalSpaceOptions)
     @test Utop.spaces[2] == Stop.spaces[1]
     @test Vdtop.spaces[1] == Stop.spaces[2]
 
-    kept_vals = isempty(Stop.rows) ? Float64[] :
-        sort(vcat([diag(reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))) for r in Stop.rows]...))
+    kept_vals = isempty(Stop.sectors) ? Float64[] :
+        sort(vcat([diag(reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))) for r in Stop.sectors]...))
     expected_vals = sort(all_positive_vals; rev = true)[1:npositive_keep] |> sort
     @test kept_vals ≈ expected_vals
 
@@ -2166,99 +2165,7 @@ function test_contract_requires_matching_spaces_in_star(option::LocalSpaceOption
 
     first_sector, first_dim = first(B.spaces[1])
     bad_leg1 = vcat([(first_sector, first_dim + 1)], B.spaces[1][2:end])
-    B_bad = TLArray(symm(B), B.rows, B.inds, (bad_leg1, B.spaces[2]))
+    B_bad = TLArray(symm(B), B.sectors, B.inds, (bad_leg1, B.spaces[2]))
 
     @test_throws AssertionError A * B_bad
-end
-
-# ─── test_contract_default ──────────────────────────────────────────────────
-# Compare the default contract (batched-GEMM version) against contract_old
-# by converting both results to sparse arrays and computing the norm of the
-# difference.  Several contraction patterns are exercised:
-#
-#   1. F × Identity   (3-leg × 4-leg, single contracted leg)
-#   2. Inner product   (full contraction → scalar, via q · q')
-#   3. Identity × Identity (2-leg × 2-leg, single contracted leg)
-#   4. Large tensor  (ct × ct', contracting a subset of legs)
-# ─────────────────────────────────────────────────────────────────────────────
-
-# Helper: replicate the matching logic of Base.:*(::TLArray, ::TLArray) to find
-# the contracted leg pairs, then call both contract_old and contract with
-# those same explicit legs. Returns the comparison norm.
-function _compare_contract_old_vs_new(q1::TLArray, q2::TLArray;
-                                      tol::Float64 = 1e-10)
-    QD1 = length(q1.inds)
-    QD2 = length(q2.inds)
-    cands1 = [(i, q1.inds[i]) for i in 1:QD1
-              if !isempty(q1.inds[i].itags) && q1.inds[i].lock == 0]
-    cands2 = [(j, q2.inds[j]) for j in 1:QD2
-              if !isempty(q2.inds[j].itags) && q2.inds[j].lock == 0]
-    legs1 = Int[];  legs2 = Int[];  matched2 = Set{Int}()
-    for (i, idx1) in cands1
-        hits = [(pos, j) for (pos, (j, idx2)) in enumerate(cands2)
-                if idx1 == change_dir(idx2) &&
-                   q1.spaces[i] == q2.spaces[j] &&
-                   pos ∉ matched2]
-        if length(hits) == 1
-            pos, j = hits[1]
-            push!(legs1, i); push!(legs2, j); push!(matched2, pos)
-        end
-    end
-    @assert !isempty(legs1) "No matching legs found for contract comparison"
-
-    ct_old = contract_old(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
-    ct_new = contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
-
-    # For 0-D (scalar) results, compare scalar values directly.
-    if length(ct_old.inds) == 0
-        val_old = ct_old[]
-        val_new = ct_new[]
-        diff = abs(val_old - val_new)
-        ref  = max(abs(val_old), 1.0)
-        @test diff / ref < tol
-        return diff
-    end
-
-    arr_old = Array(to_sparse_array(ct_old))
-    arr_new = Array(to_sparse_array(ct_new))
-
-    @assert size(arr_old) == size(arr_new) "Shape mismatch: $(size(arr_old)) vs $(size(arr_new))"
-    diff = norm(arr_old - arr_new)
-    ref  = max(norm(arr_old), 1.0)
-    @test diff / ref < tol
-    return diff
-end
-
-function test_contract_default(option::LocalSpaceOptions; tol::Float64 = 1e-10)
-    q   = getLocalSpace(option, ("lur", "lur", "op"))
-    qi1 = TLArray(q.I, ("lur1", "lur1"))
-    qi2 = TLArray(q.I, ("lur2", "lur2"))
-    qf  = TLArray(q.F, ("lur2", "lur2", "op"))
-    a   = getIdentity((qi1, 2), (qi2, 2))
-
-    # ── Case 1: F × Identity (3-leg × 4-leg, 1 contracted leg) ──────────────
-    d1 = _compare_contract_old_vs_new(qf, a; tol=tol)
-    println("test_contract_default [F*a]:   Δ = $d1")
-
-    # ── Case 2: Inner product  (full contraction → scalar) ───────────────────
-    d2 = _compare_contract_old_vs_new(qf, qf'; tol=tol)
-    println("test_contract_default [F·F']:  Δ = $d2")
-
-    # ── Case 3: Identity × Identity (2-leg × 2-leg, 1 contracted leg) ───────
-    # Use explicit legs; verify_legs=false since tags may not match.
-    ct3_old = contract_old(qi1, (2,), qi2, (1,); verify_legs=false)
-    ct3_new = contract(qi1, (2,), qi2, (1,); verify_legs=false)
-    arr3_old = Array(to_sparse_array(ct3_old))
-    arr3_new = Array(to_sparse_array(ct3_new))
-    d3 = norm(arr3_old - arr3_new)
-    ref3 = max(norm(arr3_old), 1.0)
-    @test d3 / ref3 < tol
-    println("test_contract_default [I*I]:   Δ = $d3")
-
-    # ── Case 4: Larger tensor (ct × ct') ─────────────────────────────────────
-    ct = qf * a   # 4-leg tensor
-    d4 = _compare_contract_old_vs_new(ct, ct'; tol=tol)
-    println("test_contract_default [ct·ct']: Δ = $d4")
-
-    println("test_contract_default passed (all cases).")
 end

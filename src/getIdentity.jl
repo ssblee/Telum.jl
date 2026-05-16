@@ -117,13 +117,13 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
             leginfos[d]
         end
     end
-    # (row indices into each leginfo's splist..., total RMT dim, oms...,
+    # (sector indices into each leginfo's splist..., total RMT dim, oms...,
     # starting index, ending index along fused axis)
     merged_info = Dict{QT, Vector{NTuple{D+N+3, Int}}}()
 
-    nrows = ntuple(d -> length(leginfos_adj[d].splist), Val(D))
+    nsectors = ntuple(d -> length(leginfos_adj[d].splist), Val(D))
 
-    for i in CartesianIndices(nrows)
+    for i in CartesianIndices(nsectors)
         I = i.I
         RMT_dims = ntuple(d -> leginfos_adj[d].splist[I[d]][2], Val(D))
         RMT_dim = prod(RMT_dims)
@@ -146,16 +146,18 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
         end
     end
 
-    # Build rows of the internal fused TLArray.
+    # Build sectors of the internal fused TLArray.
     # Before the final fixup for originally-incoming legs, the tensor has
     # D selected legs + 1 fused output leg, where selected incoming legs have
     # been dualized so every selected leg can be fused as incoming.
     # RMT shape: (rmts_dims..., space_cnt).
     # For each entry, the block [:,...,:, sti:edi] is an identity matrix
     # (repeated prod_oms times along the outer-multiplicity sub-blocks).
-    # Each CGR has a D+1-leg qlabel tuple and an OM×OM identity wmat.
-    CGRS = cgrstype(PS, Val(D + 1))
-    rows = Vector{row{Float64, D+1, N, D+1+N, CGRS}}()
+    # Each sector has a D+1-leg qlabel tuple and one OM×OM identity w-matrix
+    # per symmetry.
+    sector_qlabels = NTuple{D + 1, QT}[]
+    wmats = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    RMTs = LurTensor{Float64, D + 1 + N, Array{Float64, D + 1 + N}}[]
 
     for (fused_qlabels, entries) in merged_info
         #println(fused_qlabels)
@@ -187,19 +189,17 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
             RMT_data .*= sqrt(cgt_dim_out)
             RMT_t = LurTensor(reshape(RMT_data, rmts_dims..., space_cnt, oms...))
 
-            # Build one CGR per symmetry
-            cgrs_list = ntuple(Val(N)) do n
-                input_qls    = ntuple(d -> leginfos_adj[d].splist[orig_ind[d]][1][n], Val(D))
-                perm         = sortperm(collect(input_qls))
-                inv_perm     = invperm(perm)
-                cgr_qlabels  = (input_qls[perm]..., fused_qlabels[n])
+            phys_qlabels = ntuple(d -> d <= D ?
+                leginfos_adj[d].splist[orig_ind[d]][1] :
+                fused_qlabels, Val(D + 1))
+            push!(sector_qlabels, phys_qlabels)
+            push!(RMTs, RMT_t)
+
+            for n in 1:N
                 om_n         = oms[n]
                 wmat         = LurTensor(Matrix{Float64}(I, om_n, om_n))
-                cgp          = (inv_perm..., D+1)
-                CGR(fieldtype(Syms, n), cgr_qlabels, wmat, cgp, (D, 1))
+                push!(wmats[n], wmat)
             end
-
-            push!(rows, row(cgrs_list, RMT_t))
         end
     end
 
@@ -223,7 +223,12 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     
     spaces = (ntuple(d -> leginfos_adj[d].splist, Val(D))..., fused_splist)
 
-    q = TLArray(PS, rows, inds, spaces)
+    qlabels = Matrix{QT}(undef, length(sector_qlabels), D + 1)
+    for (sector_index, sector) in enumerate(sector_qlabels), leg in 1:(D + 1)
+        qlabels[sector_index, leg] = sector[leg]
+    end
+
+    q = _field_tlarray(symm, qlabels, wmats, RMTs, inds, spaces)
 
     # For an originally-incoming selected leg, attach a 1j tensor so the returned
     # leg is directly contractable with the original tensor leg.
@@ -237,8 +242,6 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
 
     return q
 end
-
-
 
 
 

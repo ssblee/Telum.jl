@@ -25,7 +25,8 @@
 #
 # ─────────────────────────────────────────────────────────────────────────────
 
-_eig_sector_qlabels(r, N) = Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:N)
+_eig_sector_qlabels(q::TLArray{T, 2, N}, sector_index::Int) where {T, N} =
+    ntuple(n -> sector_qlabel(q, sector_index, 1)[n], Val(N))
 
 _eig_sort_value(ev::Real, hermitian::Bool) = hermitian ? real(ev) : abs(ev)
 _eig_sort_value(ev::Complex, hermitian::Bool) = hermitian ? real(ev) : abs(ev)
@@ -57,9 +58,15 @@ end
 function _append_missing_eig_sectors!(symm::NTuple{N, Any},
                                       spaces,
                                       covered,
-                                      rows_D,
-                                      rows_V,
-                                      rows_Vinv,
+                                      qlabels_D,
+                                      wmats_D,
+                                      RMTs_D,
+                                      qlabels_V,
+                                      wmats_V,
+                                      RMTs_V,
+                                      qlabels_Vinv,
+                                      wmats_Vinv,
+                                      RMTs_Vinv,
                                       eig_list,
                                       cgp::NTuple{2, Int},
                                       ::Type{T_out}) where {N, T_out}
@@ -71,12 +78,24 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
             push!(eig_list, (zero(T_out), cgt_dim, sector_qlabels, j))
         end
 
-        cgrs = _eig_identity_cgrs(symm, sector_qlabels, cgp)
         rmt_eye = LurTensor(reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...))
+        cgrs = _eig_identity_cgrs(symm, sector_qlabels, cgp)
 
-        push!(rows_V, row(cgrs, rmt_eye))
-        if !isnothing(rows_Vinv)
-            push!(rows_Vinv, row(cgrs, rmt_eye))
+        push!(qlabels_D, sector_qlabels)
+        push!(RMTs_D, rmt_eye)
+        push!(qlabels_V, sector_qlabels)
+        push!(RMTs_V, rmt_eye)
+        for n in 1:N
+            push!(wmats_D[n], cgrs[n].wmat)
+            push!(wmats_V[n], cgrs[n].wmat)
+        end
+
+        if !isnothing(RMTs_Vinv)
+            push!(qlabels_Vinv, sector_qlabels)
+            push!(RMTs_Vinv, rmt_eye)
+            for n in 1:N
+                push!(wmats_Vinv[n], cgrs[n].wmat)
+            end
         end
     end
 end
@@ -100,6 +119,15 @@ function _renumber_eig_entries(eig_entries)
         out[i] = (ev, deg, sector, sector_maps[sector][old_idx])
     end
     return out
+end
+
+function _eig_qlabel_matrix(sectors::AbstractVector{QT}) where {QT}
+    qlabels = Matrix{QT}(undef, length(sectors), 2)
+    for (sector_index, sector) in enumerate(sectors)
+        qlabels[sector_index, 1] = sector
+        qlabels[sector_index, 2] = sector
+    end
+    return qlabels
 end
 
 _retag_qindex(idx::TLIndex, tag::AbstractString) = TLIndex(tag, idx.dir, idx.plev, idx.lock, idx.dual)
@@ -143,7 +171,7 @@ end
 
 function _hermiticity_ratio(q::TLArray{T, 2, N, RD}) where {T, N, RD}
     q_adj = permutedims(q', (2, 1))
-    q_adj = TLArray(symm(q_adj), q_adj.rows, q.inds, q_adj.spaces)
+    q_adj = TLArray(q_adj, q.inds)
 
     qnorm = norm(q)
     diffnorm = norm(q - q_adj)
@@ -153,10 +181,12 @@ function _hermiticity_ratio(q::TLArray{T, 2, N, RD}) where {T, N, RD}
     return diffnorm / qnorm
 end
 
-function _select_eig_rows(template::TLArray{T, 2, N, RD},
+function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
                           picks::Dict{NTuple{N, Tuple{Vararg{Int}}}, Vector{Int}};
-                          mode::Symbol) where {T, N, RD}
-    rows_out = eltype(template.rows)[]
+                          mode::Symbol) where {T, N, RD, QT}
+    qlabels_out = QT[]
+    wmats_out = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    RMTs_out = LurTensor{T, RD, Array{T, RD}}[]
     sector_counts = Dict{NTuple{N, Tuple{Vararg{Int}}}, Int}()
 
     for (sector, idxs) in picks
@@ -165,13 +195,13 @@ function _select_eig_rows(template::TLArray{T, 2, N, RD},
         sector_counts[sector] = unique_count
     end
 
-    for r in template.rows
-        sector = _eig_sector_qlabels(r, N)
+    for sector_index in 1:nsectors(template)
+        sector = _eig_sector_qlabels(template, sector_index)
         idxs = get(picks, sector, Int[])
         isempty(idxs) && continue
 
         idxs_sorted = sort(idxs)
-        rmt = r.RMT.data
+        rmt = sector_rmt(template, sector_index).data
         s1, s2 = size(rmt, 1), size(rmt, 2)
         mat = reshape(rmt, s1, s2)
 
@@ -179,13 +209,17 @@ function _select_eig_rows(template::TLArray{T, 2, N, RD},
             LurTensor(reshape(mat[idxs_sorted, idxs_sorted], length(idxs_sorted), length(idxs_sorted), ones(Int, N)...))
         elseif mode == :cols
             LurTensor(reshape(mat[:, idxs_sorted], s1, length(idxs_sorted), ones(Int, N)...))
-        elseif mode == :rows
+        elseif mode == :firstdim
             LurTensor(reshape(mat[idxs_sorted, :], length(idxs_sorted), s2, ones(Int, N)...))
         else
-            error("Unknown eig row selection mode: $mode")
+            error("Unknown eig sector selection mode: $mode")
         end
 
-        push!(rows_out, row(r.cgrs, rmt_new))
+        push!(qlabels_out, sector)
+        push!(RMTs_out, rmt_new)
+        for n in 1:N
+            push!(wmats_out[n], sector_wmat(template, sector_index, n))
+        end
     end
 
     function build_selected_space(base_space, dim_fn)
@@ -207,16 +241,21 @@ function _select_eig_rows(template::TLArray{T, 2, N, RD},
             copy(template.spaces[1]),
             build_selected_space(template.spaces[2], (_, count) -> count),
         )
-    elseif mode == :rows
+    elseif mode == :firstdim
         (
             build_selected_space(template.spaces[1], (_, count) -> count),
             copy(template.spaces[2]),
         )
     else
-        error("Unknown eig row selection mode: $mode")
+        error("Unknown eig sector selection mode: $mode")
     end
 
-    return TLArray(symm(template), rows_out, template.inds, spaces_out)
+    qlabels_mat = Matrix{QT}(undef, length(qlabels_out), 2)
+    for (sector_index, sector) in enumerate(qlabels_out)
+        qlabels_mat[sector_index, 1] = sector
+        qlabels_mat[sector_index, 2] = sector
+    end
+    return _field_tlarray(symm(template), qlabels_mat, wmats_out, RMTs_out, template.inds, spaces_out)
 end
 
 function _effective_eigen_keep_count(eig_entries,
@@ -263,21 +302,21 @@ function _split_eigen_result(result::EigenResult,
         push!(get!(discarded_picks, entry[3], Int[]), entry[4])
     end
 
-    Vkeep = _select_eig_rows(result.V, kept_picks; mode=:cols)
-    Vdiscard = _select_eig_rows(result.V, discarded_picks; mode=:cols)
-    Dkeep = _select_eig_rows(result.D, kept_picks; mode=:diag)
-    Ddiscard = _select_eig_rows(result.D, discarded_picks; mode=:diag)
+    Vkeep = _select_eig_sectors(result.V, kept_picks; mode=:cols)
+    Vdiscard = _select_eig_sectors(result.V, discarded_picks; mode=:cols)
+    Dkeep = _select_eig_sectors(result.D, kept_picks; mode=:diag)
+    Ddiscard = _select_eig_sectors(result.D, discarded_picks; mode=:diag)
 
-    Vinv_keep = isnothing(result.V_inv) ? nothing : _select_eig_rows(result.V_inv, kept_picks; mode=:rows)
-    Vinv_discard = isnothing(result.V_inv) ? nothing : _select_eig_rows(result.V_inv, discarded_picks; mode=:rows)
+    Vinv_keep = isnothing(result.V_inv) ? nothing : _select_eig_sectors(result.V_inv, kept_picks; mode=:firstdim)
+    Vinv_discard = isnothing(result.V_inv) ? nothing : _select_eig_sectors(result.V_inv, discarded_picks; mode=:firstdim)
 
     kept = EigenResult(Vkeep, Dkeep, Vinv_keep, _renumber_eig_entries(kept_entries))
     discarded = EigenResult(Vdiscard, Ddiscard, Vinv_discard, _renumber_eig_entries(discarded_entries))
     return kept, discarded
 end
 
-function _eigen_hermitian(q::TLArray{T, 2, N, RD},
-                          eig_tag::AbstractString = "eig") where {T, N, RD}
+function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
+                          eig_tag::AbstractString = "eig") where {T, N, RD, QT}
 
     _check_hermitian_eigen_legs(q, "eigen")
 
@@ -286,15 +325,19 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD},
     out_leg = 2
     cgp = (1, 2)
 
-    # ── Decompose each row ───────────────────────────────────────────────────
+    # ── Decompose each sector ───────────────────────────────────────────────────
     T_out    = promote_type(T, Float64)
-    rows_D   = row{T_out, 2, N, 2 + N}[]
-    rows_V   = row{T_out, 2, N, 2 + N}[]
+    qlabels_D = QT[]
+    qlabels_V = QT[]
+    wmats_D = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    wmats_V = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    RMTs_D = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
+    RMTs_V = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
     # Eigenvalue, degeneracy, sector qlabels, in-sector index
     eig_list = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
-    for r in q.rows
-        rmt = r.RMT.data
+    for sector_index in 1:nsectors(q)
+        rmt = sector_rmt(q, sector_index).data
         sL, sR = size(rmt, 1), size(rmt, 2)
         @assert sL == sR "eigen: RMT must be square for eigendecomposition, got ($sL, $sR)"
 
@@ -305,11 +348,11 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD},
         eigenvectors = T_out.(F.vectors)
 
         chi = length(eigenvalues)
-        sector_qlabels = _eig_sector_qlabels(r, N)
+        sector_qlabels = _eig_sector_qlabels(q, sector_index)
 
         # Degeneracy = product of irrep dims across all symmetries for this sector
         cgt_dim = prod(
-            dimension(symmetries[n], r.cgrs[n].qlabels[r.cgrs[n].cgp[1]])
+            dimension(symmetries[n], sector_qlabels[n])
             for n in 1:N)
         for (j, ev) in enumerate(eigenvalues)
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
@@ -318,28 +361,25 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD},
         rmt_D = LurTensor(reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...))
         rmt_V = LurTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
 
-        cgrs_D = ntuple(N) do n
-            cgr_orig = r.cgrs[n]
-            ql = cgr_orig.qlabels[1]
+        push!(qlabels_D, sector_qlabels)
+        push!(qlabels_V, sector_qlabels)
+        push!(RMTs_D, rmt_D)
+        push!(RMTs_V, rmt_V)
+        for n in 1:N
+            ql = sector_qlabels[n]
             dim_n = dimension(symmetries[n], ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
+            push!(wmats_D[n], wmat_n)
+            push!(wmats_V[n], wmat_n)
         end
-
-        cgrs_V = ntuple(N) do n
-            cgr_orig = r.cgrs[n]
-            ql = cgr_orig.qlabels[1]
-            dim_n = dimension(symmetries[n], ql)
-            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
-        end
-
-        push!(rows_D, row(cgrs_D, rmt_D))
-        push!(rows_V, row(cgrs_V, rmt_V))
     end
 
-    covered = Set(_eig_sector_qlabels(r, N) for r in q.rows)
-    _append_missing_eig_sectors!(symmetries, q.spaces[1], covered, rows_D, rows_V, nothing, eig_list, cgp, T_out)
+    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in 1:nsectors(q))
+    _append_missing_eig_sectors!(symmetries, q.spaces[1], covered,
+        qlabels_D, wmats_D, RMTs_D,
+        qlabels_V, wmats_V, RMTs_V,
+        nothing, nothing, nothing,
+        eig_list, cgp, T_out)
 
     # Sort eig_list ascending by eigenvalue.
     sort!(eig_list; by = x -> _eig_sort_value(x[1], true))
@@ -355,14 +395,14 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD},
     inds_V = (TLIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
               TLIndex(eig_tag, dirs[2]))
 
-    D = TLArray(symmetries, rows_D, inds_D, spaces_D)
-    V = TLArray(symmetries, rows_V, inds_V, spaces_V)
+    D = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_D), wmats_D, RMTs_D, inds_D, spaces_D)
+    V = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_V), wmats_V, RMTs_V, inds_V, spaces_V)
 
     return EigenResult(V, D, nothing, eig_list)
 end
 
-function _eigen_general(q::TLArray{T, 2, N, RD},
-                        eig_tag::AbstractString = "eig") where {T, N, RD}
+function _eigen_general(q::TLArray{T, 2, N, RD, QT},
+                        eig_tag::AbstractString = "eig") where {T, N, RD, QT}
 
     symmetries = symm(q)
     dirs = (q.inds[1].dir, q.inds[2].dir)
@@ -372,13 +412,19 @@ function _eigen_general(q::TLArray{T, 2, N, RD},
     out_leg = 2
 
     T_out     = promote_type(T, ComplexF64)
-    rows_D    = row{T_out, 2, N, 2 + N}[]
-    rows_V    = row{T_out, 2, N, 2 + N}[]
-    rows_Vinv = row{T_out, 2, N, 2 + N}[]
+    qlabels_D = QT[]
+    qlabels_V = QT[]
+    qlabels_Vinv = QT[]
+    wmats_D = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    wmats_V = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    wmats_Vinv = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    RMTs_D = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
+    RMTs_V = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
+    RMTs_Vinv = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
     eig_list  = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
-    for r in q.rows
-        rmt = r.RMT.data
+    for sector_index in 1:nsectors(q)
+        rmt = sector_rmt(q, sector_index).data
         sL, sR = size(rmt, 1), size(rmt, 2)
         @assert sL == sR "eigen_general: RMT must be square"
 
@@ -390,10 +436,10 @@ function _eigen_general(q::TLArray{T, 2, N, RD},
         eigenvectors_inv = T_out.(inv(F.vectors))
 
         chi = length(eigenvalues)
-        sector_qlabels = _eig_sector_qlabels(r, N)
+        sector_qlabels = _eig_sector_qlabels(q, sector_index)
 
         cgt_dim = prod(
-            dimension(symmetries[n], r.cgrs[n].qlabels[r.cgrs[n].cgp[1]])
+            dimension(symmetries[n], sector_qlabels[n])
             for n in 1:N)
         for (j, ev) in enumerate(eigenvalues)
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
@@ -403,37 +449,28 @@ function _eigen_general(q::TLArray{T, 2, N, RD},
         rmt_V    = LurTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
         rmt_Vinv = LurTensor(reshape(eigenvectors_inv, chi, sL, ones(Int, N)...))
 
-        cgrs_D = ntuple(N) do n
-            cgr_orig = r.cgrs[n]
-            ql = cgr_orig.qlabels[1]
+        push!(qlabels_D, sector_qlabels)
+        push!(qlabels_V, sector_qlabels)
+        push!(qlabels_Vinv, sector_qlabels)
+        push!(RMTs_D, rmt_D)
+        push!(RMTs_V, rmt_V)
+        push!(RMTs_Vinv, rmt_Vinv)
+        for n in 1:N
+            ql = sector_qlabels[n]
             dim_n = dimension(symmetries[n], ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
+            push!(wmats_D[n], wmat_n)
+            push!(wmats_V[n], wmat_n)
+            push!(wmats_Vinv[n], wmat_n)
         end
-
-        cgrs_V = ntuple(N) do n
-            cgr_orig = r.cgrs[n]
-            ql = cgr_orig.qlabels[1]
-            dim_n = dimension(symmetries[n], ql)
-            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
-        end
-
-        cgrs_Vinv = ntuple(N) do n
-            cgr_orig = r.cgrs[n]
-            ql = cgr_orig.qlabels[1]
-            dim_n = dimension(symmetries[n], ql)
-            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            CGR(symmetries[n], (ql, ql), wmat_n, cgp, (1, 1))
-        end
-
-        push!(rows_D,    row(cgrs_D,    rmt_D))
-        push!(rows_V,    row(cgrs_V,    rmt_V))
-        push!(rows_Vinv, row(cgrs_Vinv, rmt_Vinv))
     end
 
-    covered = Set(_eig_sector_qlabels(r, N) for r in q.rows)
-    _append_missing_eig_sectors!(symmetries, q.spaces[1], covered, rows_D, rows_V, rows_Vinv, eig_list, cgp, T_out)
+    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in 1:nsectors(q))
+    _append_missing_eig_sectors!(symmetries, q.spaces[1], covered,
+        qlabels_D, wmats_D, RMTs_D,
+        qlabels_V, wmats_V, RMTs_V,
+        qlabels_Vinv, wmats_Vinv, RMTs_Vinv,
+        eig_list, cgp, T_out)
 
     sort!(eig_list; by = x -> _eig_sort_value(x[1], false))
 
@@ -451,9 +488,9 @@ function _eigen_general(q::TLArray{T, 2, N, RD},
     inds_Vinv = (TLIndex(eig_tag, dirs[1]),
                  TLIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.dual))
 
-    D    = TLArray(symmetries, rows_D,    inds_D,    spaces_D)
-    V    = TLArray(symmetries, rows_V,    inds_V,    spaces_V)
-    Vinv = TLArray(symmetries, rows_Vinv, inds_Vinv, spaces_Vinv)
+    D    = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_D),    wmats_D,    RMTs_D,    inds_D,    spaces_D)
+    V    = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_V),    wmats_V,    RMTs_V,    inds_V,    spaces_V)
+    Vinv = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_Vinv), wmats_Vinv, RMTs_Vinv, inds_Vinv, spaces_Vinv)
 
     return EigenResult(V, D, Vinv, eig_list)
 end
@@ -500,7 +537,3 @@ function discard_eigen(result::EigenResult,
                        hermitian::Bool = isnothing(result.V_inv))
     return discard_eigen(result, Nkeep, tol, kept_tag, discarded_tag; hermitian=hermitian)
 end
-
-
-
-
