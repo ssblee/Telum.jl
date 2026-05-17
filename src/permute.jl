@@ -1,24 +1,3 @@
-# ─── permutedims ─────────────────────────────────────────────────────────
-#
-# Permute the legs of a TLArray object.
-#
-# Arguments:
-#   q    : TLArray to permute
-#   perm : permutation tuple/vector of length QD
-#          perm[new_pos] = old_pos means the leg at old_pos moves to new_pos
-#
-# Returns: new TLArray with permuted legs
-#
-# Algorithm:
-#   1. Permute TLIndex tuple according to perm.
-#   2. For each sector, permute CGRs:
-#      - Update cgp: new_cgp[new_leg] = old_cgp[perm[new_leg]]
-#      - Check if _check_cgr_qlabel_order would pass with the new cgp
-#      - If not, reorder stored qlabels and apply CGTperm transformation to wmat
-#   3. Permute RMT first QD dimensions according to perm.
-#   4. Assemble and return new TLArray.
-# ─────────────────────────────────────────────────────────────────────────────
-
 function _reorder_perm_part(qlabels::NTuple{N, NTuple{NZ, Int}},
     cgp_part::NTuple{N, Int}) where {NZ, N}
 
@@ -58,51 +37,42 @@ function _compute_reorder_permutation(qlabels::NTuple{QD, NTuple{NZ, Int}},
     return reorder
 end
 
-# Permute a single CGR according to the physical leg permutation perm.
-# Returns a new CGR with updated cgp (and possibly reordered qlabels + transformed wmat).
-function _permute_cgr(cgr::CGR{QD, NZ}, 
-    perm::NTuple{QD, Int}, 
-    symm_type) where {QD, NZ}
-
-    # New cgp: new_cgp[new_leg] = old_cgp[perm[new_leg]]
-    new_cgp = Tuple(cgr.cgp[perm[l]] for l in 1:QD)
+function _permuted_sector_wmat(symm_type,
+                               qlabels::NTuple{QD, NTuple{NZ, Int}},
+                               wmat::LurTensor{Float64, 2},
+                               cgp::NTuple{QD, Int},
+                               legdir::Tuple{Int, Int},
+                               perm::NTuple{QD, Int}) where {QD, NZ}
+    new_cgp = Tuple(cgp[perm[l]] for l in 1:QD)
     
     # Need to reorder stored qlabels and apply CGTperm transformation
-    m, k = cgr.legdir
-    reorder = _compute_reorder_permutation(cgr.qlabels, new_cgp, cgr.legdir)
+    m, k = legdir
+    reorder = _compute_reorder_permutation(qlabels, new_cgp, legdir)
 
-    upsp = Tuple(cgr.qlabels[i] for i in 1:m)    # incoming qlabels, already sorted
-    dnsp = Tuple(cgr.qlabels[m+i] for i in 1:k)  # outgoing qlabels, already sorted
+    upsp = Tuple(qlabels[i] for i in 1:m)    # incoming qlabels, already sorted
+    dnsp = Tuple(qlabels[m+i] for i in 1:k)  # outgoing qlabels, already sorted
     
     # New qlabels after reordering
-    new_qlabels = Tuple(cgr.qlabels[reorder[i]] for i in 1:QD)
+    new_qlabels = Tuple(qlabels[reorder[i]] for i in 1:QD)
     # The permutation 'reorder' should permute only same qlabels
-    @assert new_qlabels == cgr.qlabels
+    @assert new_qlabels == qlabels
 
     cgtperm_obj = getNsave_CGTperm(symm_type, upsp, dnsp, reorder)
 
-    # Update cgp: new_cgp[leg] pointed to old stored position,
-    # after reorder that qlabel is at reorder_inv[old_pos]
-    inv_reorder = invperm(reorder)
-    final_cgp = Tuple(inv_reorder[new_cgp[l]] for l in 1:QD)
-
     if isnothing(cgtperm_obj)
         # Permutation is identity, or symmetry is Abelian
-        return CGR(symm(cgr), cgr.qlabels, cgr.wmat, final_cgp, cgr.legdir)
+        return wmat
     end
     
     # Apply CGTperm. CGTperm transforms from old OM basis to new OM basis
-    new_wmat_data = cgtperm_obj.perm_arr * cgr.wmat.data
-    new_wmat = LurTensor(new_wmat_data)
-    
-    return CGR(symm(cgr), cgr.qlabels, new_wmat, final_cgp, cgr.legdir)
+    return LurTensor(cgtperm_obj.perm_arr * wmat.data)
 end
 
 function _permute_sector_wmat(q::TLArray{T, QD, N, RD}, sector_index::Int,
                               perm::NTuple{QD, Int}, n::Int, symm) where {T, QD, N, RD}
-    qlabels, cgp, legdir = _sector_cgr_metadata(q, sector_index, n)
-    cgr = CGR(symm[n], qlabels, sector_wmat(q, sector_index, n), cgp, legdir)
-    return _permute_cgr(cgr, perm, symm[n]).wmat
+    qlabels, cgp, legdir = _sector_cgt_metadata(q, sector_index, n)
+    return _permuted_sector_wmat(symm[n], qlabels, sector_wmat(q, sector_index, n),
+                                 cgp, legdir, perm)
 end
 
 function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
@@ -112,14 +82,14 @@ function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
 end
 
 function _permute_sector_wmats(q::TLArray{T, QD, N}, perm::NTuple{QD, Int}, symm) where {T, QD, N}
-    return ntuple(Val(N)) do n
-        src = q.wmats[n]
-        out = similar(src, nsectors(q))
+    out = _wmat_matrix(productsymm(q), nsectors(q))
+    for n in 1:N
         for sector_index in 1:nsectors(q)
-            out[sector_index] = _permute_sector_wmat(q, sector_index, perm, n, symm)
+            _set_sector_wmat!(out, productsymm(q), sector_index, n,
+                              _permute_sector_wmat(q, sector_index, perm, n, symm))
         end
-        out
     end
+    return out
 end
 
 function _permute_sector_rmts(q::TLArray{T, QD, N, RD}, perm::NTuple{QD, Int}) where {T, QD, N, RD}
@@ -154,8 +124,8 @@ function Base.permutedims(q::TLArray{T, QD, N, RD}, perm) where {T, QD, N, RD}
     # 2. Permute spaces tuple
     new_spaces = Tuple(q.spaces[perm[l]] for l in 1:QD)
     
-    # 3 & 4. Permute each sector (CGR metadata and RMT)
-    new_qlabels = copy(q.qlabels[:, collect(perm)])
+    # 3 & 4. Permute each sector (CGT metadata and RMT)
+    new_qlabels = copy(q.qlabels[collect(perm), :])
     new_wmats = _permute_sector_wmats(q, perm, symm(q))
     new_RMTs = _permute_sector_rmts(q, perm)
     

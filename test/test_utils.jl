@@ -144,7 +144,7 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
         cgt_wmats = Vector{Array{FT}}(undef, N)
         for n in 1:N
             S   = symmetries[n]
-            qlabels, cgp, legdir = Telum._sector_cgr_metadata(q, sector_index, n)
+            qlabels, cgp, legdir = Telum._sector_cgt_metadata(q, sector_index, n)
             wmat = Telum.sector_wmat(q, sector_index, n)
             M   = size(wmat.data, 2)
 

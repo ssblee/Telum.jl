@@ -156,7 +156,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     # Each sector has a D+1-leg qlabel tuple and one OM×OM identity w-matrix
     # per symmetry.
     sector_qlabels = NTuple{D + 1, QT}[]
-    wmats = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    wmat_buffers = _wmat_buffers(PS)
     RMTs = LurTensor{Float64, D + 1 + N, Array{Float64, D + 1 + N}}[]
 
     for (fused_qlabels, entries) in merged_info
@@ -198,7 +198,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
             for n in 1:N
                 om_n         = oms[n]
                 wmat         = LurTensor(Matrix{Float64}(I, om_n, om_n))
-                push!(wmats[n], wmat)
+                _push_wmat!(wmat_buffers, PS, n, wmat)
             end
         end
     end
@@ -223,11 +223,12 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     
     spaces = (ntuple(d -> leginfos_adj[d].splist, Val(D))..., fused_splist)
 
-    qlabels = Matrix{QT}(undef, length(sector_qlabels), D + 1)
+    qlabels = Matrix{QT}(undef, D + 1, length(sector_qlabels))
     for (sector_index, sector) in enumerate(sector_qlabels), leg in 1:(D + 1)
-        qlabels[sector_index, leg] = sector[leg]
+        qlabels[leg, sector_index] = sector[leg]
     end
 
+    wmats = _wmat_matrix_from_buffers(PS, wmat_buffers, length(RMTs))
     q = _field_tlarray(symm, qlabels, wmats, RMTs, inds, spaces)
 
     # For an originally-incoming selected leg, attach a 1j tensor so the returned
@@ -242,7 +243,6 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
 
     return q
 end
-
 
 
 

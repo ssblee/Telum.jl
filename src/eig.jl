@@ -44,14 +44,12 @@ function EigenResult(V::TLArray, D::TLArray, V_inv, eig_list)
         V, D, V_inv, eig_list)
 end
 
-function _eig_identity_cgrs(symm::NTuple{N, Any},
-                            sector_qlabels::NTuple{N, Tuple{Vararg{Int}}},
-                            cgp::NTuple{2, Int}) where {N}
+function _eig_identity_wmats(symm::NTuple{N, Any},
+                             sector_qlabels::NTuple{N, Tuple{Vararg{Int}}}) where {N}
     return ntuple(N) do n
         ql = sector_qlabels[n]
         dim_n = dimension(symm[n], ql)
-        wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-        CGR(symm[n], (ql, ql), wmat_n, cgp, (1, 1))
+        LurTensor([sqrt(Float64(dim_n));;])
     end
 end
 
@@ -79,22 +77,22 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
         end
 
         rmt_eye = LurTensor(reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...))
-        cgrs = _eig_identity_cgrs(symm, sector_qlabels, cgp)
+        identity_wmats = _eig_identity_wmats(symm, sector_qlabels)
 
         push!(qlabels_D, sector_qlabels)
         push!(RMTs_D, rmt_eye)
         push!(qlabels_V, sector_qlabels)
         push!(RMTs_V, rmt_eye)
         for n in 1:N
-            push!(wmats_D[n], cgrs[n].wmat)
-            push!(wmats_V[n], cgrs[n].wmat)
+            _push_wmat!(wmats_D, symm, n, identity_wmats[n])
+            _push_wmat!(wmats_V, symm, n, identity_wmats[n])
         end
 
         if !isnothing(RMTs_Vinv)
             push!(qlabels_Vinv, sector_qlabels)
             push!(RMTs_Vinv, rmt_eye)
             for n in 1:N
-                push!(wmats_Vinv[n], cgrs[n].wmat)
+                _push_wmat!(wmats_Vinv, symm, n, identity_wmats[n])
             end
         end
     end
@@ -122,10 +120,10 @@ function _renumber_eig_entries(eig_entries)
 end
 
 function _eig_qlabel_matrix(sectors::AbstractVector{QT}) where {QT}
-    qlabels = Matrix{QT}(undef, length(sectors), 2)
+    qlabels = Matrix{QT}(undef, 2, length(sectors))
     for (sector_index, sector) in enumerate(sectors)
-        qlabels[sector_index, 1] = sector
-        qlabels[sector_index, 2] = sector
+        qlabels[1, sector_index] = sector
+        qlabels[2, sector_index] = sector
     end
     return qlabels
 end
@@ -185,7 +183,7 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
                           picks::Dict{NTuple{N, Tuple{Vararg{Int}}}, Vector{Int}};
                           mode::Symbol) where {T, N, RD, QT}
     qlabels_out = QT[]
-    wmats_out = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    wmat_buffers = _wmat_buffers(productsymm(template))
     RMTs_out = LurTensor{T, RD, Array{T, RD}}[]
     sector_counts = Dict{NTuple{N, Tuple{Vararg{Int}}}, Int}()
 
@@ -218,7 +216,7 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
         push!(qlabels_out, sector)
         push!(RMTs_out, rmt_new)
         for n in 1:N
-            push!(wmats_out[n], sector_wmat(template, sector_index, n))
+            _push_wmat!(wmat_buffers, productsymm(template), n, sector_wmat(template, sector_index, n))
         end
     end
 
@@ -250,11 +248,12 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
         error("Unknown eig sector selection mode: $mode")
     end
 
-    qlabels_mat = Matrix{QT}(undef, length(qlabels_out), 2)
+    qlabels_mat = Matrix{QT}(undef, 2, length(qlabels_out))
     for (sector_index, sector) in enumerate(qlabels_out)
-        qlabels_mat[sector_index, 1] = sector
-        qlabels_mat[sector_index, 2] = sector
+        qlabels_mat[1, sector_index] = sector
+        qlabels_mat[2, sector_index] = sector
     end
+    wmats_out = _wmat_matrix_from_buffers(productsymm(template), wmat_buffers, length(RMTs_out))
     return _field_tlarray(symm(template), qlabels_mat, wmats_out, RMTs_out, template.inds, spaces_out)
 end
 
@@ -329,8 +328,8 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     T_out    = promote_type(T, Float64)
     qlabels_D = QT[]
     qlabels_V = QT[]
-    wmats_D = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
-    wmats_V = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    wmats_D = _wmat_buffers(productsymm(q))
+    wmats_V = _wmat_buffers(productsymm(q))
     RMTs_D = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
     RMTs_V = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
     # Eigenvalue, degeneracy, sector qlabels, in-sector index
@@ -369,8 +368,8 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
             ql = sector_qlabels[n]
             dim_n = dimension(symmetries[n], ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            push!(wmats_D[n], wmat_n)
-            push!(wmats_V[n], wmat_n)
+            _push_wmat!(wmats_D, productsymm(q), n, wmat_n)
+            _push_wmat!(wmats_V, productsymm(q), n, wmat_n)
         end
     end
 
@@ -395,8 +394,12 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     inds_V = (TLIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
               TLIndex(eig_tag, dirs[2]))
 
-    D = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_D), wmats_D, RMTs_D, inds_D, spaces_D)
-    V = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_V), wmats_V, RMTs_V, inds_V, spaces_V)
+    D = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_D),
+                       _wmat_matrix_from_buffers(productsymm(q), wmats_D, length(RMTs_D)),
+                       RMTs_D, inds_D, spaces_D)
+    V = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_V),
+                       _wmat_matrix_from_buffers(productsymm(q), wmats_V, length(RMTs_V)),
+                       RMTs_V, inds_V, spaces_V)
 
     return EigenResult(V, D, nothing, eig_list)
 end
@@ -415,9 +418,9 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     qlabels_D = QT[]
     qlabels_V = QT[]
     qlabels_Vinv = QT[]
-    wmats_D = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
-    wmats_V = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
-    wmats_Vinv = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    wmats_D = _wmat_buffers(productsymm(q))
+    wmats_V = _wmat_buffers(productsymm(q))
+    wmats_Vinv = _wmat_buffers(productsymm(q))
     RMTs_D = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
     RMTs_V = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
     RMTs_Vinv = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
@@ -459,9 +462,9 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
             ql = sector_qlabels[n]
             dim_n = dimension(symmetries[n], ql)
             wmat_n = LurTensor([sqrt(Float64(dim_n));;])
-            push!(wmats_D[n], wmat_n)
-            push!(wmats_V[n], wmat_n)
-            push!(wmats_Vinv[n], wmat_n)
+            _push_wmat!(wmats_D, productsymm(q), n, wmat_n)
+            _push_wmat!(wmats_V, productsymm(q), n, wmat_n)
+            _push_wmat!(wmats_Vinv, productsymm(q), n, wmat_n)
         end
     end
 
@@ -488,9 +491,15 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     inds_Vinv = (TLIndex(eig_tag, dirs[1]),
                  TLIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.dual))
 
-    D    = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_D),    wmats_D,    RMTs_D,    inds_D,    spaces_D)
-    V    = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_V),    wmats_V,    RMTs_V,    inds_V,    spaces_V)
-    Vinv = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_Vinv), wmats_Vinv, RMTs_Vinv, inds_Vinv, spaces_Vinv)
+    D    = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_D),
+                          _wmat_matrix_from_buffers(productsymm(q), wmats_D, length(RMTs_D)),
+                          RMTs_D, inds_D, spaces_D)
+    V    = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_V),
+                          _wmat_matrix_from_buffers(productsymm(q), wmats_V, length(RMTs_V)),
+                          RMTs_V, inds_V, spaces_V)
+    Vinv = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_Vinv),
+                          _wmat_matrix_from_buffers(productsymm(q), wmats_Vinv, length(RMTs_Vinv)),
+                          RMTs_Vinv, inds_Vinv, spaces_Vinv)
 
     return EigenResult(V, D, Vinv, eig_list)
 end

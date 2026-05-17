@@ -129,11 +129,11 @@ struct CGTContrInfo{S<:NonabelianSymm, U1, D1, U2, D2, NZ, M}
     ctlegs2::NTuple{M, Int}              # contracted stored-qlabel indices in CGT2
 end
 
-# ─── Output CGR metadata ─────────────────────────────────────────────────────
+# ─── Output CGT metadata ─────────────────────────────────────────────────────
 
 # Core plain-data function: given two CGTs' qlabel/legdir/cgp data and the
-# physical free/contracted legs, compute the resulting CGR's qlabels, cgp,
-# and legdir.  This function is independent of the sector/CGR structs.
+# physical free/contracted legs, compute the resulting CGT's qlabels, cgp,
+# and legdir.  This function is independent of the sector/CGT structs.
 #
 # Arguments (one symmetry at a time):
 #   qlabels1/2  : NTuple{QD, NTuple{NZ,Int}} — stored qlabels of each CGT
@@ -202,18 +202,18 @@ function get_new_cgp(qlabels1, legdir1, cgp1, free1, legs1,
                        qlabels2, legdir2, cgp2, Tuple(free2), Tuple(legs2))
 end
 
-function get_new_cgr_metadata(q1::TLArray{T1, QD1, N}, i1::Int,
+function get_new_cgt_metadata(q1::TLArray{T1, QD1, N}, i1::Int,
                               q2::TLArray{T2, QD2, N}, i2::Int,
                               free1, free2, legs1, legs2) where {T1, QD1, T2, QD2, N}
     ntuple(Val(N)) do n
-        qlabels1, cgp1, legdir1 = _sector_cgr_metadata(q1, i1, n)
-        qlabels2, cgp2, legdir2 = _sector_cgr_metadata(q2, i2, n)
+        qlabels1, cgp1, legdir1 = _sector_cgt_metadata(q1, i1, n)
+        qlabels2, cgp2, legdir2 = _sector_cgt_metadata(q2, i2, n)
         get_new_cgp(qlabels1, legdir1, cgp1, free1, legs1,
                     qlabels2, legdir2, cgp2, free2, legs2)
     end
 end
 
-@inline function _physical_qlabels_from_cgr_metadata(::Type{QT},
+@inline function _physical_qlabels_from_cgt_metadata(::Type{QT},
                                                      metadata,
                                                      ::Val{QD},
                                                      ::Val{N}) where {QT, QD, N}
@@ -696,7 +696,7 @@ end
 #   new_RMTs[i]     : LurTensor{T} (sz_free..., OM12_1_i,...,OM12_N_i)
 #
 # Returns:
-#   U_mats[n]  : LurTensor{Float64,2} (OM3_n, r_n)  — new CGR wmat per symmetry
+#   U_mats[n]  : LurTensor{Float64,2} (OM3_n, r_n)  — new CGT wmat per symmetry
 #   result_RMT : LurTensor{T} (sz_free..., r_1,...,r_N)  — compressed RMT
 #   nothing    : when QR reveals that any symmetry contributes no usable
 #                columns, so the whole merged sector is identically zero
@@ -973,31 +973,35 @@ end
             _symmetry_qlabels(free_qlabels2, Val(n)))
 end
 
-@inline _cgr_up_qlabels(cgr::CGR{QD, NZ, S}, ::Val{M}) where {QD, NZ, S, M} =
-    ntuple(i -> cgr.qlabels[i], Val(M))
+@inline _cgt_up_qlabels(qlabels::NTuple{QD, NTuple{NZ, Int}}, ::Val{M}) where {QD, NZ, M} =
+    ntuple(i -> qlabels[i], Val(M))
 
-@inline _cgr_dn_qlabels(cgr::CGR{QD, NZ, S}, ::Val{M}) where {QD, NZ, S, M} =
-    ntuple(i -> cgr.qlabels[M + i], Val(QD - M))
+@inline _cgt_dn_qlabels(qlabels::NTuple{QD, NTuple{NZ, Int}}, ::Val{M}) where {QD, NZ, M} =
+    ntuple(i -> qlabels[M + i], Val(QD - M))
 
-@inline _stored_contract_legs(cgr::CGR{QD, NZ, S}, legs::NTuple{CN, Int}) where {QD, NZ, S, CN} =
-    ntuple(k -> cgr.cgp[legs[k]], Val(CN))
+@inline _stored_contract_legs(cgp::NTuple{QD, Int}, legs::NTuple{CN, Int}) where {QD, CN} =
+    ntuple(k -> cgp[legs[k]], Val(CN))
 
 @generated function _load_nonabelian_xarr(::Type{S},
-                                          cgr1::CGR{QD1, NZ, S},
-                                          cgr2::CGR{QD2, NZ, S},
+                                          qlabels1::NTuple{QD1, NTuple{NZ, Int}},
+                                          cgp1::NTuple{QD1, Int},
+                                          legdir1::Tuple{Int, Int},
+                                          qlabels2::NTuple{QD2, NTuple{NZ, Int}},
+                                          cgp2::NTuple{QD2, Int},
+                                          legdir2::Tuple{Int, Int},
                                           legs1::NTuple{CN, Int},
                                           legs2::NTuple{CN, Int}) where {S<:NonabelianSymm, QD1, QD2, NZ, CN}
     branches = Expr[]
     for m1 in 0:QD1
         for m2 in 0:QD2
             push!(branches, quote
-                if cgr1.legdir[1] == $m1 && cgr2.legdir[1] == $m2
-                    up1sp = _cgr_up_qlabels(cgr1, Val($m1))
-                    dn1sp = _cgr_dn_qlabels(cgr1, Val($m1))
-                    up2sp = _cgr_up_qlabels(cgr2, Val($m2))
-                    dn2sp = _cgr_dn_qlabels(cgr2, Val($m2))
-                    ctlegs1 = _stored_contract_legs(cgr1, legs1)
-                    ctlegs2 = _stored_contract_legs(cgr2, legs2)
+                if legdir1[1] == $m1 && legdir2[1] == $m2
+                    up1sp = _cgt_up_qlabels(qlabels1, Val($m1))
+                    dn1sp = _cgt_dn_qlabels(qlabels1, Val($m1))
+                    up2sp = _cgt_up_qlabels(qlabels2, Val($m2))
+                    dn2sp = _cgt_dn_qlabels(qlabels2, Val($m2))
+                    ctlegs1 = _stored_contract_legs(cgp1, legs1)
+                    ctlegs2 = _stored_contract_legs(cgp2, legs2)
                     xsym_obj = getNsave_Xsymbol(S, up1sp, dn1sp, up2sp, dn2sp, ctlegs1, ctlegs2)
                     isnothing(xsym_obj) && return nothing
                     return xsym_obj.xsym_arr::Array{Float64, 3}
@@ -1007,7 +1011,7 @@ end
     end
     return quote
         $(branches...)
-        throw(ArgumentError("invalid CGR leg directions"))
+        throw(ArgumentError("invalid CGT leg directions"))
     end
 end
 
@@ -1039,12 +1043,13 @@ end
                                              legs2::NTuple{CN, Int},
                                              ::Val{n}) where {S<:NonabelianSymm, QT, NF1, NF2, CN, n}
     xkey = _xsym_cache_key(QT, contracted_qlabels, free_qlabels1, free_qlabels2, Val(n))
-    cgr1 = _sector_cgr(q1, i1, n)
-    cgr2 = _sector_cgr(q2, i2, n)
+    qlabels1, cgp1, legdir1 = _sector_cgt_metadata(q1, i1, n)
+    qlabels2, cgp2, legdir2 = _sector_cgt_metadata(q2, i2, n)
     xarr = if haskey(xsym_cache, xkey)
         xsym_cache[xkey]
     else
-        loaded = _load_nonabelian_xarr(S, cgr1, cgr2, legs1, legs2)
+        loaded = _load_nonabelian_xarr(S, qlabels1, cgp1, legdir1,
+                                       qlabels2, cgp2, legdir2, legs1, legs2)
         xsym_cache[xkey] = loaded
         loaded
     end
@@ -1053,17 +1058,17 @@ end
 end
 
 @generated function _contract_wmats(::Type{ProductSymm{Syms}},
-                                    q1::TLArray{T1, QD1, N, RD1, QT, PS, CGRS1},
+                                    q1::TLArray{T1, QD1, N, RD1, QT, PS},
                                     i1::Int,
-                                    q2::TLArray{T2, QD2, N, RD2, QT, PS, CGRS2},
+                                    q2::TLArray{T2, QD2, N, RD2, QT, PS},
                                     i2::Int,
                                     contracted_qlabels::NTuple{CN, QT},
                                     free_qlabels1::NTuple{NF1, QT},
                                     free_qlabels2::NTuple{NF2, QT},
                                     xsym_caches::AbstractVector,
                                     legs1::NTuple{CN, Int},
-                                    legs2::NTuple{CN, Int}) where {Syms, T1, QD1, N, RD1, QT, PS, CGRS1,
-                                                                   T2, QD2, RD2, CGRS2, NF1, NF2, CN}
+                                    legs2::NTuple{CN, Int}) where {Syms, T1, QD1, N, RD1, QT, PS,
+                                                                   T2, QD2, RD2, NF1, NF2, CN}
     stmts = Expr[]
     wnames = Symbol[]
     WMatT = :(LurTensor{Float64, 3, Array{Float64, 3}})
@@ -1099,12 +1104,12 @@ function contract(q1::TLArray, legs1::AbstractVector{<:Integer},
 end
 
 # ── Main entry point ──────────────────────────────────────────────────────────
-function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, CGR1},
+function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS},
                   legs1::NTuple{CN, Int},
-                  q2::TLArray{T2, QD2, N, RD2, QT, PS, CGR2},
+                  q2::TLArray{T2, QD2, N, RD2, QT, PS},
                   legs2::NTuple{CN, Int};
                   reduce_lock::Bool=true,
-                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, CGR1, CGR2, CN}
+                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, CN}
 
     symmetries = product_symms(PS)
 
@@ -1238,19 +1243,18 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, CGR1},
     contract_temp = Vector{promote_type(T1, T2, Float64)}(undef, max_temp_len)
 
     # ── 5. Merge each output sector ──────────────────────────────────────────
-    CGRS_out = cgrstype(PS, Val(QD_out))
     result_qlabel_sectors = Vector{NTuple{QD_out, QT}}()
-    result_wmats = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    result_wmat_buffers = _wmat_buffers(PS)
     result_RMTs = LurTensor{promote_type(T1, T2, Float64), RD_out, Array{promote_type(T1, T2, Float64), RD_out}}[]
     sizehint!(result_qlabel_sectors, res_nsectors)
-    for n in 1:N
-        sizehint!(result_wmats[n], res_nsectors)
+    for slot in eachindex(result_wmat_buffers)
+        sizehint!(result_wmat_buffers[slot], res_nsectors)
     end
     sizehint!(result_RMTs, res_nsectors)
     for (out_key, prepared) in prepared_sectors
         sector_pairs = sector_reps[out_key]
         r1_idx, r2_idx = first(sector_pairs)
-        new_qlabels_per_n = get_new_cgr_metadata(
+        new_qlabels_per_n = get_new_cgt_metadata(
             q1, r1_idx, q2, r2_idx, free1, free2, legs1, legs2)
 
         sz1::NTuple{RD1, Int}, sz2::NTuple{RD2, Int} =
@@ -1269,9 +1273,9 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, CGR1},
             prepared, sector_pairs, permuted_rmts1, permuted_rmts2,
             kept_sizes1, kept_sizes2, contract_temp, Val(RD_out))
         push!(result_qlabel_sectors,
-              _physical_qlabels_from_cgr_metadata(QT, new_qlabels_per_n, Val(QD_out), Val(N)))
+              _physical_qlabels_from_cgt_metadata(QT, new_qlabels_per_n, Val(QD_out), Val(N)))
         for n in 1:N
-            push!(result_wmats[n], U_mats[n])
+            _push_wmat!(result_wmat_buffers, PS, n, U_mats[n])
         end
         push!(result_RMTs, result_RMT)
     end
@@ -1293,11 +1297,12 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, CGR1},
     spaces_out = (ntuple(i -> q1.spaces[free1[i]], Val(QD1 - CN))...,
                   ntuple(i -> q2.spaces[free2[i]], Val(QD2 - CN))...)
 
-    result_qlabels = Matrix{QT}(undef, length(result_qlabel_sectors), QD_out)
+    result_qlabels = Matrix{QT}(undef, QD_out, length(result_qlabel_sectors))
     for sector_index in eachindex(result_qlabel_sectors), leg in 1:QD_out
-        result_qlabels[sector_index, leg] = result_qlabel_sectors[sector_index][leg]
+        result_qlabels[leg, sector_index] = result_qlabel_sectors[sector_index][leg]
     end
 
+    result_wmats = _wmat_matrix_from_buffers(PS, result_wmat_buffers, length(result_RMTs))
     return _field_tlarray(symmetries, result_qlabels, result_wmats, result_RMTs,
-                          final_inds, spaces_out)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS, CGRS_out}
+                          final_inds, spaces_out)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS}
 end

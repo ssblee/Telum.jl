@@ -43,9 +43,12 @@
 _svd_sector_qlabels(q::TLArray, sector_index::Int, N::Int) =
     Tuple(sector_qlabel(q, sector_index, 1)[n] for n in 1:N)
 
-@inline function _svd_physical_qlabels(::Type{QT}, cgrs::NTuple{N, CGR{QD}}) where {QT, N, QD}
+@inline function _svd_physical_qlabels(::Type{QT},
+                                       qlabels_by_symm::NTuple{N},
+                                       cgp_by_symm::NTuple{N},
+                                       ::Val{QD}) where {QT, N, QD}
     return ntuple(Val(QD)) do leg
-        ntuple(n -> cgrs[n].qlabels[cgrs[n].cgp[leg]], Val(N))::QT
+        ntuple(n -> qlabels_by_symm[n][cgp_by_symm[n][leg]], Val(N))::QT
     end
 end
 
@@ -55,7 +58,7 @@ _svd_stable_sort_tuple(spaces) = Tuple(sort!(collect(spaces); alg=MergeSort))
 
 _is_zero_array(arr::AbstractArray) = all(iszero, arr)
 
-struct _ReducedSVDCGRBlock{NZ}
+struct _ReducedSVDCGTBlock{NZ}
     sector_index::Int
     left_spaces::Tuple{Tuple{Vararg{NTuple{NZ, Int}}}, Tuple{Vararg{NTuple{NZ, Int}}}}
     right_spaces::Tuple{Tuple{Vararg{NTuple{NZ, Int}}}, Tuple{Vararg{NTuple{NZ, Int}}}}
@@ -65,52 +68,52 @@ struct _ReducedSVDCGRBlock{NZ}
     core::Array{Float64, 3}
 end
 
-function _svd_cgr_updn(cgr::CGR{QD}) where {QD}
-    nin = cgr.legdir[1]
-    upsp = Tuple(cgr.qlabels[i] for i in 1:nin)
-    dnsp = Tuple(cgr.qlabels[i] for i in nin+1:QD)
+function _svd_cgt_updn(qlabels::NTuple{QD}, legdir::Tuple{Int, Int}) where {QD}
+    nin = legdir[1]
+    upsp = Tuple(qlabels[i] for i in 1:nin)
+    dnsp = Tuple(qlabels[i] for i in nin+1:QD)
     return upsp, dnsp
 end
 
-function _svd_to_cgridx(cgr::CGR, lidxs)
-    return Tuple(Int[cgr.cgp[l] for l in lidxs])
+function _svd_to_cgtidx(cgp::NTuple{QD, Int}, lidxs) where {QD}
+    return Tuple(Int[cgp[l] for l in lidxs])
 end
 
-_svd_cgr_leftlegs(cgr::CGR, left_legs) = _svd_to_cgridx(cgr, left_legs)
+_svd_cgt_leftlegs(cgp::NTuple{QD, Int}, left_legs) where {QD} = _svd_to_cgtidx(cgp, left_legs)
 
-function _svd_abelian_intermediate_q(cgr::CGR{QD}, left_legs_canon) where {QD}
-    S = symm(cgr)
-    nin = cgr.legdir[1]
+function _svd_abelian_intermediate_q(S, qlabels::NTuple{QD}, legdir::Tuple{Int, Int}, left_legs_canon) where {QD}
+    nin = legdir[1]
     leftset = Set(left_legs_canon)
 
     merged = _svd_stable_sort_tuple((
-        Tuple(cgr.qlabels[i] for i in 1:nin if i in leftset)...,
-        Tuple(get_dualq(S, cgr.qlabels[i]) for i in nin+1:QD if i in leftset)...,
+        Tuple(qlabels[i] for i in 1:nin if i in leftset)...,
+        Tuple(get_dualq(S, qlabels[i]) for i in nin+1:QD if i in leftset)...,
     ))
     outcomes = combine_qlabels(S, merged)
     @assert length(outcomes) == 1
     return outcomes[1][1]
 end
 
-function _svd_cgr_split_spaces(cgr::CGR{QD}, 
-    left_legs_canon, 
+function _svd_cgt_split_spaces(qlabels::NTuple{QD},
+    legdir::Tuple{Int, Int},
+    left_legs_canon,
     right_legs_canon) where {QD}
 
-    nin = cgr.legdir[1]
-    QLabel = eltype(cgr.qlabels)
+    nin = legdir[1]
+    QLabel = eltype(qlabels)
     left_up = QLabel[]
     left_dn = QLabel[]
     right_up = QLabel[]
     right_dn = QLabel[]
 
     for l in left_legs_canon
-        if l <= nin push!(left_up, cgr.qlabels[l])
-        else push!(left_dn, cgr.qlabels[l]) end
+        if l <= nin push!(left_up, qlabels[l])
+        else push!(left_dn, qlabels[l]) end
     end
 
     for l in right_legs_canon
-        if l <= nin push!(right_up, cgr.qlabels[l])
-        else push!(right_dn, cgr.qlabels[l]) end
+        if l <= nin push!(right_up, qlabels[l])
+        else push!(right_dn, qlabels[l]) end
     end
 
     left_spaces = (Tuple(left_up), Tuple(left_dn))
@@ -118,32 +121,35 @@ function _svd_cgr_split_spaces(cgr::CGR{QD},
     return left_spaces, right_spaces
 end
 
-function _svd_cgr_split_spaces(cgr::CGR{QD}, left_legs_canon) where {QD}
+function _svd_cgt_split_spaces(qlabels::NTuple{QD}, cgp::NTuple{QD, Int},
+                               legdir::Tuple{Int, Int}, left_legs_canon) where {QD}
     leftset = Set(left_legs_canon)
-    right_legs_canon = Tuple(cgr.cgp[l] for l in 1:QD if cgr.cgp[l] ∉ leftset)
-    return _svd_cgr_split_spaces(cgr, left_legs_canon, right_legs_canon)
+    right_legs_canon = Tuple(cgp[l] for l in 1:QD if cgp[l] ∉ leftset)
+    return _svd_cgt_split_spaces(qlabels, legdir, left_legs_canon, right_legs_canon)
 end
 
-function _get_svd_cgr_split_blocks(cgr::CGR{QD}, left_legs, right_legs) where {QD}
-    left_legs_canon = _svd_to_cgridx(cgr, left_legs)
-    right_legs_canon = _svd_to_cgridx(cgr, right_legs)
-    NZ = length(cgr.qlabels[1])
+function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::LurTensor{Float64, 2},
+                                   cgp::NTuple{QD, Int}, legdir::Tuple{Int, Int},
+                                   left_legs, right_legs) where {QD}
+    left_legs_canon = _svd_to_cgtidx(cgp, left_legs)
+    right_legs_canon = _svd_to_cgtidx(cgp, right_legs)
+    NZ = length(qlabels[1])
     BlockInfo = NamedTuple{(:q, :omL, :omR, :coeffs),
         Tuple{NTuple{NZ, Int}, Int, Int, Array{Float64, 3}}}
 
-    if isabelian(symm(cgr))
-        q = _svd_abelian_intermediate_q(cgr, left_legs_canon)
-        coeffs = reshape(copy(cgr.wmat.data), 1, 1, size(cgr.wmat.data, 2))
+    if isabelian(S)
+        q = _svd_abelian_intermediate_q(S, qlabels, legdir, left_legs_canon)
+        coeffs = reshape(copy(wmat.data), 1, 1, size(wmat.data, 2))
         _is_zero_array(coeffs) && return BlockInfo[]
         return [BlockInfo((q=q, omL=1, omR=1, coeffs=coeffs))]
     end
 
-    upsp, dnsp = _svd_cgr_updn(cgr)
-    cgtsvd = getNsave_CGTSVD(symm(cgr), upsp, dnsp, left_legs_canon; save=true)
+    upsp, dnsp = _svd_cgt_updn(qlabels, legdir)
+    cgtsvd = getNsave_CGTSVD(S, upsp, dnsp, left_legs_canon; save=true)
 
     blocks = BlockInfo[]
     if cgtsvd isa LurCGT.CGTSVD
-        coeff_split = cgtsvd.svd_arr * cgr.wmat.data
+        coeff_split = cgtsvd.svd_arr * wmat.data
         offset = 1
         for (q, omL, omR) in cgtsvd.bond_sps
             width = omL * omR
@@ -153,22 +159,24 @@ function _get_svd_cgr_split_blocks(cgr::CGR{QD}, left_legs, right_legs) where {Q
         end
         @assert offset == size(coeff_split, 1) + 1
     else
-        q = zero_qlabels((symm(cgr),))[1]
-        om = size(cgr.wmat.data, 1)
+        q = zero_qlabels((S,))[1]
+        om = size(wmat.data, 1)
         omL, omR = cgtsvd ? (1, om) : (om, 1)
-        coeffs = reshape(cgr.wmat.data, omL, omR, size(cgr.wmat.data, 2))
+        coeffs = reshape(wmat.data, omL, omR, size(wmat.data, 2))
         push!(blocks, BlockInfo((q=q, omL=omL, omR=omR, coeffs=coeffs)))
     end
     return blocks
 end
 
-function _get_svd_cgr_split_blocks(cgr::CGR{QD}, left_legs) where {QD}
+function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::LurTensor{Float64, 2},
+                                   cgp::NTuple{QD, Int}, legdir::Tuple{Int, Int},
+                                   left_legs) where {QD}
     leftset = Set(left_legs)
     right_legs = Tuple(l for l in 1:QD if l ∉ leftset)
-    return _get_svd_cgr_split_blocks(cgr, left_legs, right_legs)
+    return _get_svd_cgt_split_blocks(S, qlabels, wmat, cgp, legdir, left_legs, right_legs)
 end
 
-function _reduce_svd_cgr_block(block,
+function _reduce_svd_cgt_block(block,
                                sector_index::Int,
                                left_spaces,
                                right_spaces;
@@ -180,11 +188,11 @@ function _reduce_svd_cgr_block(block,
     right_iso, core, _ = svd_leg(left_reduced, 2; cutoff=tol)
     size(right_iso, 2) == 0 && return nothing
 
-    return _ReducedSVDCGRBlock{length(block.q)}(
+    return _ReducedSVDCGTBlock{length(block.q)}(
         sector_index, left_spaces, right_spaces, block.q, left_iso, right_iso, core)
 end
 
-function _reconstruct_reduced_svd_cgr_block(block::_ReducedSVDCGRBlock)
+function _reconstruct_reduced_svd_cgt_block(block::_ReducedSVDCGTBlock)
     omLr, omRr, omM = size(block.core)
     left_applied = reshape(
         block.left_iso * reshape(block.core, omLr, :),
@@ -286,7 +294,7 @@ function _qr_shared_isometry(tensors::Vector{LurTensor{Float64, 3, AW}}; tol::Fl
     return Q, factors
 end
 
-function _share_svd_sector_side_isometries!(blocks::Vector{<:_ReducedSVDCGRBlock},
+function _share_svd_sector_side_isometries!(blocks::Vector{<:_ReducedSVDCGTBlock},
                                          side::Symbol;
                                          tol::Float64 = 1e-12)
     isempty(blocks) && return blocks
@@ -317,12 +325,12 @@ function _share_svd_sector_side_isometries!(blocks::Vector{<:_ReducedSVDCGRBlock
                 block = blocks[i]
                 if side === :left
                     new_core = _contract_om_axis(LurTensor(block.core), factor, 1)
-                    blocks[i] = _ReducedSVDCGRBlock{length(block.q)}(
+                    blocks[i] = _ReducedSVDCGTBlock{length(block.q)}(
                         block.sector_index, block.left_spaces, block.right_spaces,
                         block.q, common_iso, block.right_iso, new_core)
                 else
                     new_core = _contract_om_axis(LurTensor(block.core), factor, 2)
-                    blocks[i] = _ReducedSVDCGRBlock{length(block.q)}(
+                    blocks[i] = _ReducedSVDCGTBlock{length(block.q)}(
                         block.sector_index, block.left_spaces, block.right_spaces,
                         block.q, block.left_iso, common_iso, new_core)
                 end
@@ -387,10 +395,10 @@ function _get_svd_sector_spaces(q::TLArray{T, QD, N, RD},
     right_legs) where {T, QD, N, RD}
     sector_spaces = [begin
         split_spaces = ntuple(N) do n
-            cgr = _sector_cgr(q, sector_index, n)
-            left_legs_canon = _svd_to_cgridx(cgr, left_legs)
-            right_legs_canon = _svd_to_cgridx(cgr, right_legs)
-            _svd_cgr_split_spaces(cgr, left_legs_canon, right_legs_canon)
+            qlabels, cgp, legdir = _sector_cgt_metadata(q, sector_index, n)
+            left_legs_canon = _svd_to_cgtidx(cgp, left_legs)
+            right_legs_canon = _svd_to_cgtidx(cgp, right_legs)
+            _svd_cgt_split_spaces(qlabels, legdir, left_legs_canon, right_legs_canon)
         end
         (ntuple(n -> split_spaces[n][1], N), ntuple(n -> split_spaces[n][2], N))
     end for sector_index in 1:nsectors(q)]
@@ -480,17 +488,18 @@ function _get_svd_sector_split_blocks(q::TLArray{T, QD, N, RD},
                                    right_legs;
                                    tol::Float64 = 1e-12) where {T, QD, N, RD}
     split_spaces = ntuple(N) do n
-        cgr = _sector_cgr(q, sector_index, n)
-        left_legs_canon = _svd_to_cgridx(cgr, left_legs)
-        right_legs_canon = _svd_to_cgridx(cgr, right_legs)
-        _svd_cgr_split_spaces(cgr, left_legs_canon, right_legs_canon)
+        qlabels, cgp, legdir = _sector_cgt_metadata(q, sector_index, n)
+        left_legs_canon = _svd_to_cgtidx(cgp, left_legs)
+        right_legs_canon = _svd_to_cgtidx(cgp, right_legs)
+        _svd_cgt_split_spaces(qlabels, legdir, left_legs_canon, right_legs_canon)
     end
     symm_blocks = ntuple(N) do n
-        cgr = _sector_cgr(q, sector_index, n)
+        qlabels, cgp, legdir = _sector_cgt_metadata(q, sector_index, n)
         left_spaces_n, right_spaces_n = split_spaces[n]
-        reduced = Vector{_ReducedSVDCGRBlock{nzops(cgr.symm)}}()
-        for block in _get_svd_cgr_split_blocks(cgr, left_legs, right_legs)
-            reduced_block = _reduce_svd_cgr_block(
+        reduced = Vector{_ReducedSVDCGTBlock{nzops(symm(q)[n])}}()
+        for block in _get_svd_cgt_split_blocks(symm(q)[n], qlabels, sector_wmat(q, sector_index, n),
+                                               cgp, legdir, left_legs, right_legs)
+            reduced_block = _reduce_svd_cgt_block(
                 block, sector_index, left_spaces_n, right_spaces_n; tol=tol)
             isnothing(reduced_block) || push!(reduced, reduced_block)
         end
@@ -504,7 +513,7 @@ function _get_svd_cgt_split_sectors(q::TLArray{T, QD, N, RD},
                                  left_legs,
                                  right_legs;
                                  tol::Float64 = 1e-12) where {T, QD, N, RD}
-    blocks_by_symm = ntuple(n -> Vector{_ReducedSVDCGRBlock{nzops(symm(q)[n])}}(), N)
+    blocks_by_symm = ntuple(n -> Vector{_ReducedSVDCGTBlock{nzops(symm(q)[n])}}(), N)
     for ri in 1:nsectors(q)
         sector_blocks = _get_svd_sector_split_blocks(q, ri, left_legs, right_legs; tol=tol)
         isnothing(sector_blocks) && continue
@@ -638,28 +647,29 @@ function _svd_class_side_infos(q::TLArray{T, QD, N, RD},
     return infos, ranges, offset
 end
 
-function _svd_build_side_cgr(symm,
-                             source_cgr::CGR,
-                             phys_legs::NTuple{L, Int},
-                             bond_q,
-                             bond_first::Bool,
-                             wmat::LurTensor{Float64, 2}) where {L}
-    stored_phys = sort!([(source_cgr.cgp[leg], leg) for leg in phys_legs]; by = first, alg=MergeSort)
-    nin = source_cgr.legdir[1]
+function _svd_build_side_cgt_metadata(source_qlabels::NTuple{QD},
+                                      source_cgp::NTuple{QD, Int},
+                                      source_legdir::Tuple{Int, Int},
+                                      phys_legs::NTuple{L, Int},
+                                      bond_q,
+                                      bond_first::Bool,
+                                      wmat::LurTensor{Float64, 2}) where {QD, L}
+    stored_phys = sort!([(source_cgp[leg], leg) for leg in phys_legs]; by = first, alg=MergeSort)
+    nin = source_legdir[1]
 
     Entry = Tuple{typeof(bond_q), Int}
     incoming = Entry[]
     outgoing = Entry[]
     if bond_first push!(outgoing, (bond_q, 0)) end
     for (stored_pos, leg) in stored_phys
-        entry = (source_cgr.qlabels[stored_pos], leg)
+        entry = (source_qlabels[stored_pos], leg)
         if stored_pos <= nin
             push!(incoming, entry)
         else
             push!(outgoing, entry)
         end
     end
-    if !bond_first push!(outgoing, (bond_q, length(source_cgr.qlabels)+1)) end
+    if !bond_first push!(outgoing, (bond_q, length(source_qlabels)+1)) end
     sort!(outgoing; by = first, alg=MergeSort)
 
     incoming_qlabels = Tuple(entry[1] for entry in incoming)
@@ -672,11 +682,11 @@ function _svd_build_side_cgr(symm,
         source_to_stored[source] = stored_pos
     end
 
-    final_sources = bond_first ? (0, phys_legs...) : (phys_legs..., length(source_cgr.qlabels)+1)
+    final_sources = bond_first ? (0, phys_legs...) : (phys_legs..., length(source_qlabels)+1)
     @assert issorted(final_sources)
     final_cgp = Tuple(source_to_stored[source] for source in final_sources)
 
-    return CGR(symm, qlabels, wmat, final_cgp, legdir)
+    return (qlabels = qlabels, wmat = wmat, cgp = final_cgp, legdir = legdir)
 end
 
 function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD},
@@ -817,10 +827,11 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
 
     Tout = promote_type(T, Float64)
     QT = qlabeltype(q)
+    PS = productsymm(q)
     qlabels_U = NTuple{NL + 1, QT}[]
     qlabels_Vd = NTuple{NR + 1, QT}[]
-    wmats_U = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
-    wmats_Vd = ntuple(_ -> LurTensor{Float64, 2, Matrix{Float64}}[], Val(N))
+    wmat_buffers_U = _wmat_buffers(PS)
+    wmat_buffers_Vd = _wmat_buffers(PS)
     RMTs_U = LurTensor{Tout, NL + 1 + N, Array{Tout, NL + 1 + N}}[]
     RMTs_Vd = LurTensor{Tout, NR + 1 + N, Array{Tout, NR + 1 + N}}[]
 
@@ -853,19 +864,20 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
             data = permutedims(tmp, perm)
             rmt_U = LurTensor(data)
 
-            cgrs_U = ntuple(N) do n
-                _svd_build_side_cgr(
-                    symm(q)[n],
-                    _sector_cgr(q, info.sector_index, n),
-                    left_legs,
-                    sector[n],
-                    false,
-                    LurTensor(copy(sector_blocks[n].left_iso)),
-                )
+            cgts_U = ntuple(N) do n
+                source_qlabels, source_cgp, source_legdir =
+                    _sector_cgt_metadata(q, info.sector_index, n)
+                _svd_build_side_cgt_metadata(
+                    source_qlabels, source_cgp, source_legdir, left_legs,
+                    sector[n], false, LurTensor(copy(sector_blocks[n].left_iso)))
             end
-            push!(qlabels_U, _svd_physical_qlabels(QT, cgrs_U))
+            push!(qlabels_U,
+                  _svd_physical_qlabels(QT,
+                                         ntuple(n -> cgts_U[n].qlabels, Val(N)),
+                                         ntuple(n -> cgts_U[n].cgp, Val(N)),
+                                         Val(NL + 1)))
             for n in 1:N
-                push!(wmats_U[n], cgrs_U[n].wmat)
+                _push_wmat!(wmat_buffers_U, PS, n, cgts_U[n].wmat)
             end
             push!(RMTs_U, rmt_U)
         end
@@ -877,19 +889,20 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
             full[class_range, :] = part
             rmt_Vd = LurTensor(reshape(full, sector_count, info.phys_dims..., info.om_dims...))
 
-            cgrs_Vd = ntuple(N) do n
-                _svd_build_side_cgr(
-                    symm(q)[n],
-                    _sector_cgr(q, info.sector_index, n),
-                    right_legs,
-                    dual_sector[n],
-                    true,
-                    LurTensor(copy(sector_blocks[n].right_iso)),
-                )
+            cgts_Vd = ntuple(N) do n
+                source_qlabels, source_cgp, source_legdir =
+                    _sector_cgt_metadata(q, info.sector_index, n)
+                _svd_build_side_cgt_metadata(
+                    source_qlabels, source_cgp, source_legdir, right_legs,
+                    dual_sector[n], true, LurTensor(copy(sector_blocks[n].right_iso)))
             end
-            push!(qlabels_Vd, _svd_physical_qlabels(QT, cgrs_Vd))
+            push!(qlabels_Vd,
+                  _svd_physical_qlabels(QT,
+                                         ntuple(n -> cgts_Vd[n].qlabels, Val(N)),
+                                         ntuple(n -> cgts_Vd[n].cgp, Val(N)),
+                                         Val(NR + 1)))
             for n in 1:N
-                push!(wmats_Vd[n], cgrs_Vd[n].wmat)
+                _push_wmat!(wmat_buffers_Vd, PS, n, cgts_Vd[n].wmat)
             end
             push!(RMTs_Vd, rmt_Vd)
         end
@@ -909,15 +922,17 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
     spaces_U = (ntuple(i -> q.spaces[left_legs[i]], NL)..., bond_splist)
     spaces_Vd = (dual_bond_splist, ntuple(i -> q.spaces[right_legs[i]], NR)...)
 
-    U_qlabels = Matrix{QT}(undef, length(qlabels_U), NL + 1)
+    U_qlabels = Matrix{QT}(undef, NL + 1, length(qlabels_U))
     for sector_index in eachindex(qlabels_U), leg in 1:(NL + 1)
-        U_qlabels[sector_index, leg] = qlabels_U[sector_index][leg]
+        U_qlabels[leg, sector_index] = qlabels_U[sector_index][leg]
     end
-    Vd_qlabels = Matrix{QT}(undef, length(qlabels_Vd), NR + 1)
+    Vd_qlabels = Matrix{QT}(undef, NR + 1, length(qlabels_Vd))
     for sector_index in eachindex(qlabels_Vd), leg in 1:(NR + 1)
-        Vd_qlabels[sector_index, leg] = qlabels_Vd[sector_index][leg]
+        Vd_qlabels[leg, sector_index] = qlabels_Vd[sector_index][leg]
     end
 
+    wmats_U = _wmat_matrix_from_buffers(PS, wmat_buffers_U, length(RMTs_U))
+    wmats_Vd = _wmat_matrix_from_buffers(PS, wmat_buffers_Vd, length(RMTs_Vd))
     U = _field_tlarray(symm(q), U_qlabels, wmats_U, RMTs_U, inds_U, spaces_U)
     S = _build_svd_cgtsvd_S(symm(q), bond_splist, left_tag, right_tag, sector_values)
     Vd = _field_tlarray(symm(q), Vd_qlabels, wmats_Vd, RMTs_Vd, inds_Vd, spaces_Vd)

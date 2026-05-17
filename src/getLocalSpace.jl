@@ -241,7 +241,7 @@ function getLocalSpace(opts::LocalSpaceOptions,
             spaces = (local_splist, local_splist, third_splist)
         end
         
-        fields = _localspace_cgr_fields(reduced, symm, spaces)
+        fields = _localspace_cgt_fields(reduced, symm, spaces)
         q = TLArray(symm, fields.qlabels, fields.wmats, fields.RMTs, inds[1:qd], spaces)
         Telum[name] = q
     end
