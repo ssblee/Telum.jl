@@ -13,16 +13,18 @@ end
     q0 = getLocalSpace(option)
     q = TLArray(q0.F, ("site1", "site2", "op"))
 
-    rows_neg = deepcopy(q.rows)
-    for r in rows_neg
-        r.cgrs[1].wmat[:] .*= -1
+    wmats_neg = deepcopy(q.wmats)
+    for sector_index in eachindex(wmats_neg)
+        wmats_neg[sector_index][1][:] .*= -1
     end
 
-    q_oriented = TLArray(symm(q), rows_neg, q.inds, q.spaces)
+    q_oriented = Telum.TLArray(symm(q), copy(q.qlabels), wmats_neg,
+                                      deepcopy(q.RMTs), q.inds, q.spaces)
     arr_ref = -Array(to_sparse_array(q))
     arr_oriented = Array(to_sparse_array(q_oriented))
 
-    @test all(r.cgrs[1].wmat[1] >= 0 for r in q_oriented.rows)
+    @test all(q_oriented.wmats[sector_index][1][1] >= 0
+              for sector_index in 1:Telum.nsectors(q_oriented))
     @test norm(arr_oriented - arr_ref) < 1e-10
 end
 
@@ -173,7 +175,7 @@ end
 
         @test filled isa Matrix{TLArray}
         @test filled[2, 1].inds == q4.inds
-        @test isempty(filled[2, 1].rows)
+        @test Telum.nsectors(filled[2, 1]) == 0
         @test filled[2, 1].spaces[1] == q4.spaces[1]
         @test filled[2, 1].spaces[2] == q4.spaces[2]
         @test filled[2, 1].spaces[3] == q4.spaces[3]

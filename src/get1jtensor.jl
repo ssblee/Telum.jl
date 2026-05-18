@@ -45,7 +45,7 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
 
     nr = length(info.splist)
     qlabels1 = Matrix{QT}(undef, 2, nr)
-    wmats1 = _wmat_matrix(PS, nr)
+    wmats1 = _wmat_vector(PS, nr)
     RMTs1 = Vector{LurTensor{Float64, 2 + N, Array{Float64, 2 + N}}}(undef, nr)
 
     for (sector_index, (qlabels, RMTd)) in enumerate(info.splist)
@@ -68,7 +68,7 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
                            for (qlabels, RMTd) in info.splist], by=x->x[1])
     spaces1 = (info.splist, dual_splist)
 
-    q1 = _field_tlarray(symm, qlabels1, wmats1, RMTs1, inds1, spaces1)
+    q1 = TLArray(symm, qlabels1, wmats1, RMTs1, inds1, spaces1)
     return q1
 end
 

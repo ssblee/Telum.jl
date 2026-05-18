@@ -39,7 +39,7 @@ end
 
 function _permuted_sector_wmat(symm_type,
                                qlabels::NTuple{QD, NTuple{NZ, Int}},
-                               wmat::LurTensor{Float64, 2},
+                               wmat::AbstractMatrix{Float64},
                                cgp::NTuple{QD, Int},
                                legdir::Tuple{Int, Int},
                                perm::NTuple{QD, Int}) where {QD, NZ}
@@ -65,7 +65,7 @@ function _permuted_sector_wmat(symm_type,
     end
     
     # Apply CGTperm. CGTperm transforms from old OM basis to new OM basis
-    return LurTensor(cgtperm_obj.perm_arr * wmat.data)
+    return cgtperm_obj.perm_arr * wmat
 end
 
 function _permute_sector_wmat(q::TLArray{T, QD, N, RD}, sector_index::Int,
@@ -82,7 +82,7 @@ function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
 end
 
 function _permute_sector_wmats(q::TLArray{T, QD, N}, perm::NTuple{QD, Int}, symm) where {T, QD, N}
-    out = _wmat_matrix(productsymm(q), nsectors(q))
+    out = _wmat_vector(productsymm(q), nsectors(q))
     for n in 1:N
         for sector_index in 1:nsectors(q)
             _set_sector_wmat!(out, productsymm(q), sector_index, n,
@@ -130,5 +130,5 @@ function Base.permutedims(q::TLArray{T, QD, N, RD}, perm) where {T, QD, N, RD}
     new_RMTs = _permute_sector_rmts(q, perm)
     
     # 5. Assemble and return new TLArray with precomputed spaces
-    return _field_tlarray(symm(q), new_qlabels, new_wmats, new_RMTs, new_inds, new_spaces)
+    return TLArray(symm(q), new_qlabels, new_wmats, new_RMTs, new_inds, new_spaces)
 end

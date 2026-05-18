@@ -863,13 +863,12 @@ end
 # Algorithm sketch:
 #   1. Build sorted sector-info vectors for each TLArray. Each entry carries the
 #      sector index, all physical-leg qlabels, and the contracted-qlabel key.
-#   2. Two-pointer scan over both sorted vectors and process common sectors:
-#      a) Contract w-matrices / X-symbols for each compatible sector pair.
-#      b) Store the source RMT pair and fixed layout permutation without
-#         materializing the pairwise contracted RMT.
-#      c) Accumulate pending contributions per output free-sector.
-#   3. Merge each output sector (QR compression → final RMT contraction).
-#   4. Lock reduction / build result TLArray.
+#   2. Count matching contracted-label runs, fill one possible-pair table, and
+#      sort it in-place by output free qlabels to form output-sector intervals.
+#   3. Build concrete X-symbol caches and reject impossible output sectors by
+#      swap-and-pop while collecting w-matrices and source RMT pairs.
+#   4. Merge each output sector (QR compression → final RMT contraction).
+#   5. Lock reduction / build result TLArray.
 
 # ── Contracted-label helpers ─────────────────────────────────────────────────
 function _free_legs(::Val{QD}, legs::NTuple{CN, Int}) where {QD, CN}
@@ -919,6 +918,117 @@ function _contracted_qlabel_run(infos::AbstractVector{<:ContractSectorInfo{NF, Q
     return key, first_pos:(next_pos - 1), next_pos
 end
 
+function _contracted_qlabel_overlaps(infos1::AbstractVector{ContractSectorInfo{NF1, QT, CQT}},
+                                     infos2::AbstractVector{ContractSectorInfo{NF2, QT, CQT}}) where {NF1, NF2, QT, CQT}
+    OverlapT = Tuple{CQT, UnitRange{Int}, UnitRange{Int}}
+    overlaps = Vector{OverlapT}()
+    sizehint!(overlaps, min(length(infos1), length(infos2)))
+    total = 0
+    pos1 = firstindex(infos1)
+    pos2 = firstindex(infos2)
+    while pos1 <= lastindex(infos1) && pos2 <= lastindex(infos2)
+        ckey1 = infos1[pos1].contracted_qlabels
+        ckey2 = infos2[pos2].contracted_qlabels
+
+        if isless(ckey1, ckey2)
+            _, _, pos1 = _contracted_qlabel_run(infos1, pos1)
+        elseif isless(ckey2, ckey1)
+            _, _, pos2 = _contracted_qlabel_run(infos2, pos2)
+        else
+            _, run1, next_pos1 = _contracted_qlabel_run(infos1, pos1)
+            _, run2, next_pos2 = _contracted_qlabel_run(infos2, pos2)
+            push!(overlaps, (ckey1, run1, run2))
+            total += length(run1) * length(run2)
+            pos1 = next_pos1
+            pos2 = next_pos2
+        end
+    end
+    return overlaps, total
+end
+
+function _fill_possible_pairs!(pairs::Vector{PairT},
+                               infos1::AbstractVector{<:ContractSectorInfo},
+                               infos2::AbstractVector{<:ContractSectorInfo},
+                               overlaps::AbstractVector{<:Tuple{CQT, UnitRange{Int}, UnitRange{Int}}}) where {PairT, CQT}
+    out_pos = 1
+    for (ckey, run1, run2) in overlaps
+        for p1 in run1
+            info1 = infos1[p1]
+            for p2 in run2
+                info2 = infos2[p2]
+                pairs[out_pos] = (ckey, (info1.free_qlabels, info2.free_qlabels),
+                                  info1.sector_index, info2.sector_index)::PairT
+                out_pos += 1
+            end
+        end
+    end
+    @assert out_pos == length(pairs) + 1
+    return pairs
+end
+
+function _possible_pair_table(infos1::AbstractVector{ContractSectorInfo{NF1, QT, CQT}},
+                              infos2::AbstractVector{ContractSectorInfo{NF2, QT, CQT}}) where {NF1, NF2, QT, CQT}
+    FreeKey1 = NTuple{NF1, QT}
+    FreeKey2 = NTuple{NF2, QT}
+    OutKey = Tuple{FreeKey1, FreeKey2}
+    PairT = Tuple{CQT, OutKey, Int, Int}
+    overlaps, n_possible = _contracted_qlabel_overlaps(infos1, infos2)
+    pairs = Vector{PairT}(undef, n_possible)
+    _fill_possible_pairs!(pairs, infos1, infos2, overlaps)
+    return sort!(pairs; by = p -> p[2], alg = MergeSort)
+end
+
+function _out_key_intervals(pairs::AbstractVector{Tuple{CQT, OutKey, Int, Int}}) where {CQT, OutKey}
+    nout = 0
+    pos = firstindex(pairs)
+    while pos <= lastindex(pairs)
+        key = pairs[pos][2]
+        nout += 1
+        next_pos = pos + 1
+        while next_pos <= lastindex(pairs) && pairs[next_pos][2] == key
+            next_pos += 1
+        end
+        pos = next_pos
+    end
+
+    out_keys = Vector{OutKey}(undef, nout)
+    intervals = Vector{UnitRange{Int}}(undef, nout)
+    out_pos = 1
+    pos = firstindex(pairs)
+    while pos <= lastindex(pairs)
+        key = pairs[pos][2]
+        next_pos = pos + 1
+        while next_pos <= lastindex(pairs) && pairs[next_pos][2] == key
+            next_pos += 1
+        end
+        out_keys[out_pos] = key
+        intervals[out_pos] = pos:(next_pos - 1)
+        out_pos += 1
+        pos = next_pos
+    end
+
+    return out_keys, intervals
+end
+
+function _out_key_qlabels(out_key::Tuple{NTuple{NF1, QT}, NTuple{NF2, QT}},
+                          ::Val{QD_out}) where {NF1, NF2, QT, QD_out}
+    return ntuple(Val(QD_out)) do leg
+        leg <= NF1 ? out_key[1][leg] : out_key[2][leg - NF1]
+    end
+end
+
+function _sector_pairs_from_interval(pairs::AbstractVector,
+                                     interval::UnitRange{Int})
+    sector_pairs = Vector{Tuple{Int, Int}}(undef, length(interval))
+    out_pos = 1
+    for pair_pos in interval
+        pair = pairs[pair_pos]
+        sector_pairs[out_pos] = (pair[3], pair[4])
+        out_pos += 1
+    end
+    return sector_pairs
+end
+
 function _contract_xsym_wmat(wm1::AbstractMatrix{T1},
                              xarr::AbstractArray{T2, 3},
                              wm2::AbstractMatrix{T3}) where {T1, T2, T3}
@@ -938,29 +1048,124 @@ function _contract_xsym_wmat(wm1::AbstractMatrix{T1},
     return LurTensor(result)
 end
 
+function _fill_contract_wmat_concat!(concat::Matrix{Float64},
+                                     xarr::AbstractArray{Float64, 3},
+                                     wm1::AbstractMatrix,
+                                     wm2::AbstractMatrix,
+                                     col_offset::Int)
+    OM1, OM2, OM3 = size(xarr)
+    size(wm1, 1) == OM1 ||
+        throw(DimensionMismatch("wm1 first axis must match x-symbol OM1 axis"))
+    size(wm2, 1) == OM2 ||
+        throw(DimensionMismatch("wm2 first axis must match x-symbol OM2 axis"))
+
+    d1 = size(wm1, 2)
+    d2 = size(wm2, 2)
+    @inbounds for c in 1:d2, b in 1:d1, a in 1:OM3
+        val = 0.0
+        for cc in 1:OM2, bb in 1:OM1
+            val += xarr[bb, cc, a] * wm1[bb, b] * wm2[cc, c]
+        end
+        concat[a, col_offset + b + (c - 1) * d1] = val
+    end
+    return concat
+end
+
 @inline _symmetry_qlabels(qlabels::NTuple{NF, QT}, ::Val{n}) where {NF, QT, n} =
     ntuple(k -> qlabels[k][n], Val(NF))
 
 @inline _symmetry_contracted_qlabel(qlabels::NTuple{CN, QT}, ::Val{n}, ::Val{CN}) where {CN, QT, n} =
     ntuple(k -> qlabels[k][n], Val(CN))
 
-const _XSymCache = Dict{Any, Union{Nothing, Array{Float64, 3}}}
+_xsym_cache_key_type(::Type{QT}, ::Val{n}, ::Val{NF1}, ::Val{NF2}, ::Val{CN}) where {QT, n, NF1, NF2, CN} =
+    Tuple{NTuple{CN, fieldtype(QT, n)},
+          NTuple{NF1, fieldtype(QT, n)},
+          NTuple{NF2, fieldtype(QT, n)}}
+
 const _ABELIAN_WMAT_3D = LurTensor(reshape([1.0], 1, 1, 1))
 
-@inline _xsym_cache_for(::Type{S}, caches, ::Val{n}) where {S<:AbelianSymm, n} = nothing
-@inline _xsym_cache_for(::Type{S}, caches, ::Val{n}) where {S<:NonabelianSymm, n} =
-    caches[n]::_XSymCache
+@generated function _xsym_cache_slot(::Type{PS}, ::Val{n}) where {PS<:ProductSymm, n}
+    syms = product_symms(PS)
+    1 <= n <= length(syms) || return :(throw(BoundsError(product_symms(PS), $n)))
+    syms[n] <: AbelianSymm && return :(nothing)
 
-function _new_xsym_caches(::Type{ProductSymm{Syms}}, ::Val{N}) where {Syms, N}
-    caches = Vector{Union{Nothing, _XSymCache}}(undef, N)
-    shared = Dict{DataType, _XSymCache}()
-    for n in 1:N
-        S = fieldtype(Syms, n)
-        caches[n] = S <: AbelianSymm ? nothing : get!(shared, S) do
-            _XSymCache()
+    target = syms[n]
+    slot = 0
+    seen = Type[]
+    for S in syms
+        S <: AbelianSymm && continue
+        if !(S in seen)
+            push!(seen, S)
+            slot += 1
+        end
+        S == target && return :($slot)
+    end
+    return :(throw(ArgumentError("symmetry index $n has no X-symbol cache")))
+end
+
+@inline _xsym_cache_for(::Type{S}, caches, ::Type{PS}, ::Val{n}) where {S<:AbelianSymm, PS<:ProductSymm, n} = nothing
+@inline function _xsym_cache_for(::Type{S}, caches, ::Type{PS}, ::Val{n}) where {S<:NonabelianSymm, PS<:ProductSymm, n}
+    slot = _xsym_cache_slot(PS, Val(n))
+    slot === nothing &&
+        throw(ArgumentError("symmetry index $n is Abelian and has no X-symbol cache"))
+    return caches[slot]
+end
+
+@inline _xsym_cache_for(caches::CT, ::Type{S}, ::Type{PS}, ::Val{n}) where {CT<:Tuple, S, PS<:ProductSymm, n} =
+    _xsym_cache_for(S, caches, PS, Val(n))
+
+@generated function _new_xsym_caches(::Type{PS}, ::Type{QT},
+                                     ::Val{NF1}, ::Val{NF2}, ::Val{CN}) where {PS<:ProductSymm, QT, NF1, NF2, CN}
+    syms = product_symms(PS)
+    seen = Type[]
+    exprs = Expr[]
+    for (n, S) in pairs(syms)
+        S <: AbelianSymm && continue
+        S in seen && continue
+        push!(seen, S)
+        Key = _xsym_cache_key_type(QT, Val(n), Val(NF1), Val(NF2), Val(CN))
+        Cache = Dict{Key, Array{Float64, 3}}
+        push!(exprs, :($Cache()))
+    end
+    return Expr(:tuple, exprs...)
+end
+
+@inline _impossible_key(free_qlabels1::NTuple{NF1, QT},
+                        free_qlabels2::NTuple{NF2, QT},
+                        ::Val{n}) where {NF1, NF2, QT, n} =
+    (_symmetry_qlabels(free_qlabels1, Val(n)),
+     _symmetry_qlabels(free_qlabels2, Val(n)))
+
+@generated function _new_impossible_sets(::Type{PS}, ::Type{QT},
+                                         ::Val{NF1}, ::Val{NF2}) where {PS<:ProductSymm, QT, NF1, NF2}
+    syms = product_symms(PS)
+    exprs = Vector{Union{Expr, Symbol}}()
+    for (n, S) in pairs(syms)
+        if S <: AbelianSymm
+            push!(exprs, :(nothing))
+        else
+            K = Tuple{NTuple{NF1, fieldtype(QT, n)}, NTuple{NF2, fieldtype(QT, n)}}
+            push!(exprs, :(Set{$K}()))
         end
     end
-    return caches
+    return Expr(:tuple, exprs...)
+end
+
+@generated function _out_key_is_impossible(::Type{ProductSymm{Syms}},
+                                           impossible_sets,
+                                           out_key::Tuple{NTuple{NF1, QT}, NTuple{NF2, QT}}) where {Syms, NF1, NF2, QT}
+    stmts = Expr[]
+    for n in 1:length(Syms.parameters)
+        S = Syms.parameters[n]
+        S <: AbelianSymm && continue
+        push!(stmts, quote
+            (_impossible_key(out_key[1], out_key[2], Val($n)) in impossible_sets[$n]) && return true
+        end)
+    end
+    return quote
+        $(stmts...)
+        return false
+    end
 end
 
 @inline function _xsym_cache_key(::Type{QT},
@@ -973,125 +1178,256 @@ end
             _symmetry_qlabels(free_qlabels2, Val(n)))
 end
 
-@inline _cgt_up_qlabels(qlabels::NTuple{QD, NTuple{NZ, Int}}, ::Val{M}) where {QD, NZ, M} =
-    ntuple(i -> qlabels[i], Val(M))
+@inline _symmetry_sector_qlabels(q::TLArray{T, QD, N}, sector::Int, ::Val{n}) where {T, QD, N, n} =
+    ntuple(l -> sector_qlabel(q, sector, l)[n], Val(QD))
 
-@inline _cgt_dn_qlabels(qlabels::NTuple{QD, NTuple{NZ, Int}}, ::Val{M}) where {QD, NZ, M} =
-    ntuple(i -> qlabels[M + i], Val(QD - M))
-
-@inline _stored_contract_legs(cgp::NTuple{QD, Int}, legs::NTuple{CN, Int}) where {QD, CN} =
-    ntuple(k -> cgp[legs[k]], Val(CN))
-
-@generated function _load_nonabelian_xarr(::Type{S},
-                                          qlabels1::NTuple{QD1, NTuple{NZ, Int}},
-                                          cgp1::NTuple{QD1, Int},
-                                          legdir1::Tuple{Int, Int},
-                                          qlabels2::NTuple{QD2, NTuple{NZ, Int}},
-                                          cgp2::NTuple{QD2, Int},
-                                          legdir2::Tuple{Int, Int},
-                                          legs1::NTuple{CN, Int},
-                                          legs2::NTuple{CN, Int}) where {S<:NonabelianSymm, QD1, QD2, NZ, CN}
-    branches = Expr[]
-    for m1 in 0:QD1
-        for m2 in 0:QD2
-            push!(branches, quote
-                if legdir1[1] == $m1 && legdir2[1] == $m2
-                    up1sp = _cgt_up_qlabels(qlabels1, Val($m1))
-                    dn1sp = _cgt_dn_qlabels(qlabels1, Val($m1))
-                    up2sp = _cgt_up_qlabels(qlabels2, Val($m2))
-                    dn2sp = _cgt_dn_qlabels(qlabels2, Val($m2))
-                    ctlegs1 = _stored_contract_legs(cgp1, legs1)
-                    ctlegs2 = _stored_contract_legs(cgp2, legs2)
-                    xsym_obj = getNsave_Xsymbol(S, up1sp, dn1sp, up2sp, dn2sp, ctlegs1, ctlegs2)
-                    isnothing(xsym_obj) && return nothing
-                    return xsym_obj.xsym_arr::Array{Float64, 3}
-                end
-            end)
+function _stored_symmetry_leg_order(qlabels::NTuple{QD, NTuple{NZ, Int}},
+                                    inds::NTuple{QD, TLIndex}) where {QD, NZ}
+    incoming = Int[]
+    outgoing = Int[]
+    sizehint!(incoming, QD)
+    sizehint!(outgoing, QD)
+    for l in 1:QD
+        if inds[l].dir == '+'
+            push!(incoming, l)
+        else
+            push!(outgoing, l)
         end
     end
-    return quote
-        $(branches...)
-        throw(ArgumentError("invalid CGT leg directions"))
-    end
+    sort!(incoming; by = l -> qlabels[l], alg = MergeSort)
+    sort!(outgoing; by = l -> qlabels[l], alg = MergeSort)
+    n_in = length(incoming)
+    return ntuple(i -> i <= n_in ? incoming[i] : outgoing[i - n_in], Val(QD)), n_in
 end
 
-@inline function _contract_wmat_for_symmetry(::Type{S},
-                                             q1::TLArray,
-                                             i1::Int,
-                                             q2::TLArray,
-                                             i2::Int,
-                                             contracted_qlabels::NTuple{CN, QT},
-                                             free_qlabels1::NTuple{NF1, QT},
-                                             free_qlabels2::NTuple{NF2, QT},
-                                             ::Nothing,
-                                             legs1::NTuple{CN, Int},
-                                             legs2::NTuple{CN, Int},
-                                             ::Val{n}) where {S<:AbelianSymm, QT, NF1, NF2, CN, n}
-    return _ABELIAN_WMAT_3D
+@inline _stored_contract_legs(phys_to_stored::NTuple{QD, Int}, legs::NTuple{CN, Int}) where {QD, CN} =
+    ntuple(k -> phys_to_stored[legs[k]], Val(CN))
+
+function _xsymbol_sector_args(q::TLArray{T, QD, N},
+                              sector::Int,
+                              legs::NTuple{CN, Int},
+                              ::Val{n}) where {T, QD, N, CN, n}
+    qlabels_by_phys = _symmetry_sector_qlabels(q, sector, Val(n))
+    stored_to_phys, n_in = _stored_symmetry_leg_order(qlabels_by_phys, q.inds)
+    qlabels = ntuple(i -> qlabels_by_phys[stored_to_phys[i]], Val(QD))
+    phys_to_stored = _phys_to_stored_order(stored_to_phys)
+    upsp = Tuple(qlabels[i] for i in 1:n_in)
+    dnsp = Tuple(qlabels[i] for i in (n_in + 1):QD)
+    ctlegs = _stored_contract_legs(phys_to_stored, legs)
+    return upsp, dnsp, ctlegs
 end
 
-@inline function _contract_wmat_for_symmetry(::Type{S},
-                                             q1::TLArray,
-                                             i1::Int,
-                                             q2::TLArray,
-                                             i2::Int,
-                                             contracted_qlabels::NTuple{CN, QT},
-                                             free_qlabels1::NTuple{NF1, QT},
-                                             free_qlabels2::NTuple{NF2, QT},
-                                             xsym_cache::_XSymCache,
-                                             legs1::NTuple{CN, Int},
-                                             legs2::NTuple{CN, Int},
-                                             ::Val{n}) where {S<:NonabelianSymm, QT, NF1, NF2, CN, n}
-    xkey = _xsym_cache_key(QT, contracted_qlabels, free_qlabels1, free_qlabels2, Val(n))
-    qlabels1, cgp1, legdir1 = _sector_cgt_metadata(q1, i1, n)
-    qlabels2, cgp2, legdir2 = _sector_cgt_metadata(q2, i2, n)
-    xarr = if haskey(xsym_cache, xkey)
-        xsym_cache[xkey]
-    else
-        loaded = _load_nonabelian_xarr(S, qlabels1, cgp1, legdir1,
-                                       qlabels2, cgp2, legdir2, legs1, legs2)
-        xsym_cache[xkey] = loaded
-        loaded
-    end
-    isnothing(xarr) && return nothing
-    return _contract_xsym_wmat(sector_wmat(q1, i1, n).data, xarr, sector_wmat(q2, i2, n).data)
+function _load_nonabelian_xarr(::Type{S},
+                               q1::TLArray,
+                               i1::Int,
+                               q2::TLArray,
+                               i2::Int,
+                               legs1::NTuple{CN, Int},
+                               legs2::NTuple{CN, Int},
+                               ::Val{n}) where {S<:NonabelianSymm, CN, n}
+    up1sp, dn1sp, ctlegs1 = _xsymbol_sector_args(q1, i1, legs1, Val(n))
+    up2sp, dn2sp, ctlegs2 = _xsymbol_sector_args(q2, i2, legs2, Val(n))
+    xsym_obj = getNsave_Xsymbol(S, up1sp, dn1sp, up2sp, dn2sp, ctlegs1, ctlegs2)
+    isnothing(xsym_obj) && return nothing
+    return xsym_obj.xsym_arr::Array{Float64, 3}
 end
 
-@generated function _contract_wmats(::Type{ProductSymm{Syms}},
-                                    q1::TLArray{T1, QD1, N, RD1, QT, PS},
+@inline function _xarr_for_symmetry(::Type{S},
+                                    q1::TLArray,
                                     i1::Int,
-                                    q2::TLArray{T2, QD2, N, RD2, QT, PS},
+                                    q2::TLArray,
                                     i2::Int,
                                     contracted_qlabels::NTuple{CN, QT},
                                     free_qlabels1::NTuple{NF1, QT},
                                     free_qlabels2::NTuple{NF2, QT},
-                                    xsym_caches::AbstractVector,
+                                    xsym_cache::Dict{K, Array{Float64, 3}},
+                                    impossible_sets::Tuple,
                                     legs1::NTuple{CN, Int},
-                                    legs2::NTuple{CN, Int}) where {Syms, T1, QD1, N, RD1, QT, PS,
-                                                                   T2, QD2, RD2, NF1, NF2, CN}
+                                    legs2::NTuple{CN, Int},
+                                    ::Val{n}) where {S<:NonabelianSymm, QT, NF1, NF2, CN, n, K}
+    xkey = _xsym_cache_key(QT, contracted_qlabels, free_qlabels1, free_qlabels2, Val(n))
+    if haskey(xsym_cache, xkey)
+        return xsym_cache[xkey]
+    end
+
+    loaded = _load_nonabelian_xarr(S, q1, i1, q2, i2, legs1, legs2, Val(n))
+    if loaded === nothing
+        push!(impossible_sets[n], _impossible_key(free_qlabels1, free_qlabels2, Val(n)))
+        return nothing
+    end
+    xsym_cache[xkey] = loaded
+    return loaded
+end
+
+function _qr_contract_concat(concat::Matrix{Float64},
+                             pair_shapes::Vector{Tuple{Int, Int}})
+    nrows = size(concat, 1)
+    if nrows == 1
+        Q = LurTensor(ones(1, 1))
+        factors = Vector{LurTensor{Float64, 3, Array{Float64, 3}}}(undef, length(pair_shapes))
+        col = 0
+        for i in eachindex(pair_shapes)
+            d1, d2 = pair_shapes[i]
+            width = d1 * d2
+            factors[i] = LurTensor(reshape(copy(concat[:, col+1:col+width]), 1, d1, d2))
+            col += width
+        end
+        return Q, factors
+    end
+
+    F = qr(concat)
+    Qfull = Matrix(F.Q)
+    Rfull = Matrix(F.R)
+
+    used = 0
+    @inbounds for i in axes(Rfull, 1)
+        nrm_sq = 0.0
+        for j in axes(Rfull, 2)
+            nrm_sq += abs2(Rfull[i, j])
+        end
+        !iszero(nrm_sq) && (used = i)
+    end
+    used == 0 && return nothing
+
+    Q = LurTensor(Qfull[:, 1:used])
+    R = Rfull[1:used, :]
+    factors = Vector{LurTensor{Float64, 3, Array{Float64, 3}}}(undef, length(pair_shapes))
+    col = 0
+    for i in eachindex(pair_shapes)
+        d1, d2 = pair_shapes[i]
+        width = d1 * d2
+        factors[i] = LurTensor(reshape(copy(R[:, col+1:col+width]), used, d1, d2))
+        col += width
+    end
+    @assert col == size(R, 2)
+
+    return Q, factors
+end
+
+function _prepare_contract_interval_for_symmetry(::Type{S},
+                                                 q1::TLArray,
+                                                 q2::TLArray,
+                                                 possible_pairs::AbstractVector,
+                                                 interval::UnitRange{Int},
+                                                 xsym_caches::Tuple,
+                                                 impossible_sets::Tuple,
+                                                 legs1::NTuple{CN, Int},
+                                                 legs2::NTuple{CN, Int},
+                                                 ::Val{n}) where {S<:AbelianSymm, CN, n}
+    K = length(interval)
+    Q = LurTensor(ones(1, 1))
+    factors = Vector{LurTensor{Float64, 3, Array{Float64, 3}}}(undef, K)
+    for i in 1:K
+        factors[i] = _ABELIAN_WMAT_3D
+    end
+    return Q, factors
+end
+
+function _prepare_contract_interval_for_symmetry(::Type{S},
+                                                 q1::TLArray,
+                                                 q2::TLArray,
+                                                 possible_pairs::AbstractVector,
+                                                 interval::UnitRange{Int},
+                                                 xsym_caches::Tuple,
+                                                 impossible_sets::Tuple,
+                                                 legs1::NTuple{CN, Int},
+                                                 legs2::NTuple{CN, Int},
+                                                 ::Val{n}) where {S<:NonabelianSymm, CN, n}
+    K = length(interval)
+    xarrs = Vector{Array{Float64, 3}}(undef, K)
+    pair_shapes = Vector{Tuple{Int, Int}}(undef, K)
+    nrows = 0
+    total_width = 0
+
+    i = 1
+    for pair_pos in interval
+        pair = possible_pairs[pair_pos]
+        contracted_qlabels = pair[1]
+        free_qlabels1, free_qlabels2 = pair[2]
+        i1 = pair[3]
+        i2 = pair[4]
+        xarr = _xarr_for_symmetry(S, q1, i1, q2, i2,
+                                  contracted_qlabels, free_qlabels1, free_qlabels2,
+                                  _xsym_cache_for(xsym_caches, S, productsymm(q1), Val(n)),
+                                  impossible_sets, legs1, legs2, Val(n))
+        xarr === nothing && return nothing
+        xarrs[i] = xarr
+
+        wm1 = sector_wmat(q1, i1, Val(n))
+        wm2 = sector_wmat(q2, i2, Val(n))
+        d1 = size(wm1, 2)
+        d2 = size(wm2, 2)
+        pair_shapes[i] = (d1, d2)
+        nrows == 0 && (nrows = size(xarr, 3))
+        @assert nrows == size(xarr, 3)
+        total_width += d1 * d2
+        i += 1
+    end
+
+    concat = Matrix{Float64}(undef, nrows, total_width)
+    col = 0
+    i = 1
+    for pair_pos in interval
+        pair = possible_pairs[pair_pos]
+        i1 = pair[3]
+        i2 = pair[4]
+        wm1 = sector_wmat(q1, i1, Val(n))
+        wm2 = sector_wmat(q2, i2, Val(n))
+        _fill_contract_wmat_concat!(concat, xarrs[i], wm1, wm2, col)
+        col += pair_shapes[i][1] * pair_shapes[i][2]
+        i += 1
+    end
+    @assert col == total_width
+
+    return _qr_contract_concat(concat, pair_shapes)
+end
+
+@generated function _prepare_contract_interval(::Type{ProductSymm{Syms}},
+                                               q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
+                                               q2::TLArray{T2, QD2, N, RD2, QT, PS, M, RMTS2},
+                                               possible_pairs::AbstractVector,
+                                               interval::UnitRange{Int},
+                                               xsym_caches::CT,
+                                               impossible_sets::Tuple,
+                                               legs1::NTuple{CN, Int},
+                                               legs2::NTuple{CN, Int}) where {Syms, T1, QD1, N, RD1, QT, PS, M, RMTS1,
+                                                                              T2, QD2, RD2, RMTS2, CT<:Tuple, CN}
     stmts = Expr[]
-    wnames = Symbol[]
-    WMatT = :(LurTensor{Float64, 3, Array{Float64, 3}})
+    qnames = Symbol[]
+    fnames = Symbol[]
     for n in 1:N
         S = Syms.parameters[n]
-        w = Symbol(:wmat_, n)
-        push!(wnames, w)
+        res = Symbol(:prepared_sym_, n)
+        q = Symbol(:Q_, n)
+        f = Symbol(:factors_, n)
+        push!(qnames, q)
+        push!(fnames, f)
         push!(stmts, quote
-            local $w = _contract_wmat_for_symmetry($S, q1, i1, q2, i2,
-                                                   contracted_qlabels,
-                                                   free_qlabels1,
-                                                   free_qlabels2,
-                                                   _xsym_cache_for($S, xsym_caches, Val($n)),
-                                                   legs1,
-                                                   legs2,
-                                                   Val($n))
-            $w === nothing && return nothing
-            $w = $w::$WMatT
+            local $res = _prepare_contract_interval_for_symmetry(
+                $S, q1, q2, possible_pairs, interval, xsym_caches,
+                impossible_sets, legs1, legs2, Val($n))
+            $res === nothing && return nothing
+            local $q = $res[1]::LurTensor{Float64, 2, Matrix{Float64}}
+            local $f = $res[2]::Vector{LurTensor{Float64, 3, Array{Float64, 3}}}
         end)
     end
+    factor_tuple = Expr(:tuple, (:(SV_split[$n][i]) for n in 1:N)...)
+    zero_rank_sizes = Expr(:tuple, (0 for _ in 1:N)...)
+
     return quote
+        local K = length(interval)
+        K > 0 || throw(ArgumentError("contract interval must contain at least one sector pair"))
         $(stmts...)
-        return ($(wnames...),)
+        local U_mats = LurTensor{Float64, 2, Matrix{Float64}}[$(qnames...)]
+        local SV_split = ($(fnames...),)
+        local factor_arrays = Vector{Array{Float64, 3}}(undef, K)
+        local first_rank_sizes = $zero_rank_sizes
+        for i in 1:K
+            factor_arrays[i], rank_sizes =
+                _rmt_factor_array_and_rank_sizes($factor_tuple)
+            i == 1 && (first_rank_sizes = rank_sizes)
+        end
+        return U_mats, factor_arrays, first_rank_sizes
     end
 end
 
@@ -1104,12 +1440,12 @@ function contract(q1::TLArray, legs1::AbstractVector{<:Integer},
 end
 
 # ── Main entry point ──────────────────────────────────────────────────────────
-function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS},
+function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
                   legs1::NTuple{CN, Int},
-                  q2::TLArray{T2, QD2, N, RD2, QT, PS},
+                  q2::TLArray{T2, QD2, N, RD2, QT, PS, M, RMTS2},
                   legs2::NTuple{CN, Int};
                   reduce_lock::Bool=true,
-                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, CN}
+                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, M, RMTS1, RMTS2, CN}
 
     symmetries = product_symms(PS)
 
@@ -1156,74 +1492,41 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS},
     FreeKey2  = NTuple{nf2, QT}
     OutKey    = Tuple{FreeKey1, FreeKey2}
 
-    # TODO: When GPU support is added, these should be generalized
-    WMatT = LurTensor{Float64, 3, Array{Float64, 3}}
-    WmatVec   = Vector{WMatT}
     SectorPairVec = Vector{Tuple{Int, Int}}
 
-    xsym_caches = _new_xsym_caches(PS, Val(N))
+    xsym_caches = _new_xsym_caches(PS, QT, Val(nf1), Val(nf2), Val(CN))
+    impossible_sets = _new_impossible_sets(PS, QT, Val(nf1), Val(nf2))
 
-    sector_wmats = Dict{OutKey, NTuple{N, WmatVec}}()
-    sector_reps  = Dict{OutKey, SectorPairVec}()
+    # ── 3. Collect possible pairs and output intervals ───────────────────────
+    possible_pairs = _possible_pair_table(sector_infos1, sector_infos2)
+    out_keys, out_intervals = _out_key_intervals(possible_pairs)
+    valid_output = trues(length(out_keys))
 
-    # ── 3. Main loop: collect pending RMT contractions per sector ────────────
-    pos1 = firstindex(sector_infos1)
-    pos2 = firstindex(sector_infos2)
-    while pos1 <= lastindex(sector_infos1) && pos2 <= lastindex(sector_infos2)
-        ckey1 = sector_infos1[pos1].contracted_qlabels
-        ckey2 = sector_infos2[pos2].contracted_qlabels
-
-        if isless(ckey1, ckey2)
-            _, _, pos1 = _contracted_qlabel_run(sector_infos1, pos1)
-            continue
-        elseif isless(ckey2, ckey1)
-            _, _, pos2 = _contracted_qlabel_run(sector_infos2, pos2)
-            continue
-        end
-
-        _, run1, next_pos1 = _contracted_qlabel_run(sector_infos1, pos1)
-        _, run2, next_pos2 = _contracted_qlabel_run(sector_infos2, pos2)
-        for p1 in run1
-            i = sector_infos1[p1].sector_index
-            fq1 = sector_infos1[p1].free_qlabels::FreeKey1
-
-            for p2 in run2
-                j = sector_infos2[p2].sector_index
-                fq2 = sector_infos2[p2].free_qlabels::FreeKey2
-
-                # ── W-matrix contraction (per symmetry) ──────────────────────
-                wmats = _contract_wmats(PS, q1, i, q2, j, ckey1, fq1, fq2,
-                                        xsym_caches, legs1, legs2)
-                isnothing(wmats) && continue
-
-                # ── Accumulate into output sector ────────────────────────────
-                out_key = (fq1, fq2)::OutKey
-                if !haskey(sector_wmats, out_key)
-                    sector_wmats[out_key] = ntuple(_ -> WMatT[], Val(N))
-                    sector_reps[out_key]  = Tuple{Int, Int}[]
-                end
-                for n in 1:N push!(sector_wmats[out_key][n], wmats[n]) end
-                push!(sector_reps[out_key], (i, j))
-            end
-        end
-        pos1 = next_pos1
-        pos2 = next_pos2
-    end
-    res_nsectors = length(sector_wmats)
-
-    # ── 4. Prepare QR/K data and one contraction temporary ───────────────────
+    # ── 4. Direct-fill QR/K data and one contraction temporary ───────────────
     PreparedSectorT = Tuple{Vector{LurTensor{Float64, 2, Matrix{Float64}}},
                             Vector{Array{Float64, 3}},
                             NTuple{N, Int}}
-    prepared_sectors = Dict{OutKey, PreparedSectorT}()
-    sizehint!(prepared_sectors, res_nsectors)
+    prepared_sectors = Vector{PreparedSectorT}(undef, length(out_keys))
+    prepared_sector_pairs = Vector{SectorPairVec}(undef, length(out_keys))
     max_temp_len = 0
-    for (out_key, new_wmats) in sector_wmats
-        prepared = _prepare_compress_sector(new_wmats)
-        isnothing(prepared) && continue
+    for out_pos in eachindex(out_keys)
+        valid_output[out_pos] || continue
+
+        if _out_key_is_impossible(PS, impossible_sets, out_keys[out_pos])
+            valid_output[out_pos] = false
+            continue
+        end
+
+        prepared = _prepare_contract_interval(
+            PS, q1, q2, possible_pairs, out_intervals[out_pos],
+            xsym_caches, impossible_sets, legs1, legs2)
+        if isnothing(prepared)
+            valid_output[out_pos] = false
+            continue
+        end
         _, factor_arrays, _ = prepared
 
-        sector_pairs = sector_reps[out_key]
+        sector_pairs = _sector_pairs_from_interval(possible_pairs, out_intervals[out_pos])
         @assert length(sector_pairs) == length(factor_arrays)
         for i in eachindex(sector_pairs)
             idx1, idx2 = sector_pairs[i]
@@ -1238,24 +1541,23 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS},
                                                       factor_arrays[i]))
         end
 
-        prepared_sectors[out_key] = prepared
+        prepared_sectors[out_pos] = prepared
+        prepared_sector_pairs[out_pos] = sector_pairs
     end
     contract_temp = Vector{promote_type(T1, T2, Float64)}(undef, max_temp_len)
 
     # ── 5. Merge each output sector ──────────────────────────────────────────
-    result_qlabel_sectors = Vector{NTuple{QD_out, QT}}()
-    result_wmat_buffers = _wmat_buffers(PS)
-    result_RMTs = LurTensor{promote_type(T1, T2, Float64), RD_out, Array{promote_type(T1, T2, Float64), RD_out}}[]
-    sizehint!(result_qlabel_sectors, res_nsectors)
-    for slot in eachindex(result_wmat_buffers)
-        sizehint!(result_wmat_buffers[slot], res_nsectors)
-    end
-    sizehint!(result_RMTs, res_nsectors)
-    for (out_key, prepared) in prepared_sectors
-        sector_pairs = sector_reps[out_key]
+    RT = promote_type(T1, T2, Float64)
+    result_qlabel_candidates = Vector{NTuple{QD_out, QT}}(undef, length(out_keys))
+    final_wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, length(out_keys))
+    final_RMTs = Vector{LurTensor{RT, RD_out, Array{RT, RD_out}}}(undef, length(out_keys))
+    nonabelian_indices = nonabelian_symmetry_indices(PS)
+    for out_pos in eachindex(out_keys)
+        valid_output[out_pos] || continue
+
+        prepared = prepared_sectors[out_pos]
+        sector_pairs = prepared_sector_pairs[out_pos]
         r1_idx, r2_idx = first(sector_pairs)
-        new_qlabels_per_n = get_new_cgt_metadata(
-            q1, r1_idx, q2, r2_idx, free1, free2, legs1, legs2)
 
         sz1::NTuple{RD1, Int}, sz2::NTuple{RD2, Int} =
         size(sector_rmt(q1, r1_idx)), size(sector_rmt(q2, r2_idx))
@@ -1272,12 +1574,17 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS},
         U_mats, result_RMT = _contract_prepared_compress_sector(
             prepared, sector_pairs, permuted_rmts1, permuted_rmts2,
             kept_sizes1, kept_sizes2, contract_temp, Val(RD_out))
-        push!(result_qlabel_sectors,
-              _physical_qlabels_from_cgt_metadata(QT, new_qlabels_per_n, Val(QD_out), Val(N)))
-        for n in 1:N
-            _push_wmat!(result_wmat_buffers, PS, n, U_mats[n])
+        if iszero(sum(abs2, result_RMT.data))
+            valid_output[out_pos] = false
+            continue
         end
-        push!(result_RMTs, result_RMT)
+        result_qlabel_candidates[out_pos] =
+            _out_key_qlabels(out_keys[out_pos], Val(QD_out))
+        final_wmats[out_pos] = ntuple(Val(M)) do m
+            n = nonabelian_indices[m]
+            U_mats[n].data
+        end
+        final_RMTs[out_pos] = result_RMT
     end
 
     # ── 6. Lock reduction ────────────────────────────────────────────────────
@@ -1297,12 +1604,23 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS},
     spaces_out = (ntuple(i -> q1.spaces[free1[i]], Val(QD1 - CN))...,
                   ntuple(i -> q2.spaces[free2[i]], Val(QD2 - CN))...)
 
-    result_qlabels = Matrix{QT}(undef, QD_out, length(result_qlabel_sectors))
-    for sector_index in eachindex(result_qlabel_sectors), leg in 1:QD_out
-        result_qlabels[leg, sector_index] = result_qlabel_sectors[sector_index][leg]
+    res_nsectors = count(valid_output)
+    result_qlabels = Matrix{QT}(undef, QD_out, res_nsectors)
+    result_wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, res_nsectors)
+    result_RMTs = Vector{LurTensor{RT, RD_out, Array{RT, RD_out}}}(undef, res_nsectors)
+    sector_index = 1
+    for out_pos in eachindex(out_keys)
+        valid_output[out_pos] || continue
+
+        for leg in 1:QD_out
+            result_qlabels[leg, sector_index] = result_qlabel_candidates[out_pos][leg]
+        end
+        result_wmats[sector_index] = final_wmats[out_pos]
+        result_RMTs[sector_index] = final_RMTs[out_pos]
+        sector_index += 1
     end
 
-    result_wmats = _wmat_matrix_from_buffers(PS, result_wmat_buffers, length(result_RMTs))
-    return _field_tlarray(symmetries, result_qlabels, result_wmats, result_RMTs,
-                          final_inds, spaces_out)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS}
+    return TLArray(symmetries, result_qlabels, result_wmats, result_RMTs,
+                          final_inds, spaces_out;
+                          drop_zero_sectors=false)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS}
 end

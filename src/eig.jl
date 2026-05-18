@@ -253,8 +253,8 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
         qlabels_mat[1, sector_index] = sector
         qlabels_mat[2, sector_index] = sector
     end
-    wmats_out = _wmat_matrix_from_buffers(productsymm(template), wmat_buffers, length(RMTs_out))
-    return _field_tlarray(symm(template), qlabels_mat, wmats_out, RMTs_out, template.inds, spaces_out)
+    wmats_out = _wmat_vector_from_buffers(productsymm(template), wmat_buffers, length(RMTs_out))
+    return TLArray(symm(template), qlabels_mat, wmats_out, RMTs_out, template.inds, spaces_out)
 end
 
 function _effective_eigen_keep_count(eig_entries,
@@ -394,11 +394,11 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     inds_V = (TLIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
               TLIndex(eig_tag, dirs[2]))
 
-    D = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_D),
-                       _wmat_matrix_from_buffers(productsymm(q), wmats_D, length(RMTs_D)),
+    D = TLArray(symmetries, _eig_qlabel_matrix(qlabels_D),
+                       _wmat_vector_from_buffers(productsymm(q), wmats_D, length(RMTs_D)),
                        RMTs_D, inds_D, spaces_D)
-    V = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_V),
-                       _wmat_matrix_from_buffers(productsymm(q), wmats_V, length(RMTs_V)),
+    V = TLArray(symmetries, _eig_qlabel_matrix(qlabels_V),
+                       _wmat_vector_from_buffers(productsymm(q), wmats_V, length(RMTs_V)),
                        RMTs_V, inds_V, spaces_V)
 
     return EigenResult(V, D, nothing, eig_list)
@@ -491,14 +491,14 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     inds_Vinv = (TLIndex(eig_tag, dirs[1]),
                  TLIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.dual))
 
-    D    = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_D),
-                          _wmat_matrix_from_buffers(productsymm(q), wmats_D, length(RMTs_D)),
+    D    = TLArray(symmetries, _eig_qlabel_matrix(qlabels_D),
+                          _wmat_vector_from_buffers(productsymm(q), wmats_D, length(RMTs_D)),
                           RMTs_D, inds_D, spaces_D)
-    V    = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_V),
-                          _wmat_matrix_from_buffers(productsymm(q), wmats_V, length(RMTs_V)),
+    V    = TLArray(symmetries, _eig_qlabel_matrix(qlabels_V),
+                          _wmat_vector_from_buffers(productsymm(q), wmats_V, length(RMTs_V)),
                           RMTs_V, inds_V, spaces_V)
-    Vinv = _field_tlarray(symmetries, _eig_qlabel_matrix(qlabels_Vinv),
-                          _wmat_matrix_from_buffers(productsymm(q), wmats_Vinv, length(RMTs_Vinv)),
+    Vinv = TLArray(symmetries, _eig_qlabel_matrix(qlabels_Vinv),
+                          _wmat_vector_from_buffers(productsymm(q), wmats_Vinv, length(RMTs_Vinv)),
                           RMTs_Vinv, inds_Vinv, spaces_Vinv)
 
     return EigenResult(V, D, Vinv, eig_list)

@@ -146,14 +146,14 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
             S   = symmetries[n]
             qlabels, cgp, legdir = Telum._sector_cgt_metadata(q, sector_index, n)
             wmat = Telum.sector_wmat(q, sector_index, n)
-            M   = size(wmat.data, 2)
+            M   = size(wmat, 2)
 
             if isabelian(S)
                 # Abelian symmetry: irrep dim = 1 at every leg, outer multiplicity = 1.
                 # CGT is trivially the scalar 1; the contracted result is just the
                 # w-matrix sector reshaped to (1,...,1, M).
                 @assert M == 1 "Unexpected bond dimension for abelian symmetry $n"
-                cgt_wmats[n] = reshape(FT.(wmat.data), ones(Int, QD)..., M)
+                cgt_wmats[n] = reshape(FT.(wmat), ones(Int, QD)..., M)
             else
                 # a. Extract CGT qlabels from this CGR.
                 nin, nout = legdir
@@ -164,7 +164,7 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
 
                 CGTom = get_CGTom(S, insp_, outsp_)
                 om    = CGTom.totalOM
-                @assert om == size(wmat.data, 1) "outer multiplicity mismatch for symmetry $n"
+                @assert om == size(wmat, 1) "outer multiplicity mismatch for symmetry $n"
 
                 canbasis = get_canonical_basis(S, insp, outsp, CGTom)
 
@@ -179,7 +179,7 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
                 #    cgt_arr: (...cgt_shape..., om)  →  flatten to (prod_shape, om)
                 #    wmat:    (om, M)
                 #    result:  (prod_shape, M)  →  reshaped to (cgt_shape..., M)
-                wmat_data   = wmat.data                            # (om, M)
+                wmat_data   = wmat                                 # (om, M)
                 cgt_flat    = reshape(cgt_arr, :, om)              # (prod(cgt_shape), om)
                 result_flat = cgt_flat * wmat_data                 # (prod(cgt_shape), M)
                 cgt_wmat_canon = reshape(result_flat, cgt_shape..., M)
@@ -2165,7 +2165,8 @@ function test_contract_requires_matching_spaces_in_star(option::LocalSpaceOption
 
     first_sector, first_dim = first(B.spaces[1])
     bad_leg1 = vcat([(first_sector, first_dim + 1)], B.spaces[1][2:end])
-    B_bad = TLArray(symm(B), B.sectors, B.inds, (bad_leg1, B.spaces[2]))
+    B_bad = Telum.TLArray(symm(B), copy(B.qlabels), deepcopy(B.wmats),
+                                 deepcopy(B.RMTs), B.inds, (bad_leg1, B.spaces[2]))
 
     @test_throws AssertionError A * B_bad
 end

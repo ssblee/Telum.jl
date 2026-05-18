@@ -1,5 +1,6 @@
 function _assert_qlabel_storage(q::TLArray)
-    @test size(q.qlabels) == (ndims(q), Telum.nsectors(q))
+    @test size(q.qlabels, 1) == ndims(q)
+    @test size(q.qlabels, 2) >= Telum.nsectors(q)
     for sector_index in 1:Telum.nsectors(q)
         @test Tuple(q.qlabels[:, sector_index]) ==
               ntuple(leg -> Telum.sector_qlabel(q, sector_index, leg), ndims(q))
@@ -8,12 +9,13 @@ end
 
 function _assert_wmat_storage(q::TLArray)
     nonabelian = Telum.nonabelian_symmetry_indices(Telum.productsymm(q))
-    @test size(q.wmats) == (length(nonabelian), Telum.nsectors(q))
+    @test length(q.wmats) == Telum.nsectors(q)
+    @test eltype(q.wmats) <: NTuple{length(nonabelian), Matrix{Float64}}
     for sector_index in 1:Telum.nsectors(q), n in 1:length(symm(q))
         wmat = Telum.sector_wmat(q, sector_index, n)
         if n in nonabelian
             slot = Telum.nonabelian_wmat_slot(Telum.productsymm(q), n)
-            @test wmat === q.wmats[slot, sector_index]
+            @test wmat === q.wmats[sector_index][slot]
         else
             @test size(wmat) == (1, 1)
             @test wmat[1] == 1.0
@@ -26,6 +28,38 @@ function _assert_metadata_inferred(q::TLArray)
     @inferred Telum.sector_qlabel(q, 1, 1)
     @inferred Telum.sector_wmat(q, 1, 1)
     @inferred Telum._sector_cgt_metadata(q, 1, 1)
+end
+
+function _assert_zero_sector_constructor_filter(q::TLArray)
+    Telum.nsectors(q) == 0 && return
+
+    old_n = Telum.nsectors(q)
+    qlabels = Matrix{eltype(q.qlabels)}(undef, ndims(q), old_n + 1)
+    qlabels[:, 1:old_n] = q.qlabels[:, 1:old_n]
+    qlabels[:, old_n + 1] = q.qlabels[:, 1]
+
+    wmats = deepcopy(q.wmats)
+    push!(wmats, deepcopy(q.wmats[1]))
+    RMTs = deepcopy(q.RMTs)
+    zero_rmt = deepcopy(Telum.sector_rmt(q, 1))
+    fill!(zero_rmt.data, zero(eltype(zero_rmt.data)))
+    push!(RMTs, zero_rmt)
+
+    filtered = TLArray(symm(q), qlabels, wmats, RMTs, q.inds, q.spaces)
+    @test Telum.nsectors(filtered) == old_n
+    @test length(filtered.wmats) == old_n
+    @test length(filtered.RMTs) == old_n
+    @test size(filtered.qlabels, 2) == old_n + 1
+end
+
+@testset "wmat slot mappings infer" begin
+    PS = ProductSymm(U1, SU{2}, U1, SU{2})
+    @test @inferred(Telum.wmat_tuple_slot(PS, Val(1))) === nothing
+    @test @inferred(Telum.wmat_tuple_slot(PS, Val(2))) == 1
+    @test @inferred(Telum.wmat_tuple_slot(PS, Val(3))) === nothing
+    @test @inferred(Telum.wmat_tuple_slot(PS, Val(4))) == 2
+    @test @inferred(Telum.product_symmetry_index_from_wmat_slot(PS, Val(1))) == 2
+    @test @inferred(Telum.product_symmetry_index_from_wmat_slot(PS, Val(2))) == 4
 end
 
 @testset "TLArray qlabel storage orientation" begin
@@ -45,6 +79,12 @@ end
         for q in samples
             _assert_qlabel_storage(q)
             _assert_wmat_storage(q)
+        end
+    end
+
+    @testset "constructor drops zero sectors without compacting qlabels" begin
+        for q in samples
+            _assert_zero_sector_constructor_filter(q)
         end
     end
 

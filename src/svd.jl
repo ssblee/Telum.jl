@@ -128,7 +128,7 @@ function _svd_cgt_split_spaces(qlabels::NTuple{QD}, cgp::NTuple{QD, Int},
     return _svd_cgt_split_spaces(qlabels, legdir, left_legs_canon, right_legs_canon)
 end
 
-function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::LurTensor{Float64, 2},
+function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::AbstractMatrix{Float64},
                                    cgp::NTuple{QD, Int}, legdir::Tuple{Int, Int},
                                    left_legs, right_legs) where {QD}
     left_legs_canon = _svd_to_cgtidx(cgp, left_legs)
@@ -139,7 +139,7 @@ function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::LurTensor{Float
 
     if isabelian(S)
         q = _svd_abelian_intermediate_q(S, qlabels, legdir, left_legs_canon)
-        coeffs = reshape(copy(wmat.data), 1, 1, size(wmat.data, 2))
+        coeffs = reshape(copy(wmat), 1, 1, size(wmat, 2))
         _is_zero_array(coeffs) && return BlockInfo[]
         return [BlockInfo((q=q, omL=1, omR=1, coeffs=coeffs))]
     end
@@ -149,7 +149,7 @@ function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::LurTensor{Float
 
     blocks = BlockInfo[]
     if cgtsvd isa LurCGT.CGTSVD
-        coeff_split = cgtsvd.svd_arr * wmat.data
+        coeff_split = cgtsvd.svd_arr * wmat
         offset = 1
         for (q, omL, omR) in cgtsvd.bond_sps
             width = omL * omR
@@ -160,9 +160,9 @@ function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::LurTensor{Float
         @assert offset == size(coeff_split, 1) + 1
     else
         q = zero_qlabels((S,))[1]
-        om = size(wmat.data, 1)
+        om = size(wmat, 1)
         omL, omR = cgtsvd ? (1, om) : (om, 1)
-        coeffs = reshape(wmat.data, omL, omR, size(wmat.data, 2))
+        coeffs = reshape(wmat, omL, omR, size(wmat, 2))
         push!(blocks, BlockInfo((q=q, omL=omL, omR=omR, coeffs=coeffs)))
     end
     return blocks
@@ -803,7 +803,7 @@ function _build_svd_cgtsvd_S(symm,
 
     inds_S = (TLIndex(left_tag, '+'), TLIndex(right_tag, '+'))
     spaces_S = (bond_splist, base.spaces[2])
-    return _field_tlarray(symm, qlabels, wmats, RMTs, inds_S, spaces_S)
+    return TLArray(symm, qlabels, wmats, RMTs, inds_S, spaces_S)
 end
 
 function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
@@ -931,11 +931,11 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
         Vd_qlabels[leg, sector_index] = qlabels_Vd[sector_index][leg]
     end
 
-    wmats_U = _wmat_matrix_from_buffers(PS, wmat_buffers_U, length(RMTs_U))
-    wmats_Vd = _wmat_matrix_from_buffers(PS, wmat_buffers_Vd, length(RMTs_Vd))
-    U = _field_tlarray(symm(q), U_qlabels, wmats_U, RMTs_U, inds_U, spaces_U)
+    wmats_U = _wmat_vector_from_buffers(PS, wmat_buffers_U, length(RMTs_U))
+    wmats_Vd = _wmat_vector_from_buffers(PS, wmat_buffers_Vd, length(RMTs_Vd))
+    U = TLArray(symm(q), U_qlabels, wmats_U, RMTs_U, inds_U, spaces_U)
     S = _build_svd_cgtsvd_S(symm(q), bond_splist, left_tag, right_tag, sector_values)
-    Vd = _field_tlarray(symm(q), Vd_qlabels, wmats_Vd, RMTs_Vd, inds_Vd, spaces_Vd)
+    Vd = TLArray(symm(q), Vd_qlabels, wmats_Vd, RMTs_Vd, inds_Vd, spaces_Vd)
     return U, S, Vd
 end
 

@@ -185,8 +185,7 @@ function _dense_matrix_entry(mat, i::Int, j::Int)
 end
 
 function _zero_qspace_ref_like(ref::TLArray{TQ, QD, N, RD}, spaces; T::Type=Float64) where {TQ, QD, N, RD}
-    rows = Vector{row{T, QD, N, RD}}()
-    return TLArray(symm(ref), rows, ref.inds, spaces)
+    return Telum._zero_qspace_with_spaces(symm(ref), ref.inds, spaces; T=T)
 end
 
 function _matrix_axis_start_maps(sources, dims, QD::Int, symm::Tuple)
@@ -292,4 +291,3 @@ function _dense_matrix_oplus_ref(mat, dimensions)
 end
 
 # ─────────────────────────────────────────────────────────────────────────────
-

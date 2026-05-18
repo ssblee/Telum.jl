@@ -228,8 +228,8 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
         qlabels[leg, sector_index] = sector[leg]
     end
 
-    wmats = _wmat_matrix_from_buffers(PS, wmat_buffers, length(RMTs))
-    q = _field_tlarray(symm, qlabels, wmats, RMTs, inds, spaces)
+    wmats = _wmat_vector_from_buffers(PS, wmat_buffers, length(RMTs))
+    q = TLArray(symm, qlabels, wmats, RMTs, inds, spaces)
 
     # For an originally-incoming selected leg, attach a 1j tensor so the returned
     # leg is directly contractable with the original tensor leg.

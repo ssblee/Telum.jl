@@ -84,6 +84,25 @@ end
     test_contract_abelian_wmats_are_unit(FermionSOptions(1, :U1, :SU2, nothing))
 end
 
+@testset "contract X-symbol cache shares duplicated non-Abelian symmetry" begin
+    option = FermionSOptions(1, :SU2, :SU2, nothing)
+    q = getLocalSpace(option)
+    PS = Telum.productsymm(q.I)
+    QT = qlabeltype(q.I)
+    caches = Telum._new_xsym_caches(PS, QT, Val(1), Val(1), Val(1))
+
+    @test length(caches) == 1
+    @test @inferred(Telum._xsym_cache_slot(PS, Val(1))) == 1
+    @test @inferred(Telum._xsym_cache_slot(PS, Val(2))) == 1
+    @test Telum._xsym_cache_for(SU{2}, caches, PS, Val(1)) ===
+          Telum._xsym_cache_for(SU{2}, caches, PS, Val(2))
+
+    qi1 = TLArray(q.I, ("dup1", "dup1"))
+    qi2 = TLArray(q.I, ("dup2", "dup2"))
+    a = getIdentity((qi1, 2), (qi2, 2))
+    @test qi1 * a isa TLArray
+end
+
 @testset "getIdentity direct contraction" begin
     test_getIdentity_direct_contract(FermionSOptions(1, :U1, :SU2, nothing))
     test_getIdentity_direct_contract(FermionSOptions(3, :U1, :SU2, :SU3))
