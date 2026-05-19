@@ -17,7 +17,10 @@ function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov, time_blocks=true)
             cnt += 1
 
             if i < nKrylov
-                for _=1:2, j=1:i Amul -= (As[j]' * Amul)[] * As[j] end
+                for _=1:2 
+                    coeffs = [(As[j]' * Amul)[] for j in 1:i]
+                    Amul = sum((Amul, (-coeffs[j] * As[j] for j in 1:i)...))
+                end
                 Anorm = norm(Amul)
                 if Anorm < tol break end
                 As[i+1] = Amul / Anorm
@@ -34,7 +37,10 @@ function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov, time_blocks=true)
             cnt += 1
 
             if i < nKrylov
-                for _=1:2, j=1:i Amul -= (As[j]' * Amul)[] * As[j] end
+                for _=1:2 
+                    coeffs = [(As[j]' * Amul)[] for j in 1:i]
+                    Amul = sum((Amul, (-coeffs[j] * As[j] for j in 1:i)...))
+                end
                 Anorm = norm(Amul)
                 if Anorm < tol break end
                 As[i+1] = Amul / Anorm
@@ -48,7 +54,7 @@ function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov, time_blocks=true)
         @time begin
         Hkrylov = SymTridiagonal(αs[1:cnt], βs[1:cnt-1])
         _, V = eigen(Hkrylov); vec = V[:, 1]
-        Anew = sum(vec[i] * As[i] for i in 1:cnt)
+        Anew = sum((vec[i] * As[i] for i in 1:cnt))
         Enew = Hl * Anew
         for H in Hs Enew = Enew * H end
         Enew = ((Enew * Hr) * Anew')[]
@@ -57,7 +63,7 @@ function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov, time_blocks=true)
     else
         Hkrylov = SymTridiagonal(αs[1:cnt], βs[1:cnt-1])
         _, V = eigen(Hkrylov); vec = V[:, 1]
-        Anew = sum(vec[i] * As[i] for i in 1:cnt)
+        Anew = sum((vec[i] * As[i] for i in 1:cnt))
         Enew = Hl * Anew
         for H in Hs Enew = Enew * H end
         Enew = ((Enew * Hr) * Anew')[]

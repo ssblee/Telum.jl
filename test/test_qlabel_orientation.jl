@@ -110,6 +110,13 @@ end
         _assert_qlabel_storage(conj(q))
         _assert_qlabel_storage(q + q)
         @test norm(q + q) ≈ 2norm(q)
+        _assert_qlabel_storage(sum((q, q, q)))
+        @test norm(sum((q, q, q))) ≈ 3norm(q)
+
+        q_perm = permutedims(q, (2, 1, 3))
+        from_permuted_only = sum((zero(q), q_perm))
+        _assert_qlabel_storage(from_permuted_only)
+        @test norm(from_permuted_only - q) < 1e-10
 
         sorted = copy(q)
         Telum.sort_sectors!(sorted)
