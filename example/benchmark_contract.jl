@@ -32,3 +32,7 @@ function get_DMRGres(Nkeep=50)
 
     return MPS, MPO, Hrl
 end
+
+function benchmark_sum(vec)
+    @time for _=1:100 sum(vec) end
+end

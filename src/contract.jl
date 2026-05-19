@@ -266,30 +266,6 @@ function _contract_om_axis(A::LurTensor{T1, D, A1}, M::LurTensor{T2, 2, A2}, axi
     return _contract_om_axis_data(A.data, M.data, axis)
 end
 
-function _contract_RMT_pair(rmt1::LurTensor{T1, RD1},
-                            rmt2::LurTensor{T2, RD2},
-                            factors::NTuple{N, LT},
-                            perm1::NTuple{RD1, Int},
-                            perm2::NTuple{RD2, Int},
-                            nf1::Int,
-                            nf2::Int,
-                            cn::Int,
-                            QD_out::Int) where {T1, T2, RD1, RD2, N, LT<:LurTensor{Float64, 3}}
-    kept_sizes1, _, _ = _rmt_layout_sizes(rmt1, perm1, nf1, cn, N)
-    kept_sizes2, _, _ = _rmt_layout_sizes(rmt2, perm2, nf2, cn, N)
-    data1 = _permuted_rmt_data(rmt1, perm1, nf1, cn, N)
-    data2 = _permuted_rmt_data(rmt2, perm2, nf2, cn, N)
-    rank_sizes, rank_dim, _, _, _ = _combined_om_factor_info(factors)
-
-    RT = promote_type(T1, T2, Float64)
-    result_data = zeros(RT, (kept_sizes1..., kept_sizes2..., rank_sizes...))
-    result_view = reshape(result_data, size(data1, 1), size(data2, 1), rank_dim)
-    K, _ = _rmt_factor_array_and_rank_sizes(factors)
-    temp = Vector{RT}(undef, _rmt_contract_temp_len(data1, data2, K))
-    _contract_RMT_pair_into!(result_view, data1, data2, K, temp)
-    return LurTensor(result_data)
-end
-
 const _RMT_CONTRACT_TULLIO_THRESHOLD = 1_000_000
 
 function _rmt_layout_sizes(rmt::LurTensor{T, RD},
@@ -564,7 +540,8 @@ function _accumulate_small!(out::AbstractArray{T, 3},
                             B::AbstractArray,
                             K::AbstractArray,
                             order::Symbol,
-                            temp::Vector{T}) where {T}
+                            temp::Vector{T},
+                            beta::T = one(T)) where {T}
     fdim, cdim, o1dim = size(A)
     gdim = size(B, 1)
     o2dim = size(B, 3)
@@ -573,15 +550,27 @@ function _accumulate_small!(out::AbstractArray{T, 3},
     if order === :AB
         tmp = _rmt_temp_view(temp, (fdim, o1dim, gdim, o2dim))
         @tullio avx=true tmp[f, o1, g, o2] = A[f, c, o1] * B[g, c, o2]
-        @tullio avx=true out[f, g, r] += tmp[f, o1, g, o2] * K[r, o1, o2]
+        if iszero(beta)
+            @tullio avx=true out[f, g, r] = tmp[f, o1, g, o2] * K[r, o1, o2]
+        else
+            @tullio avx=true out[f, g, r] += tmp[f, o1, g, o2] * K[r, o1, o2]
+        end
     elseif order === :AK
         tmp = _rmt_temp_view(temp, (fdim, cdim, o2dim, rdim))
         @tullio avx=true tmp[f, c, o2, r] = A[f, c, o1] * K[r, o1, o2]
-        @tullio avx=true out[f, g, r] += tmp[f, c, o2, r] * B[g, c, o2]
+        if iszero(beta)
+            @tullio avx=true out[f, g, r] = tmp[f, c, o2, r] * B[g, c, o2]
+        else
+            @tullio avx=true out[f, g, r] += tmp[f, c, o2, r] * B[g, c, o2]
+        end
     else
         tmp = _rmt_temp_view(temp, (gdim, cdim, o1dim, rdim))
         @tullio avx=true tmp[g, c, o1, r] = B[g, c, o2] * K[r, o1, o2]
-        @tullio avx=true out[f, g, r] += A[f, c, o1] * tmp[g, c, o1, r]
+        if iszero(beta)
+            @tullio avx=true out[f, g, r] = A[f, c, o1] * tmp[g, c, o1, r]
+        else
+            @tullio avx=true out[f, g, r] += A[f, c, o1] * tmp[g, c, o1, r]
+        end
     end
 
     return out
@@ -592,7 +581,8 @@ function _accumulate_mkl!(out::AbstractArray{T, 3},
                           B::AbstractArray,
                           K::AbstractArray,
                           order::Symbol,
-                          temp::Vector{T}) where {T}
+                          temp::Vector{T},
+                          beta::T = one(T)) where {T}
     fdim, cdim, o1dim = size(A)
     gdim = size(B, 1)
     o2dim = size(B, 3)
@@ -610,7 +600,7 @@ function _accumulate_mkl!(out::AbstractArray{T, 3},
         tmp_ = reshape(tmp, fdim * gdim, o1dim * o2dim)
         K_ = reshape(K, rdim, o1dim * o2dim)
         out_ = reshape(out, fdim * gdim, rdim)
-        mul!(out_, tmp_, transpose(K_), one(T), one(T))
+        mul!(out_, tmp_, transpose(K_), one(T), beta)
 
     elseif order === :AK
         tmp = _rmt_temp_view(temp, (fdim, cdim, o2dim, rdim))
@@ -624,7 +614,7 @@ function _accumulate_mkl!(out::AbstractArray{T, 3},
         for r in 1:rdim
             tmp_r2 = reshape(@view(tmp[:, :, :, r]), (fdim, cdim * o2dim))
             out_r = @view(out[:, :, r])
-            mul!(out_r, tmp_r2, B_mat_t, one(T), one(T))
+            mul!(out_r, tmp_r2, B_mat_t, one(T), beta)
         end
 
     else
@@ -639,7 +629,7 @@ function _accumulate_mkl!(out::AbstractArray{T, 3},
         for r in 1:rdim
             tmp_r2 = reshape(@view(tmp[:, :, :, r]), (gdim, cdim * o1dim))
             out_r = @view(out[:, :, r])
-            mul!(out_r, A_mat, transpose(tmp_r2), one(T), one(T))
+            mul!(out_r, A_mat, transpose(tmp_r2), one(T), beta)
         end
     end
 
@@ -649,7 +639,8 @@ end
 function _accumulate_scalar_om!(out::AbstractArray{T, 3},
                                 A::AbstractArray,
                                 B::AbstractArray,
-                                scale::Float64) where {T}
+                                scale::Float64,
+                                beta::T = one(T)) where {T}
     fdim, cdim, o1dim = size(A)
     gdim, cdim2, o2dim = size(B)
     @assert cdim == cdim2
@@ -658,7 +649,7 @@ function _accumulate_scalar_om!(out::AbstractArray{T, 3},
     A_mat = reshape(A, fdim, cdim)
     B_mat = reshape(B, gdim, cdim)
     out_mat = @view out[:, :, 1]
-    mul!(out_mat, A_mat, transpose(B_mat), scale, one(T))
+    mul!(out_mat, A_mat, transpose(B_mat), scale, beta)
     return out
 end
 
@@ -667,11 +658,12 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
                                   B::AbstractArray{T2, 3},
                                   K::AbstractArray,
                                   temp::Vector{T},
-                                  threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD) where {T, T1, T2}
+                                  threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
+                                  beta::T = one(T)) where {T, T1, T2}
     rank_dim, om1_dim, om2_dim = size(K)
 
     if rank_dim == 1 && om1_dim == 1 && om2_dim == 1
-        return _accumulate_scalar_om!(out, A, B, K[1, 1, 1])
+        return _accumulate_scalar_om!(out, A, B, K[1, 1, 1], beta)
     end
 
     fdim, cdim, o1dim = size(A)
@@ -679,9 +671,9 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
     order, cost = _rmt_contract_order(fdim, gdim, cdim, o1dim, o2dim, rank_dim)
 
     if cost < threshold
-        _accumulate_small!(out, A, B, K, order, temp)
+        _accumulate_small!(out, A, B, K, order, temp, beta)
     else
-        _accumulate_mkl!(out, A, B, K, order, temp)
+        _accumulate_mkl!(out, A, B, K, order, temp, beta)
     end
 
     return out
@@ -794,7 +786,7 @@ function _contract_prepared_compress_sector(
     U_mats, factor_arrays, rank_sizes = prepared
 
     result_shape::NTuple{RD_out, Int} = (kept_sizes1..., kept_sizes2..., rank_sizes...)
-    result_data::Array{RT, RD_out} = zeros(RT, result_shape)
+    result_data::Array{RT, RD_out} = Array{RT, RD_out}(undef, result_shape)
     result_view = reshape(result_data,
                           size(first_data1, 1),
                           size(first_data2, 1),
@@ -802,12 +794,15 @@ function _contract_prepared_compress_sector(
 
     for i in eachindex(sector_pairs)
         idx1, idx2 = sector_pairs[i]
+        beta = i == firstindex(sector_pairs) ? zero(RT) : one(RT)
         _contract_RMT_pair_into!(
             result_view,
             work1[idx1],
             work2[idx2],
             factor_arrays[i],
             temp,
+            _RMT_CONTRACT_TULLIO_THRESHOLD,
+            beta,
         )
     end
 

@@ -122,22 +122,6 @@ end
 
 @inline _sum_rmt_iszero(rmt::LurTensor) = iszero(sum(abs2, rmt.data))
 
-function _assert_sum_cgt_metadata(qs, table, interval::UnitRange{Int}, ::Val{N}) where {N}
-    _, first_input, first_sector = table[first(interval)]
-    qfirst = qs[first_input]
-    for pos in Iterators.drop(interval, 1)
-        _, input_index, sector_index = table[pos]
-        q = qs[input_index]
-        for n in 1:N
-            qlabels1, cgp1, _ = _sector_cgt_metadata(qfirst, first_sector, n)
-            qlabels2, cgp2, _ = _sector_cgt_metadata(q, sector_index, n)
-            @assert qlabels1 == qlabels2 "qlabels mismatch at symmetry $n for summed sector"
-            @assert cgp1 == cgp2 "cgp mismatch at symmetry $n for summed sector"
-        end
-    end
-    return nothing
-end
-
 function _sum_single_contribution!(result_keys::Vector{NTuple{QD, QT}},
                                    result_wmats::Vector{NTuple{M, Matrix{Float64}}},
                                    result_RMTs::Vector{LurTensor{T, RD, Array{T, RD}}},
@@ -168,8 +152,6 @@ function _sum_multi_contribution!(result_keys::Vector{NTuple{QD, QT}},
                                   ::Val{QD},
                                   ::Val{N},
                                   ::Val{M}) where {T, QD, QT, M, RD, N, PS}
-    _assert_sum_cgt_metadata(qs, table, interval, Val(N))
-
     K = length(interval)
     new_RMTs = Vector{LurTensor{T, RD, Array{T, RD}}}(undef, K)
     out_pos = 1
@@ -317,7 +299,8 @@ function _accumulate_sum_rmts!(
         factor = _sum_combined_factor(factors, i, Val(M))
         @assert size(source_mat, 2) == size(factor, 2)
         @assert size(result_mat, 2) == size(factor, 1)
-        mul!(result_mat, source_mat, transpose(factor), one(T), one(T))
+        beta = i == firstindex(new_RMTs) ? zero(T) : one(T)
+        mul!(result_mat, source_mat, transpose(factor), one(T), beta)
     end
     return result_mat
 end
@@ -335,7 +318,8 @@ function _accumulate_sum_rmts!(
         factor = factors[1, i]
         @assert size(source_mat, 2) == size(factor, 2)
         @assert size(result_mat, 2) == size(factor, 1)
-        mul!(result_mat, source_mat, transpose(factor), one(T), one(T))
+        beta = i == firstindex(new_RMTs) ? zero(T) : one(T)
+        mul!(result_mat, source_mat, transpose(factor), one(T), beta)
     end
     return result_mat
 end
@@ -370,7 +354,8 @@ function _compress_sum_sector(
     physical_dim = prod(physical_sizes; init=1)
     rank_sizes = _sum_sector_rank_sizes(factors, PS, Val(N), Val(M))
     rank_dim = prod(rank_sizes; init=1)
-    result_data = zeros(T, (physical_sizes..., rank_sizes...))
+    result_dims::NTuple{RD, Int} = (physical_sizes..., rank_sizes...)
+    result_data::Array{T, RD} = Array{T, RD}(undef, result_dims)
     result_mat = reshape(result_data, physical_dim, rank_dim)
 
     _accumulate_sum_rmts!(result_mat, new_RMTs, factors, physical_dim, Val(M))
