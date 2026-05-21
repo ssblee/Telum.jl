@@ -20,10 +20,10 @@ function MajumdarGhoshMPO(J, N)
 
     qss = Matrix{TLArray{Float64, 4, 1, 5}}(undef, 4, 4)
 
-    i4d = addSingleton(q.I, (3, 4); itag=("left", "right"), dir=('+', '-'))
+    i4d = addSingleton(q.I; nlegs=2, itag=("left", "right"), dir=('+', '-'))
     s4d = addSingleton(q.S, 3; itag="left", dir='+')
     s4d = setitag(s4d, 4, "right")
-    sc4d = addSingleton(q.S', 4; itag="right", dir='-')
+    sc4d = addSingleton(q.S'; itag="right", dir='-')
     sc4d = permutedims(setitag(sc4d, 3, "left"), (2, 1, 3, 4))
     opid = TLArray(getIdentity((q.S, 3)), ("left", "right"))
 
@@ -42,7 +42,7 @@ function HubbardMPO(U, μ, t, N)
     nloc = lock(q.F', 2) * q.F
 
     qss = Matrix{TLArray{Float64, 4, 2, 6}}(undef, 4, 4)
-    i4d = addSingleton(q.I, (3, 4); itag=("left", "right"), dir=('+', '-'))
+    i4d = addSingleton(q.I; nlegs=2, itag=("left", "right"), dir=('+', '-'))
     ZF_flip = setitag(legflip(lock(q.Z, 1) * q.F, 3), 3, "left")
     FcZ = permutedims(q.F' * lock(q.Z, 2), (1, 3, 2))
 
@@ -52,10 +52,10 @@ function HubbardMPO(U, μ, t, N)
     fc_flip = setitag(permutedims(fc_flip, (2, 1, 3, 4)), 4, "right")
 
     qss[1, 1] = qss[4, 4] = i4d
-    qss[2, 1] = setitag(addSingleton(FcZ, 4; itag="right", dir='-'), 3, "left")
-    qss[3, 1] = addSingleton(ZF_flip, 4; itag="right", dir='-')
-    qss[4, 1] = addSingleton(lock(nloc - 1, 1) * nloc * U / 2 - μ * nloc, (3, 4);
-        itag=("left", "right"), dir=('+', '-'))
+    qss[2, 1] = setitag(addSingleton(FcZ; itag="right", dir='-'), 3, "left")
+    qss[3, 1] = addSingleton(ZF_flip; itag="right", dir='-')
+    qss[4, 1] = addSingleton(lock(nloc - 1, 1) * nloc * U / 2 - μ * nloc;
+        nlegs=2, itag=("left", "right"), dir=('+', '-'))
     qss[4, 2] = -t * f4d
     qss[4, 3] = -t * fc_flip
 

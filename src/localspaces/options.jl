@@ -34,12 +34,12 @@ abstract type LocalSpaceOptions end
 Options for a pure spin-`spin` local space with `symmetry` ∈ {`SU{2}`, `U1`, …}.
 
 # Fields
-- `symmetry :: Type{<:Symmetry}` – symmetry group for the spin degree of freedom.
-- `spin     :: Rational{Int}`    – spin quantum number (e.g. `1//2`, `1`, `3//2`).
+- `symmetry :: Symbol` – symmetry group for the spin degree of freedom.
+- `spin     :: Int`    – 2 * spin quantum number (e.g. `1`, `2`, `3`).
 """
 struct SpinOptions <: LocalSpaceOptions
-    symmetry::Type{<:Symmetry}
-    spin::Rational{Int}
+    symmetry::Symbol
+    spin::Int 
 end
 
 # ── Spinless fermion ──────────────────────────────────────────────────────────

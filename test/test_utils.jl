@@ -1212,6 +1212,8 @@ function test_missing_spaces_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-
     d_rows = [r for r in D.sectors if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(D))) == removed_sector]
     for d_row in d_rows
         @test all(cgr.cgp == expected_cgp for cgr in d_row.cgrs)
+        d_mat = reshape(d_row.RMT.data, size(d_row.RMT.data, 1), size(d_row.RMT.data, 2))
+        @test iszero(d_mat)
     end
 
     @test any(ql == removed_sector for (ql, _) in D.spaces[1])
@@ -1219,6 +1221,22 @@ function test_missing_spaces_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-
     VtV = V' * lock(V, 2)
     arr_VtV = Array(to_sparse_array(VtV))
     @test norm(arr_VtV - Matrix(I, size(arr_VtV, 1), size(arr_VtV, 2))) < tol
+end
+
+function test_missing_spaces_eigen_zero_diagonal()
+    q = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing), ("lur", "lur", "op"))
+    result = eigen(q.I + q.Z; hermitian = true)
+
+    vals = Float64[]
+    for sector_index in 1:result.D.nsectors
+        rmt = result.D.RMTs[sector_index].data
+        mat = reshape(rmt, size(rmt, 1), size(rmt, 2))
+        append!(vals, diag(mat))
+    end
+    sort!(vals)
+    @test vals == [2.0, 2.0]
+    @test 1.0 ∉ vals
+    @test sort(first.(result.eig_list)) == [0.0, 2.0, 2.0]
 end
 
 # ─── test_truncate_missing_zero_spaces_eigen ────────────────────────────────
@@ -1983,6 +2001,18 @@ function test_svd_cgtsvd_factorization(option::LocalSpaceOptions;
     Vdiso = lock(Vd, 1) * Vd'
     arr_Vdiso = Array(to_sparse_array(Vdiso))
     @test norm(arr_Vdiso - Matrix(I, size(arr_Vdiso, 1), size(arr_Vdiso, 2))) < tol
+end
+
+function test_svd_cgtsvd_heterogeneous_product_qlabels()
+    q = getLocalSpace(FermionSOptions(3, :U1, :SU2, :SU3))
+
+    U, S, Vd = svd(q.S, (1, 2))
+
+    @test U isa TLArray
+    @test S isa TLArray
+    @test Vd isa TLArray
+    @test qlabeltype(U) == qlabeltype(q.S)
+    @test qlabeltype(Vd) == qlabeltype(q.S)
 end
 
 function test_truncate_svd_cgtsvd(option::LocalSpaceOptions)

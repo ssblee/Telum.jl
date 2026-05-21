@@ -44,8 +44,8 @@ _svd_sector_qlabels(q::TLArray, sector_index::Int, N::Int) =
     Tuple(sector_qlabel(q, sector_index, 1)[n] for n in 1:N)
 
 @inline function _svd_physical_qlabels(::Type{QT},
-                                       qlabels_by_symm::NTuple{N},
-                                       cgp_by_symm::NTuple{N},
+                                       qlabels_by_symm::Tuple{Vararg{Tuple, N}},
+                                       cgp_by_symm::Tuple{Vararg{NTuple{QD, Int}, N}},
                                        ::Val{QD}) where {QT, N, QD}
     return ntuple(Val(QD)) do leg
         ntuple(n -> qlabels_by_symm[n][cgp_by_symm[n][leg]], Val(N))::QT

@@ -46,9 +46,8 @@ symmetry sectors:
                    Cartan / charge operators for that symmetry.
 - `lowering_ops` – `NTuple{N, Vector{<:AbstractMatrix}}`, lowering operators
                    (empty vector for purely abelian symmetries).
-- `mwirops`      – `Dict{Symbol, Tuple{AbstractMatrix, Float64}}` mapping the
-                   returned operator names to their maximal-weight operator and
-                   overall prefactor.
+- `mwirops`      – `Dict{Symbol, AbstractMatrix}` mapping the returned operator
+                   names to their scaled maximal-weight operator.
 """
 function getSymmetryInfo(opts::LocalSpaceOptions)
     error("getSymmetryInfo not implemented for $(typeof(opts))")
@@ -162,12 +161,10 @@ function reduceto2d(symm::NTuple{N, Any},
     return reduced
 end
 
-function multiplyNreduce!(symm::NTuple{N, Any}, 
-    data_full::Vector{Tuple{NTuple{3, NTuple{N, Tuple{Vararg{Int}}}}, Array{Float64, M}}}, 
-    float_fac::Float64) where {N, M}
+function reduce_irop_blocks(symm::NTuple{N, Any}, 
+    data_full::Vector{Tuple{NTuple{3, NTuple{N, Tuple{Vararg{Int}}}}, Array{Float64, M}}}) where {N, M}
 
     @assert M == N + 3
-    for (_, block) in data_full block .*= float_fac end
 
     third_dim_qlabel = first(data_full)[1][3]
     is_third_singleton = all(all(iszero, qlabel) for qlabel in third_dim_qlabel)
@@ -210,7 +207,7 @@ function getLocalSpace(opts::LocalSpaceOptions,
 
     dir = ['+', '-', '-']
     Telum = Dict{Symbol, TLArray}()
-    for (name, (mwirop, float_fac)) in mwirops
+    for (name, mwirop) in mwirops
         # Step 3 – get full IROP in the symmetry-adapted basis
         irop_full, irop_qlabel = get_IROP(symm, weights, lowering_ops, mwirop)
         transf_basis!(irop_full, ortho_vecs)
@@ -219,8 +216,8 @@ function getLocalSpace(opts::LocalSpaceOptions,
 
         # Step 4 – compress each IROP matrix into a TLArray object
         data_full = decompose_irop(symm, irop_full, space_list, irop_qlabel)
-        # Multiply float factor and reduce to 2D if the third dimension is singleton
-        reduced = multiplyNreduce!(symm, data_full, float_fac)
+        # Reduce to 2D if the third dimension is singleton.
+        reduced = reduce_irop_blocks(symm, data_full)
 
         qd = length(first(reduced)[1])
         inds = Tuple(TLIndex(tags[i], dir[i]) for i in 1:3)

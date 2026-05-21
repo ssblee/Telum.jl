@@ -204,29 +204,29 @@ function chan_symmops(opts::FermionSOptions, basic_ops)
 end
 
 function _add_spin_components!(
-    mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
+    mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
     channs::AbstractVector{<:Integer},
     N::Int,
     basic_ops)
 
     suffix_channs = collect(channs)
     mwirops[_spin_symbol(suffix_channs, N, "p")] =
-        (sum(basic_ops.SS[i]' for i in suffix_channs), -1 / sqrt(2))
+        (-1 / sqrt(2)) * sum(basic_ops.SS[i]' for i in suffix_channs)
     mwirops[_spin_symbol(suffix_channs, N, "z")] =
-        (sum(basic_ops.SZ[i] for i in suffix_channs), 1 / 2)
+        (1 / 2) * sum(basic_ops.SZ[i] for i in suffix_channs)
     mwirops[_spin_symbol(suffix_channs, N, "m")] =
-        (sum(basic_ops.SS[i] for i in suffix_channs), 1 / sqrt(2))
+        (1 / sqrt(2)) * sum(basic_ops.SS[i] for i in suffix_channs)
 end
 
 function _add_spin_irop!(
-    mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
+    mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
     channs::AbstractVector{<:Integer},
     N::Int,
     basic_ops)
 
     suffix_channs = collect(channs)
     mwirops[_spin_symbol(suffix_channs, N)] =
-        (sum(basic_ops.SS[i]' for i in suffix_channs), -1 / sqrt(2))
+        (-1 / sqrt(2)) * sum(basic_ops.SS[i]' for i in suffix_channs)
 end
 
 """
@@ -248,7 +248,7 @@ Channel-symmetry groups must either be disjoint from all spin-symmetry groups,
 or be contained in exactly one already selected multi-channel spin group.
 Crossing multiple spin groups is ambiguous and raises an error.
 """
-function add_spin_irop!(mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}}, 
+function add_spin_irop!(mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}}, 
                    opts::FermionSOptions, basic_ops)
     N = opts.nchannels
 
@@ -427,7 +427,7 @@ function _split_annihilation_blocks_by_channel_symmetry(blocks, opts::FermionSOp
 end
 
 function _add_annihilation_block!(
-    mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
+    mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
     block,
     N::Int,
     basic_ops)
@@ -437,20 +437,20 @@ function _add_annihilation_block!(
 
     if !block.charge_su2 && !block.spin_su2
         mwirops[_fermion_symbol(channs, N, "u")] =
-            (sum(basic_ops.FF[1, i] for i in op_channs), 1.0)
+            sum(basic_ops.FF[1, i] for i in op_channs)
         mwirops[_fermion_symbol(channs, N, "d")] =
-            (sum(basic_ops.FF[2, i] for i in op_channs), 1.0)
+            sum(basic_ops.FF[2, i] for i in op_channs)
     elseif block.charge_su2 && !block.spin_su2
         mwirops[_fermion_symbol(channs, N, "u")] =
-            (sum(basic_ops.FF[2, i]' for i in op_channs), 1.0)
+            sum(basic_ops.FF[2, i]' for i in op_channs)
         mwirops[_fermion_symbol(channs, N, "d")] =
-            (sum(basic_ops.FF[1, i]' for i in op_channs), 1.0)
+            sum(basic_ops.FF[1, i]' for i in op_channs)
     elseif !block.charge_su2 && block.spin_su2
         mwirops[_fermion_symbol(channs, N)] =
-            (sum(basic_ops.FF[2, i] for i in op_channs), 1.0)
+            sum(basic_ops.FF[2, i] for i in op_channs)
     else
         mwirops[_fermion_symbol(channs, N)] =
-            (sum(basic_ops.FF[1, i]' for i in op_channs), 1.0)
+            sum(basic_ops.FF[1, i]' for i in op_channs)
     end
 end
 
@@ -470,7 +470,7 @@ spin are not both SU(2)-fused.  `F<indices>` is emitted when SU(2) spin fuses
 the spin-up and spin-down annihilation components.  If the set also has channel
 symmetry, the maximal-weight operator is taken only from `last(indices)`.
 """
-function add_annihilation_irop!(mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}}, 
+function add_annihilation_irop!(mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}}, 
                             opts::FermionSOptions, basic_ops)
     N = opts.nchannels
 
@@ -532,11 +532,11 @@ function getSymmetryInfo(opts::FermionSOptions)
     end
 
     totalN = diag(sum(basic_ops.NN[i] for i in 1:2*N))
-    mwirops = Dict{Symbol, Tuple{AbstractMatrix, Float64}}()
+    mwirops = Dict{Symbol, SparseMatrixCSC{Float64, Int}}()
     add_spin_irop!(mwirops, opts, basic_ops)
     add_annihilation_irop!(mwirops, opts, basic_ops)
-    mwirops[:Z] = (diagm([i%2==0 ? 1 : -1 for i in totalN]), 1.0)
-    mwirops[:I] = (sparse(I, 4^N, 4^N), 1.0)
+    mwirops[:Z] = spdiagm(0 => Float64[i%2==0 ? 1 : -1 for i in totalN])
+    mwirops[:I] = spdiagm(0 => ones(Float64, 4^N))
 
     return Tuple(symms), Tuple(weights), Tuple(lowering_ops), mwirops
 end

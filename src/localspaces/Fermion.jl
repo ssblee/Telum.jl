@@ -188,7 +188,7 @@ function _split_fermion_annihilation_blocks_by_channel_symmetry(blocks, opts::Fe
 end
 
 function _add_fermion_annihilation_block!(
-    mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
+    mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
     block,
     N::Int,
     basic_ops)
@@ -196,7 +196,7 @@ function _add_fermion_annihilation_block!(
     channs = block.channs
     op_channs = block.channel_symm ? [last(channs)] : channs
     mwirops[_fermion_symbol(channs, N)] =
-        (sum(basic_ops.FF[i] for i in op_channs), 1.0)
+        sum(basic_ops.FF[i] for i in op_channs)
 end
 
 """
@@ -206,7 +206,7 @@ Add spinless fermion annihilation IROPs to the maximal-weight IROP dictionary.
 When a generated operator covers all channels, the channel suffix is omitted.
 """
 function add_annihilation_irop!(
-    mwirops::Dict{Symbol, Tuple{AbstractMatrix, Float64}},
+    mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
     opts::FermionOptions,
     basic_ops)
 
@@ -249,10 +249,10 @@ function getSymmetryInfo(opts::FermionOptions)
     end
 
     totalN = diag(sum(basic_ops.NN[i] for i in 1:N))
-    mwirops = Dict{Symbol, Tuple{AbstractMatrix, Float64}}()
+    mwirops = Dict{Symbol, SparseMatrixCSC{Float64, Int}}()
     add_annihilation_irop!(mwirops, opts, basic_ops)
-    mwirops[:Z] = (diagm([isodd(i) ? -1 : 1 for i in totalN]), 1.0)
-    mwirops[:I] = (sparse(I, 2^N, 2^N), 1.0)
+    mwirops[:Z] = spdiagm(0 => Float64[isodd(i) ? -1 : 1 for i in totalN])
+    mwirops[:I] = spdiagm(0 => ones(Float64, 2^N))
 
     return Tuple(symms), Tuple(weights), Tuple(lowering_ops), mwirops
 end

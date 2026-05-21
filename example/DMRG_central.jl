@@ -11,7 +11,7 @@ function init_MPS(MPO::Vector{<:TLArray}, Nkeep::Int, Nkeep_last::Int=1; tol=0.0
     N = length(MPO); MPS = Vector{TLArray{Float64, 3}}(undef, N)
     zq = zero_qlabels(MPO[1])
     Aprev = getvac(MPO[1], ("SLeft", "SLeft"))
-    Hprev = addSingleton(Aprev, 3; itag="OLeft", dir='-')
+    Hprev = addSingleton(Aprev; itag="OLeft", dir='-')
     E, sp = nothing, nothing
 
     for i=1:N

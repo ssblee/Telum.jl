@@ -1641,22 +1641,41 @@ function _format_qindex(idx::TLIndex)
     return "\"$(idx.itags)$(idx.dir)\"$(_qindex_plev_string(idx.plev))$(_qindex_lock_string(idx.lock))"
 end
 
-# Special pretty-printing for 0-dimensional TLArray (scalar result of full contraction).
-function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, 0, N, N}) where {T, N}
-    symm_names = join((totxt(s) for s in symm(qs)), ", ")
-    print(io, "0D TLArray{$T}, $N symmetries [$symm_names]: ", _fmt_scalar_str(qs[]))
-end
-
-function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
-    # --- Header: symmetries and leg dirs/tags on one line ---
-    # Format:  TLArray{...}  [Sym1, Sym2]  ["tag1"+, "tag2"-', ...]
+function _print_tlarray_header(io::IO, qs::TLArray{T, QD, N}) where {T, QD, N}
     symm_names = join((totxt(s) for s in symm(qs)), ", ")
     print(io, "$(QD)D TLArray, $N symmetries [$symm_names]")
     leg_strs = map(qs.inds) do idx
         raw = _format_qindex(idx)
         idx.dual ? "\e[32m$(raw)\e[0m" : raw
     end
-    println(io, "  [", join(leg_strs, ", "), "]")
+    print(io, "  [", join(leg_strs, ", "), "]")
+end
+
+function _print_tlarray_header(io::IO, qs::TLArray{T, 0, N}) where {T, N}
+    symm_names = join((totxt(s) for s in symm(qs)), ", ")
+    print(io, "0D TLArray{$T}, $N symmetries [$symm_names]")
+end
+
+"""
+    printmeta([io::IO], q::TLArray)
+
+Print only the non-RMT metadata line for `q`, matching the non-numerical prefix
+of the standard `TLArray` text display.
+"""
+printmeta(io::IO, q::TLArray) = _print_tlarray_header(io, q); println()
+printmeta(q::TLArray) = printmeta(stdout, q)
+
+# Special pretty-printing for 0-dimensional TLArray (scalar result of full contraction).
+function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, 0, N, N}) where {T, N}
+    _print_tlarray_header(io, qs)
+    print(io, ": ", _fmt_scalar_str(qs[]))
+end
+
+function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
+    # --- Header: symmetries and leg dirs/tags on one line ---
+    # Format:  TLArray{...}  [Sym1, Sym2]  ["tag1"+, "tag2"-', ...]
+    _print_tlarray_header(io, qs)
+    println(io)
 
     # --- Sectors: one per line with global label width for cross-sector alignment ---
     nr = nsectors(qs)

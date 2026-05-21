@@ -76,11 +76,12 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
             push!(eig_list, (zero(T_out), cgt_dim, sector_qlabels, j))
         end
 
+        rmt_zero = LurTensor(zeros(T_out, dim, dim, ones(Int, N)...))
         rmt_eye = LurTensor(reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...))
         identity_wmats = _eig_identity_wmats(symm, sector_qlabels)
 
         push!(qlabels_D, sector_qlabels)
-        push!(RMTs_D, rmt_eye)
+        push!(RMTs_D, rmt_zero)
         push!(qlabels_V, sector_qlabels)
         push!(RMTs_V, rmt_eye)
         for n in 1:N

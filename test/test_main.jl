@@ -4,6 +4,8 @@
     @test :SU in names(Telum)
     @test :SO in names(Telum)
     @test :Sp in names(Telum)
+    @test :printmeta in names(Telum)
+    @test :getSymmetryInfo in names(Telum)
 
     @test Telum.Z === LurCGT.Z
     @test Telum.U1 === LurCGT.U1
@@ -51,8 +53,8 @@ function Telum.getSymmetryInfo(::NonCommutingSymmetryOptions)
     weights = ([(1,), (-1,)], [(1,), (-1,)])
     lowering_ops = (Matrix{Int}[], [sparse([0 0; 1 0])])
 
-    mwirops = Dict{Symbol, Tuple{AbstractMatrix{Int}, Float64}}()
-    mwirops[:I] = (sparse(I, 2, 2), 1.0)
+    mwirops = Dict{Symbol, SparseMatrixCSC{Float64, Int}}()
+    mwirops[:I] = spdiagm(0 => ones(Float64, 2))
     return symm, weights, lowering_ops, mwirops
 end
 
@@ -142,6 +144,7 @@ end
 @testset "CGTSVD full svd factorization" begin
     test_svd_cgtsvd_factorization(FermionSOptions(1, :U1, :SU2, nothing))
     test_svd_cgtsvd_factorization(FermionSOptions(3, :U1, :SU2, :SU3))
+    test_svd_cgtsvd_heterogeneous_product_qlabels()
 end
 
 @testset "CGTSVD truncation" begin
@@ -163,6 +166,7 @@ end
 @testset "missing spaces of eigen" begin
     test_missing_spaces_eigen(FermionSOptions(1, :U1, :SU2, nothing))
     test_missing_spaces_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
+    test_missing_spaces_eigen_zero_diagonal()
 end
 
 @testset "truncate missing zero spaces of eigen" begin
@@ -1115,6 +1119,21 @@ end
         @test (show(buf, MIME"text/plain"(), q); true)
         # output should mention "(empty)"
         @test occursin("empty", String(take!(buf)))
+    end
+
+    @testset "printmeta on TLArray" begin
+        option = FermionSOptions(1, :U1, :SU2, nothing)
+        q0 = getLocalSpace(option)
+        q = TLArray(q0.F, ("site1", "site2", "op"))
+
+        meta = sprint(printmeta, q)
+        shown = sprint(show, MIME"text/plain"(), q)
+
+        @test meta == first(split(shown, '\n'))
+        @test occursin("3D TLArray", meta)
+        @test occursin("site1", meta)
+        @test !occursin('\n', meta)
+        @test !occursin("1.\t", meta)
     end
 end
 
