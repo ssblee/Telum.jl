@@ -1662,7 +1662,10 @@ end
 Print only the non-RMT metadata line for `q`, matching the non-numerical prefix
 of the standard `TLArray` text display.
 """
-printmeta(io::IO, q::TLArray) = _print_tlarray_header(io, q); println()
+function printmeta(io::IO, q::TLArray) 
+    _print_tlarray_header(io, q)
+    println()
+end
 printmeta(q::TLArray) = printmeta(stdout, q)
 
 # Special pretty-printing for 0-dimensional TLArray (scalar result of full contraction).
