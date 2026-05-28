@@ -813,7 +813,8 @@ function test_svdQS(q::TLArray{T, QD, N, RD},
     NL, NR = length(left_legs), length(right_legs)
     
     # Step 1: Perform SVD
-    U, S, Vd = svd(q, left_legs; cutoff=cutoff)
+    result = svd(q, left_legs; cutoff=cutoff)
+    U, S, Vd = result.U, result.S, result.Vd
     
     if verbose
         println("SVD completed:")
@@ -1559,7 +1560,8 @@ function test_spaces_svdQS(option::LocalSpaceOptions)
     end
 
     # ── No-truncation case ──────────────────────────────────────────────────
-    U, S, Vd = svd(ct, (1, 2))
+    result = svd(ct, (1, 2))
+    U, S, Vd = result.U, result.S, result.Vd
     println("test_spaces_svdQS (no trunc): U bond=$(length(U.spaces[end])), " *
             "S=$(length(S.spaces[1]))/$(length(S.spaces[2])), " *
             "Vd bond=$(length(Vd.spaces[1])) sectors")
@@ -1581,7 +1583,8 @@ function test_spaces_svdQS(option::LocalSpaceOptions)
     @test Vd.spaces[2] == ct.spaces[3]
 
     # ── Truncation case (Nkeep=1) ───────────────────────────────────────────
-    Ut, St, Vdt = svd(ct, (1, 2); Nkeep = 1)
+    result_t1 = svd(ct, (1, 2); Nkeep = 1)
+    Ut, St, Vdt = result_t1.U, result_t1.S, result_t1.Vd
     println("test_spaces_svdQS (Nkeep=1): Ut bond=$(length(Ut.spaces[end])), " *
             "St=$(length(St.spaces[1]))/$(length(St.spaces[2])) sectors")
 
@@ -1603,7 +1606,8 @@ function test_spaces_svdQS(option::LocalSpaceOptions)
     @test Vdt.spaces[2] == ct.spaces[3]
 
     # ── Truncation case (Nkeep=2) ───────────────────────────────────────────
-    Ut, St, Vdt = svd(ct, (1, 2); Nkeep = 2)
+    result_t2 = svd(ct, (1, 2); Nkeep = 2)
+    Ut, St, Vdt = result_t2.U, result_t2.S, result_t2.Vd
     println("test_spaces_svdQS (Nkeep=2): Ut bond=$(length(Ut.spaces[end])), " *
             "St=$(length(St.spaces[1]))/$(length(St.spaces[2])) sectors")
 
@@ -1959,10 +1963,10 @@ function _svd_reconstruction_permutation(left_legs, rank::Int)
 end
 
 function _diag_singular_values(q::TLArray)
-    isempty(q.sectors) && return Float64[]
     vals = Float64[]
-    for r in q.sectors
-        mat = reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))
+    for sector_index in 1:Telum.nsectors(q)
+        rmt = Telum.sector_rmt(q, sector_index).data
+        mat = reshape(rmt, size(rmt, 1), size(rmt, 2))
         append!(vals, diag(mat))
     end
     return vals
@@ -1973,7 +1977,8 @@ function test_svd_cgtsvd_factorization(option::LocalSpaceOptions;
                                        tol::Float64 = 1e-9)
     ct, left_legs = _svd_cgtsvd_fixture(option)
 
-    U, S, Vd = svd_cgtsvd(ct, left_legs; cutoff=cutoff)
+    result = svd_cgtsvd(ct, left_legs; cutoff=cutoff)
+    U, S, Vd = result.U, result.S, result.Vd
 
     @test U isa TLArray
     @test S isa TLArray
@@ -2006,7 +2011,8 @@ end
 function test_svd_cgtsvd_heterogeneous_product_qlabels()
     q = getLocalSpace(FermionSOptions(3, :U1, :SU2, :SU3))
 
-    U, S, Vd = svd(q.S, (1, 2))
+    result = svd(q.S, (1, 2))
+    U, S, Vd = result.U, result.S, result.Vd
 
     @test U isa TLArray
     @test S isa TLArray
@@ -2018,18 +2024,38 @@ end
 function test_truncate_svd_cgtsvd(option::LocalSpaceOptions)
     ct, left_legs = _svd_cgtsvd_fixture(option)
 
-    _, Sfull, _ = svd_cgtsvd(ct, left_legs; cutoff=0.0)
+    full_result = svd_cgtsvd(ct, left_legs; cutoff=0.0, get_lists=true)
+    Sfull = full_result.S
     full_vals = sort(_diag_singular_values(Sfull); rev=true)
     nkeep = min(2, length(full_vals))
     @test nkeep > 0
 
-    U, S, Vd = svd_cgtsvd(ct, left_legs; cutoff=0.0, Nkeep=nkeep)
+    default_result = svd_cgtsvd(ct, left_legs; cutoff=0.0, Nkeep=nkeep)
+    @test default_result isa Telum.SVDResult
+    @test default_result.kept_list === nothing
+    @test default_result.trunc_list === nothing
+
+    result = svd_cgtsvd(ct, left_legs; cutoff=0.0, Nkeep=nkeep, get_lists=true)
+    @test result isa Telum.SVDResult
+    U, S, Vd = result.U, result.S, result.Vd
     kept_vals = sort(_diag_singular_values(S); rev=true)
 
     @test length(kept_vals) == nkeep
     @test kept_vals ≈ full_vals[1:nkeep]
     @test U.spaces[end] == S.spaces[1]
     @test Vd.spaces[1] == S.spaces[2]
+    @test length(result.kept_list) == nkeep
+    @test first.(result.kept_list) ≈ full_vals[1:nkeep]
+    @test first.(result.trunc_list) ≈ full_vals[nkeep+1:end]
+    @test all(entry -> length(entry) == 4, result.kept_list)
+    @test all(entry -> entry[4] >= 1, result.kept_list)
+
+    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=0.0)
+    cutoff_result = Telum._assemble_svd_cgtsvd(
+        ct, prep.left_legs, prep.right_legs, "svdL", "svdR", prep;
+        cutoff=1.0, get_lists=true)
+    @test isempty(cutoff_result.kept_list)
+    @test sort(first.(cutoff_result.trunc_list); rev=true) ≈ full_vals
 end
 
 function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
@@ -2102,19 +2128,20 @@ function test_truncate_svdQS(option::LocalSpaceOptions)
     end
 
     npositive_keep = min(2, length(all_positive_vals))
-    Utop, Stop, Vdtop = svd(A, (1,); Nkeep = npositive_keep)
+    result_top = svd(A, (1,); Nkeep = npositive_keep)
+    Utop, Stop, Vdtop = result_top.U, result_top.S, result_top.Vd
 
     @test Utop.spaces[1] == A.spaces[1]
     @test Vdtop.spaces[2] == A.spaces[2]
     @test Utop.spaces[2] == Stop.spaces[1]
     @test Vdtop.spaces[1] == Stop.spaces[2]
 
-    kept_vals = isempty(Stop.sectors) ? Float64[] :
-        sort(vcat([diag(reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))) for r in Stop.sectors]...))
+    kept_vals = sort(_diag_singular_values(Stop))
     expected_vals = sort(all_positive_vals; rev = true)[1:npositive_keep] |> sort
     @test kept_vals ≈ expected_vals
 
-    U, S, Vd = svd(A, (1,); Nkeep = length(all_positive_vals))
+    result = svd(A, (1,); Nkeep = length(all_positive_vals))
+    U, S, Vd = result.U, result.S, result.Vd
 
     @test U.spaces[1] == A.spaces[1]
     @test Vd.spaces[2] == A.spaces[2]

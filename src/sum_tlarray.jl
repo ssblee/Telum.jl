@@ -131,12 +131,12 @@ function _sum_single_contribution!(result_keys::Vector{NTuple{QD, QT}},
     key, input_index, sector_index = entry
     q = qs[input_index]
     source_rmt = sector_rmt(q, sector_index)
-    rmt = QD == 0 || QD == 2 ? LurTensor(Array{T, RD}(source_rmt.data)) :
+    rmt = QD == 0 ? LurTensor(Array{T, RD}(source_rmt.data)) :
           _sum_rmt_cpu(T, source_rmt)
     _sum_rmt_iszero(rmt) && return result_keys
     push!(result_keys, key)
-    push!(result_wmats, QD == 0 || QD == 2 ? deepcopy(q.wmats[sector_index]) :
-                                             q.wmats[sector_index])
+    push!(result_wmats, QD == 0 ? deepcopy(q.wmats[sector_index]) :
+                                   q.wmats[sector_index])
     push!(result_RMTs, rmt)
     return result_keys
 end

@@ -118,13 +118,15 @@ end
         _assert_qlabel_storage(from_permuted_only)
         @test norm(from_permuted_only - q) < 1e-10
 
-        sorted = copy(q)
-        Telum.sort_sectors!(sorted)
+        sorted = Telum.sort_sectors(q)
         _assert_qlabel_storage(sorted)
+        @test sorted !== q
+        @test Telum.sector_rmt(sorted, 1).data !== Telum.sector_rmt(q, 1).data
     end
 
     @testset "decomposition assembly keeps orientation" begin
-        U, S, Vd = svd(fermion_su2.F, (1,))
+        result = svd(fermion_su2.F, (1,))
+        U, S, Vd = result.U, result.S, result.Vd
         _assert_qlabel_storage(U)
         _assert_qlabel_storage(S)
         _assert_qlabel_storage(Vd)

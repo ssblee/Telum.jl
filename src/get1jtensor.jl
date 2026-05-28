@@ -54,10 +54,12 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
         qlabels1[1, sector_index] = qlabels
         qlabels1[2, sector_index] = dual_qlabels
 
+        cgt_dim = 1.0
         for n in 1:N
-            spdim = dimension(symm[n], qlabels[n])
-            _set_sector_wmat!(wmats1, PS, sector_index, n, LurTensor([sqrt(spdim);;]))
+            cgt_dim *= dimension(symm[n], qlabels[n])
+            _set_sector_wmat!(wmats1, PS, sector_index, n, LurTensor([1.0;;]))
         end
+        RMT1[:] .*= sqrt(cgt_dim)
 
         RMTs1[sector_index] = RMT1
     end

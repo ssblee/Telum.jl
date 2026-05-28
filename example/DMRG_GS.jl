@@ -88,7 +88,8 @@ function DMRG_GS_1site!(MPS::Vector{<:TLArray{T1, 3}},
             target_tag = i == 1 ? "SLeft" : "SB,$(i-1)"
             if i > 1
                 @time_block time_blocks "Time for svd: " begin
-                    U, S, Vd = svd(M, "temp", target_tag; itag=target_tag)
+                    result = svd(M, "temp", target_tag; itag=target_tag)
+                    U, S, Vd = result.U, result.S, result.Vd
                     MPS[i] = Vd; MPS[i-1] = (MPS[i-1] * U) * S
                 end
             else MPS[i] = M end
@@ -104,7 +105,8 @@ function DMRG_GS_1site!(MPS::Vector{<:TLArray{T1, 3}},
             target_tag = i == N ? "SRight" : "SB,$i"
             if i < N
                 @time_block time_blocks "Time for svd: " begin
-                    U, S, Vd = svd(M, target_tag, "temp"; itag=target_tag, rev=true)
+                    result = svd(M, target_tag, "temp"; itag=target_tag, rev=true)
+                    U, S, Vd = result.U, result.S, result.Vd
                     MPS[i] = U; MPS[i+1] = (MPS[i+1] * Vd) * S
                 end
             else MPS[i] = M end
@@ -136,7 +138,8 @@ function DMRG_GS_2site!(MPS::Vector{<:TLArray{T1, 3}},
             @time_block time_blocks "Time for svd: " begin
                 tags = i == 1 ? ("SLeft", "S,$i") : ("SB,$(i-1)", "S,$i")
                 lids = [findleg(M; itag=t) for t in tags]
-                U, S, Vd = svd(M, lids, "SB,$i,left", "SB,$i,right"; Nkeep=Nkeep)
+                result = svd(M, lids, "SB,$i,left", "SB,$i,right"; Nkeep=Nkeep)
+                U, S, Vd = result.U, result.S, result.Vd
 
                 MPS[i] = removeitag(U * S, "right")
                 MPS[i+1] = removeitag(Vd, "right")
@@ -154,7 +157,8 @@ function DMRG_GS_2site!(MPS::Vector{<:TLArray{T1, 3}},
             @time_block time_blocks "Time for svd: " begin
                 tags = i == 1 ? ("SLeft", "S,$i") : ("SB,$(i-1)", "S,$i")
                 lids = [findleg(M; itag=t) for t in tags]
-                U, S, Vd = svd(M, lids, "SB,$i,left", "SB,$i,right"; Nkeep=Nkeep)
+                result = svd(M, lids, "SB,$i,left", "SB,$i,right"; Nkeep=Nkeep)
+                U, S, Vd = result.U, result.S, result.Vd
 
                 MPS[i] = removeitag(U, "left")
                 MPS[i+1] = removeitag(S * Vd, "left")

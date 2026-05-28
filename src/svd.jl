@@ -11,10 +11,12 @@
 #   Nkeep      : keep the Nkeep largest singular values globally, ignoring
 #                degeneracy and counting missing sectors as zero singular values
 #
-# Returns (U, S, Vd) where:
+# Returns SVDResult(U, S, Vd, kept_list, trunc_list) where:
 #   U  : legs (original left legs...,  bond '+')
 #   S  : legs (left_tag '-',  right_tag '-')  [diagonal, singular values]
 #   Vd : legs (bond '-', original right legs...)
+#   kept_list, trunc_list : singular-value metadata lists when get_lists=true,
+#                           otherwise nothing
 #
 # Convention for bond legs:
 #   U  bond =  TLIndex(left_tag,  '+')   — incoming (enters U from the right)
@@ -40,6 +42,19 @@
 
 # TODO: Implement a version that get left_legs by predicates or various keyword arguments
 # TODO: Test svd with trunction for TLArray object (This is not rigorous yet)
+struct SVDResult{TU, TS, TVD, TKL, TTL}
+    U::TU
+    S::TS
+    Vd::TVD
+    kept_list::TKL
+    trunc_list::TTL
+end
+
+function SVDResult(U::TLArray, S::TLArray, Vd::TLArray, kept_list, trunc_list)
+    return SVDResult{typeof(U), typeof(S), typeof(Vd), typeof(kept_list), typeof(trunc_list)}(
+        U, S, Vd, kept_list, trunc_list)
+end
+
 _svd_sector_qlabels(q::TLArray, sector_index::Int, N::Int) =
     Tuple(sector_qlabel(q, sector_index, 1)[n] for n in 1:N)
 
@@ -728,9 +743,31 @@ function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD},
     )
 end
 
-function _select_svd_cgtsvd_entries(class_results, cutoff::Float64, Nkeep)
+function _svd_cgtsvd_entry_degeneracy(symm::NTuple{N, Any},
+                                      sector::NTuple{N, Tuple{Vararg{Int}}}) where {N}
+    total = 1
+    for n in 1:N
+        total *= dimension(symm[n], sector[n])
+    end
+    return total
+end
+
+function _select_svd_cgtsvd_entries(class_results,
+                                    symm::NTuple{N, Any},
+                                    cutoff::Float64,
+                                    Nkeep;
+                                    get_lists::Bool = false) where {N}
+    return _select_svd_cgtsvd_entries(class_results, symm, cutoff, Nkeep, Val(get_lists))
+end
+
+function _select_svd_cgtsvd_entries(class_results,
+                                    ::NTuple{N, Any},
+                                    cutoff::Float64,
+                                    Nkeep,
+                                    ::Val{false}) where {N}
     entries = Tuple{Float64, Int, Int}[]
     sv_global_max = 0.0
+
     for (ci, result) in enumerate(class_results)
         isempty(result.S) && continue
         sv_global_max = max(sv_global_max, result.S[1])
@@ -753,7 +790,68 @@ function _select_svd_cgtsvd_entries(class_results, cutoff::Float64, Nkeep)
     for keep in keep_per_class
         sort!(keep)
     end
-    return keep_per_class
+
+    return keep_per_class, nothing, nothing
+end
+
+function _select_svd_cgtsvd_entries(class_results,
+                                    symm::NTuple{N, Any},
+                                    cutoff::Float64,
+                                    Nkeep,
+                                    ::Val{true}) where {N}
+    entries = Tuple{Float64, Int, Int}[]
+    sv_global_max = 0.0
+    Entry = Tuple{Float64, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}
+    FullEntry = Tuple{Float64, Int, Int, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}
+    full_entries = FullEntry[]
+    sector_counts = Dict{NTuple{N, Tuple{Vararg{Int}}}, Int}()
+
+    for (ci, result) in enumerate(class_results)
+        isempty(result.S) && continue
+        sv_global_max = max(sv_global_max, result.S[1])
+        sector = result.sector::NTuple{N, Tuple{Vararg{Int}}}
+        offset = get(sector_counts, sector, 0)
+        degeneracy = _svd_cgtsvd_entry_degeneracy(symm, sector)
+        for j in eachindex(result.S)
+            push!(entries, (result.S[j], ci, j))
+            display_sv = result.S[j] * sqrt(Float64(degeneracy))
+            push!(full_entries, (display_sv, ci, j, degeneracy, sector, offset + j))
+        end
+        sector_counts[sector] = offset + length(result.S)
+    end
+
+    thresh = cutoff * sv_global_max
+    filter!(x -> x[1] > thresh, entries)
+    sort!(entries; by = x -> -x[1], alg=MergeSort)
+    if !isnothing(Nkeep)
+        resize!(entries, min(Nkeep, length(entries)))
+    end
+
+    keep_per_class = [Int[] for _ in 1:length(class_results)]
+    for (_, ci, j) in entries
+        push!(keep_per_class[ci], j)
+    end
+    for keep in keep_per_class
+        sort!(keep)
+    end
+
+    selected = Set{Tuple{Int, Int}}()
+    for (_, ci, j) in entries
+        push!(selected, (ci, j))
+    end
+
+    kept_list = Entry[]
+    trunc_list = Entry[]
+    sort!(full_entries; by = x -> -x[1], alg=MergeSort)
+    for (sv, ci, j, degeneracy, sector, full_index) in full_entries
+        entry = (sv, degeneracy, sector, full_index)
+        if (ci, j) in selected
+            push!(kept_list, entry)
+        else
+            push!(trunc_list, entry)
+        end
+    end
+    return keep_per_class, kept_list, trunc_list
 end
 
 function _svd_cgtsvd_class_ranges(class_results, keep_per_class)
@@ -798,6 +896,8 @@ function _build_svd_cgtsvd_S(symm,
         svals = sector_values[sector]
         count = length(svals)
         rmt = LurTensor(reshape(Matrix(Diagonal(svals)), count, count, ones(Int, N)...))
+        cgt_dim = prod(Float64(dimension(symm[n], sector[n])) for n in 1:N)
+        rmt[:] .*= sqrt(cgt_dim)
         push!(RMTs, rmt)
     end
 
@@ -813,7 +913,8 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
                               right_tag::AbstractString,
                               prep;
                               cutoff::Float64 = 1e-12,
-                              Nkeep::Union{Nothing, Int} = nothing) where {T, QD, N, RD, NL, NR}
+                              Nkeep::Union{Nothing, Int} = nothing,
+                              get_lists::Bool = false) where {T, QD, N, RD, NL, NR}
     class_results = Any[]
     for sector in sort!(collect(keys(prep.intermediate_qsector_classes)); alg=MergeSort)
         for class_sectors in prep.intermediate_qsector_classes[sector]
@@ -822,7 +923,9 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
         end
     end
 
-    keep_per_class = _select_svd_cgtsvd_entries(class_results, cutoff, Nkeep)
+    keep_per_class, kept_list, trunc_list =
+        _select_svd_cgtsvd_entries(class_results, symm(q), cutoff, Nkeep;
+                                   get_lists=get_lists)
     class_ranges, sector_counts, sector_order = _svd_cgtsvd_class_ranges(class_results, keep_per_class)
 
     Tout = promote_type(T, Float64)
@@ -936,13 +1039,13 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
     U = TLArray(symm(q), U_qlabels, wmats_U, RMTs_U, inds_U, spaces_U)
     S = _build_svd_cgtsvd_S(symm(q), bond_splist, left_tag, right_tag, sector_values)
     Vd = TLArray(symm(q), Vd_qlabels, wmats_Vd, RMTs_Vd, inds_Vd, spaces_Vd)
-    return U, S, Vd
+    return SVDResult(U, S, Vd, kept_list, trunc_list)
 end
 
 """
-    LinearAlgebra.svd(q, left_legs, left_tag="svdL", right_tag="svdR"; cutoff=1e-12, Nkeep=nothing)
+    LinearAlgebra.svd(q, left_legs, left_tag="svdL", right_tag="svdR"; cutoff=1e-12, Nkeep=nothing, get_lists=false)
 
-CGTSVD-based SVD of a `TLArray`, returning `(U, S, Vd)`.
+CGTSVD-based SVD of a `TLArray`, returning `SVDResult(U, S, Vd, kept_list, trunc_list)`.
 
 Unlike `svd`, this path uses the direct split-space class SVD assembly and
 returns the bond convention requested for CGTSVD:
@@ -956,12 +1059,13 @@ function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
                     left_tag::AbstractString = "svdL",
                     right_tag::AbstractString = "svdR";
                     cutoff::Float64 = 1e-12,
-                    Nkeep::Union{Nothing, Int} = nothing) where {T, QD, N, RD}
+                    Nkeep::Union{Nothing, Int} = nothing,
+                    get_lists::Bool = false) where {T, QD, N, RD}
     @assert isnothing(Nkeep) || Nkeep >= 0 "Nkeep must be non-negative"
     prep = _preprocess_svd_cgtsvd(q, left_legs; tol=cutoff)
     return _assemble_svd_cgtsvd(
         q, prep.left_legs, prep.right_legs, left_tag, right_tag, prep;
-        cutoff=cutoff, Nkeep=Nkeep)
+        cutoff=cutoff, Nkeep=Nkeep, get_lists=get_lists)
 end
 
 svd_cgtsvd(q::TLArray, args...; kwargs...) = svd(q, args...; kwargs...)
@@ -975,9 +1079,10 @@ function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
                     lock=nothing,
                     rev::Bool=false,
                     cutoff::Float64=1e-12,
-                    Nkeep::Union{Nothing, Int}=nothing) where {T, QD, N, RD}
+                    Nkeep::Union{Nothing, Int}=nothing,
+                    get_lists::Bool=false) where {T, QD, N, RD}
     left_legs = _select_svd_left_legs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
-    return svd(q, left_legs, left_tag, right_tag; cutoff=cutoff, Nkeep=Nkeep)
+    return svd(q, left_legs, left_tag, right_tag; cutoff=cutoff, Nkeep=Nkeep, get_lists=get_lists)
 end
 
 function _normalize_svd_left_legs(left_legs, rank::Int)

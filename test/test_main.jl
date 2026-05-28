@@ -1571,7 +1571,9 @@ end
     arr_rank2_added = Array(to_sparse_array(q_rank2_added))
     @test size(arr_rank2_added) == size(arr_rank2_ref)
     @test norm(arr_rank2_added - arr_rank2_ref) < 1e-10
-    @test all(all(cgr.wmat[1] == 1.0 for cgr in r.cgrs) for r in q_rank2_added.rows)
+    @test Telum.sector_wmat(q_rank2, 1, 2) === Telum.sector_wmat(q_rank2_added, 1, 2)
+    @test pointer(Telum.sector_rmt(q_rank2, 1).data) ==
+          pointer(Telum.sector_rmt(q_rank2_added, 1).data)
 end
 
 @testset "deleteSingleton" begin
@@ -1628,6 +1630,9 @@ end
     @test q_rank2_roundtrip.inds == q_rank2.inds
     @test q_rank2_roundtrip.spaces == q_rank2.spaces
     @test Array(to_sparse_array(q_rank2_roundtrip)) == Array(to_sparse_array(q_rank2))
+    @test Telum.sector_wmat(q_rank2_added, 1, 2) === Telum.sector_wmat(q_rank2_roundtrip, 1, 2)
+    @test pointer(Telum.sector_rmt(q_rank2_added, 1).data) ==
+          pointer(Telum.sector_rmt(q_rank2_roundtrip, 1).data)
 
     @test_throws ArgumentError deleteSingleton(q, 1)
     @test_throws ArgumentError deleteSingleton(q_two, (1, 2))
@@ -1737,8 +1742,10 @@ end
     end
 
     @testset "svd keyword leg selection" begin
-        U_ref, S_ref, Vd_ref = svd(q4, (1, 2, 3), "kwL", "kwR")
-        U_kw, S_kw, Vd_kw = svd(q4, "kwL", "kwR"; dir='+')
+        ref = svd(q4, (1, 2, 3), "kwL", "kwR")
+        kw = svd(q4, "kwL", "kwR"; dir='+')
+        U_ref, S_ref, Vd_ref = ref.U, ref.S, ref.Vd
+        U_kw, S_kw, Vd_kw = kw.U, kw.S, kw.Vd
 
         @test U_kw.inds == U_ref.inds
         @test S_kw.inds == S_ref.inds

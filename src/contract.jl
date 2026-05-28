@@ -1582,6 +1582,19 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
         final_RMTs[out_pos] = result_RMT
     end
 
+    #nrow1 = length(permuted_rmts1)
+    #used_rows1 = count(isassigned(permuted_rmts1, i) for i in eachindex(permuted_rmts1))
+    #nrow2 = length(permuted_rmts2)
+    #used_rows2 = count(isassigned(permuted_rmts2, i) for i in eachindex(permuted_rmts2))
+    #println("Contracted $(used_rows1)/$(nrow1) sectors from q1, $(used_rows2)/$(nrow2) sectors from q2")
+    #println("===============================================================")
+    #for i in eachindex(permuted_rmts1)
+    #    if !isassigned(permuted_rmts1, i)
+    #        sz = size(sector_rmt(q1, i))
+    #        println(sz)
+    #    end
+    #end
+
     # ── 6. Lock reduction ────────────────────────────────────────────────────
     changed_inds2 = Set(change_dir(q2.inds[l]) for l in 1:QD2)
     changed_inds1 = Set(change_dir(q1.inds[l]) for l in 1:QD1)

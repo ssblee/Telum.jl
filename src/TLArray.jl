@@ -322,19 +322,6 @@ function _localspace_cgt_fields(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Va
             (qforsymm, cgp, legdir)
         end
 
-        if QD == 2
-            for i in 1:N
-                S = symm[i]
-                q1, q2 = cgt_metadata[i][1]
-                @assert q2 == q1 || q2 == get_dualq(S, q1)
-                dim = dimension(S, q1); @assert dim == dimension(S, q2)
-                @assert size(sector_wmats[i]) == (1, 1)
-                w_factor = sqrt(dim) / sector_wmats[i][1]
-                sector_wmats[i][:] *= w_factor
-                RMT[:] /= w_factor
-            end
-        end
-
         for i in 1:N
             if length(sector_wmats[i].data) == 1 && sector_wmats[i].data[1] < 0
                 sector_wmats[i][:] .*= -1
@@ -429,23 +416,7 @@ end
 _compute_spaces(q::TLArray) = q.spaces
 
 function _normalize_wmats!(q::TLArray{T, QD, N}) where {T, QD, N}
-    if QD == 2
-        for sector_index in 1:nsectors(q)
-            for i in 1:N
-                S = symm(q)[i]
-                isabelian(S) && continue
-                q1 = sector_qlabel(q, sector_index, 1)[i]
-                q2 = sector_qlabel(q, sector_index, 2)[i]
-                @assert q2 == q1 || q2 == get_dualq(S, q1)
-                dim = dimension(S, q1); @assert dim == dimension(S, q2)
-                wmat = sector_wmat(q, sector_index, i)
-                @assert size(wmat) == (1, 1)
-                w_factor = sqrt(dim) / wmat[1]
-                wmat[:] *= w_factor
-                sector_rmt(q, sector_index)[:] /= w_factor
-            end
-        end
-    elseif QD == 0
+    if QD == 0
         for sector_index in 1:nsectors(q)
             for i in 1:N
                 isabelian(symm(q)[i]) && continue
@@ -587,8 +558,7 @@ end
 _tlarray_fields(q::TLArray) = (qlabels = q.qlabels, wmats = q.wmats, RMTs = q.RMTs)
 
 # Drop exactly zero sectors from raw field arrays before constructing a TLArray.
-# For QD == 2 the effective norm² per sector is dim_r * ‖RMT_r‖²
-# (see normalize_qspace!); for all other ranks it is simply ‖RMT_r‖².
+# With isometric stored w-matrices, the effective norm² per sector is ‖RMT_r‖².
 Base.ndims(q::TLArray{T, QD}) where {T, QD} = QD
 
 function _sector_cgt_size_2d(symm::NTuple{N, Any},
@@ -608,9 +578,7 @@ function _sector_norm_sq(symm::NTuple{N, Any},
                          RMTs,
                          sector_index::Int,
                          ::Val{QD}) where {N, QT, QD}
-    rmt_norm = sum(abs2, RMTs[sector_index].data)
-    return QD == 2 ? _sector_cgt_size_2d(symm, qlabels, sector_index) * rmt_norm :
-           rmt_norm
+    return sum(abs2, RMTs[sector_index].data)
 end
 
 function _swap_qlabel_columns!(qlabels::Matrix, i::Int, j::Int)
@@ -658,6 +626,15 @@ function _orient_wmats!(q::TLArray{T, QD, N, RD, QT, PS, M}) where {T, QD, N, RD
         end
     end
     return q
+end
+
+function _display_scalar_rmt(q::TLArray, sector_index::Int)
+    return only(sector_rmt(q, sector_index).data)
+end
+
+function _display_scalar_rmt(q::TLArray{T, 2}, sector_index::Int) where {T}
+    return only(sector_rmt(q, sector_index).data) /
+           sqrt(_sector_cgt_size_2d(q, sector_index))
 end
 
 # Construct a TLArray with the same sectors but with itags replaced.
@@ -1705,7 +1682,7 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
     for i in display_indices
         rmt = sector_rmt(qs, i)
         length(rmt.data) == 1 || continue
-        scalar_width = max(scalar_width, length(_fmt_scalar_str(only(rmt.data))))
+        scalar_width = max(scalar_width, length(_fmt_scalar_str(_display_scalar_rmt(qs, i))))
     end
 
     for (k, i) in enumerate(display_indices)
@@ -1721,64 +1698,27 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
         print(io, "  $i.\t", phys_str, om_str, "\t")
         _print_sector_cgt_dims(io, qs, i)
         _print_sector_qlabels(io, qs, i, widths)
-        length(rmt.data) == 1 && print(io, "\t", lpad(_fmt_scalar_str(only(rmt.data)), scalar_width))
+        length(rmt.data) == 1 &&
+            print(io, "\t", lpad(_fmt_scalar_str(_display_scalar_rmt(qs, i)), scalar_width))
         QD == 2 && print(io, "\t√", _sector_cgt_size_2d(qs, i))
         k < length(display_indices) && println(io)
     end
 end
 
-# Normalize TLArray w-matrices in-place.
-# - For 2D: set each wmat[1] = sqrt(dim) so the CGT contributes identity scaling.
-# - For 0D: set all wmat elements to 1.0, absorbing factors into RMT.
-# - For other dimensions: no-op.
-function normalize_qspace!(q::TLArray{T, QD, N}) where {T, QD, N}
-    if QD == 2
-        for sector_index in 1:nsectors(q)
-            for i in 1:N
-                S = symm(q)[i]
-                isabelian(S) && continue
-                qlabels, _, _ = _sector_cgt_metadata(q, sector_index, i)
-                q1, q2 = qlabels
-                wmat = sector_wmat(q, sector_index, i)
-                @assert q2 == q1 || q2 == get_dualq(S, q1)
-                dim = dimension(S, q1); @assert dim == dimension(S, q2)
-                @assert size(wmat) == (1, 1) # No outer multiplicity
-                w_factor = sqrt(dim) / wmat[1]
-                wmat[:] *= w_factor
-                sector_rmt(q, sector_index)[:] /= w_factor
-            end
-        end
-    elseif QD == 0
-        for sector_index in 1:nsectors(q)
-            for i in 1:N
-                isabelian(symm(q)[i]) && continue
-                wmat = sector_wmat(q, sector_index, i)
-                @assert size(wmat) == (1, 1) "0D TLArray must have 1x1 w-matrices"
-                w_val = wmat[1]
-                if w_val != 1.0
-                    wmat[:] .= 1.0
-                    sector_rmt(q, sector_index)[:] .*= w_val
-                end
-            end
-        end
-    end
-    # For other dimensions (QD != 0 and QD != 2), do nothing.
-end
-
-# Sort sectors of a TLArray in-place in dictionary order by physical leg qlabels.
+# Return a TLArray with sectors sorted in dictionary order by physical leg qlabels.
 # For each sector the sort key is built leg by leg (1 → QD): at leg l, the key
 # is the tuple of qlabels across all symmetries, i.e.
 #   (CGT metadata[1].qlabels[cgp₁[l]], CGT metadata[2].qlabels[cgp₂[l]], ...)
 # Comparison is then lexicographic over (leg 1 key, leg 2 key, ..., leg QD key).
-function sort_sectors!(q::TLArray{T, QD, N}) where {T, QD, N}
+function sort_sectors(q::TLArray{T, QD, N}) where {T, QD, N}
     perm = sortperm(collect(1:nsectors(q)); by = sector_index -> Tuple(
             sector_qlabel(q, sector_index, l)
         for l in QD:-1:1)
     )
-    q.qlabels[:, 1:nsectors(q)] = q.qlabels[:, perm]
-    q.wmats[:] = q.wmats[perm]
-    q.RMTs[:] = q.RMTs[perm]
-    return q
+    qlabels = copy(q.qlabels[:, perm])
+    wmats = deepcopy(q.wmats[perm])
+    RMTs = deepcopy(q.RMTs[perm])
+    return TLArray(symm(q), qlabels, wmats, RMTs, q.inds, _copy_spaces_tuple(q.spaces))
 end
 
 # Scalar multiplication and division: only the RMT arrays are scaled.
@@ -1818,32 +1758,18 @@ end
 # directly from the reduced matrix elements (RMTs) without building the full
 # dense tensor.
 #
-# For QD ≠ 2 (including QD = 0 and QD ≥ 3):
+# For all ranks:
 #   Sectors from different q-label sectors are orthogonal by symmetry.  Within
 #   each sector, the CGT canonical basis elements are orthonormal and the
 #   w-matrix is left-orthogonal (Uᵀ·U = I), so the M columns of cgt_block
 #   are also orthonormal.  Therefore all CGT cross-terms vanish and:
 #       ‖A‖² = Σ_r ‖RMT_r‖²
 #
-# For QD = 2 (2-leg operators / matrices):
-#   normalize_qspace! sets wmat[1,1] = √dim for each sector, turning the 2D CGT
-#   block into a (dim × dim) identity matrix  (‖Id_dim‖² = dim).
-#   Consequently:
-#       ‖A‖² = Σ_r dim_r · ‖RMT_r‖²
-#   where dim_r = _cgt_size_2d(r.CGT metadata, symm(q)) = ∏_{non-abelian n} d_leg1^(n).
-#
 # ─────────────────────────────────────────────────────────────────────────────
 function LinearAlgebra.norm(q::TLArray{T, QD, N}) where {T, QD, N}
     s = zero(Float64)
-    if QD == 2
-        for sector_index in 1:nsectors(q)
-            d = _sector_cgt_size_2d(q, sector_index)
-            s += d * sum(abs2, sector_rmt(q, sector_index).data)
-        end
-    else
-        for sector_index in 1:nsectors(q)
-            s += sum(abs2, sector_rmt(q, sector_index).data)
-        end
+    for sector_index in 1:nsectors(q)
+        s += sum(abs2, sector_rmt(q, sector_index).data)
     end
     return sqrt(s)
 end
@@ -2570,34 +2496,41 @@ end
 
 
 function _delete_singleton_rmt(rmt::LurTensor{T, RD}, positions, qd::Int, n_symm::Int) where {T, RD}
-    selectors = ntuple(axis -> axis <= qd && axis ∈ positions ? 1 : Colon(), qd + n_symm)
-    return LurTensor(copy(rmt.data[selectors...]))
+    new_dims = ntuple(axis -> begin
+        if axis <= qd - length(positions)
+            old_axis = axis
+            for pos in positions
+                pos <= old_axis && (old_axis += 1)
+            end
+            size(rmt.data, old_axis)
+        else
+            size(rmt.data, axis + length(positions))
+        end
+    end, qd + n_symm - length(positions))
+    return LurTensor(reshape(rmt.data, new_dims))
 end
 
-function _delete_singleton_impl(q::TLArray{T, QD, N, RD}, positions) where {T, QD, N, RD}
+function _delete_singleton_impl(q::TLArray{T, QD, N, RD, QT, PS}, positions) where {T, QD, N, RD, QT, PS}
     new_qd = QD - length(positions)
     new_rd = RD - length(positions)
 
     keep_inds = [q.inds[leg] for leg in 1:QD if leg ∉ positions]
-    QT = qlabeltype(q)
     keep_spaces = Vector{Tuple{QT, Int}}[q.spaces[leg] for leg in 1:QD if leg ∉ positions]
 
     qlabels = Matrix{QT}(undef, new_qd, nsectors(q))
-    wmats = _wmat_vector(productsymm(q), nsectors(q))
-    RMTs = Vector{LurTensor{T, new_rd, Array{T, new_rd}}}(undef, nsectors(q))
+    wmats = similar(q.wmats, nsectors(q))
+    RMTs = nsectors(q) == 0 ? LurTensor{T, new_rd, Array{T, new_rd}}[] :
+           [_delete_singleton_rmt(sector_rmt(q, sector_index), positions, QD, N)
+            for sector_index in 1:nsectors(q)]
     keep_legs = [leg for leg in 1:QD if leg ∉ positions]
     for sector_index in 1:nsectors(q)
         for (new_leg, old_leg) in enumerate(keep_legs)
             qlabels[new_leg, sector_index] = sector_qlabel(q, sector_index, old_leg)
         end
-        for n in 1:N
-            _set_sector_wmat!(wmats, productsymm(q), sector_index, n,
-                              copy(sector_wmat(q, sector_index, n)))
-        end
-        RMTs[sector_index] = _delete_singleton_rmt(sector_rmt(q, sector_index), positions, QD, N)
+        wmats[sector_index] = q.wmats[sector_index]
     end
 
-    return TLArray(symm(q), qlabels, wmats, RMTs, Tuple(keep_inds), Tuple(keep_spaces))
+    return TLArray(product_symms(PS), qlabels, wmats, RMTs, Tuple(keep_inds), Tuple(keep_spaces))
 end
 
 """
@@ -2712,17 +2645,7 @@ function _insert_singleton_rmt(rmt::LurTensor{T, RD},
         end
     end
 
-    new_data = copy(reshape(rmt.data, Tuple(vcat(new_phys, collect(om_dims)))))
-    return LurTensor(new_data)
-end
-
-function _convert_rank2_singleton_normalization!(new_wmats, new_rmt::LurTensor, old_wmats)
-    for n in eachindex(new_wmats)
-        w_val = old_wmats[n][1]
-        new_wmats[n][:] .= 1.0
-        new_rmt[:] .*= w_val
-    end
-    return nothing
+    return LurTensor(reshape(rmt.data, Tuple(vcat(new_phys, collect(om_dims)))))
 end
 
 """
@@ -2755,8 +2678,8 @@ length(legs)`. The original legs keep their relative order.
 `itag`, `plev`, `lock`, and `dir` may each be either a scalar applied to
 every added leg or an iterable with one value per inserted leg.
 """
-function addSingleton(q::TLArray{T, QD, N, RD}, legs;
-                      itag="", plev=0, lock=0, dir='+') where {T, QD, N, RD}
+function addSingleton(q::TLArray{T, QD, N, RD, QT, PS}, legs;
+                      itag="", plev=0, lock=0, dir='+') where {T, QD, N, RD, QT, PS}
     positions, itag_vec, plev_vec, lock_vec, dir_vec =
         _singleton_insert_spec(q, legs; itag=itag, plev=plev, lock=lock, dir=dir)
 
@@ -2765,7 +2688,6 @@ function addSingleton(q::TLArray{T, QD, N, RD}, legs;
     trivial_qlabels = zero_qlabels(q)
 
     new_inds = Vector{TLIndex}(undef, new_qd)
-    QT = qlabeltype(q)
     new_spaces = Vector{Vector{Tuple{QT, Int}}}(undef, new_qd)
     singleton_space = [(trivial_qlabels, 1)]
 
@@ -2785,15 +2707,11 @@ function addSingleton(q::TLArray{T, QD, N, RD}, legs;
     end
 
     qlabels = Matrix{QT}(undef, new_qd, nsectors(q))
-    wmats = _wmat_vector(productsymm(q), nsectors(q))
-    RMTs = Vector{LurTensor{T, new_rd, Array{T, new_rd}}}(undef, nsectors(q))
+    wmats = similar(q.wmats, nsectors(q))
+    RMTs = nsectors(q) == 0 ? LurTensor{T, new_rd, Array{T, new_rd}}[] :
+           [_insert_singleton_rmt(sector_rmt(q, sector_index), positions, QD, N)
+            for sector_index in 1:nsectors(q)]
     for sector_index in 1:nsectors(q)
-        old_wmats = ntuple(n -> sector_wmat(q, sector_index, n), Val(N))
-        new_wmats = ntuple(n -> copy(old_wmats[n]), Val(N))
-        new_rmt = _insert_singleton_rmt(sector_rmt(q, sector_index), positions, QD, N)
-        if QD == 2 && new_qd > 2
-            _convert_rank2_singleton_normalization!(new_wmats, new_rmt, old_wmats)
-        end
         old_leg = 1
         insert_idx = 1
         for new_leg in 1:new_qd
@@ -2805,13 +2723,10 @@ function addSingleton(q::TLArray{T, QD, N, RD}, legs;
                 old_leg += 1
             end
         end
-        for n in 1:N
-            _set_sector_wmat!(wmats, productsymm(q), sector_index, n, new_wmats[n])
-        end
-        RMTs[sector_index] = new_rmt
+        wmats[sector_index] = q.wmats[sector_index]
     end
 
-    return TLArray(symm(q), qlabels, wmats, RMTs, Tuple(new_inds), Tuple(new_spaces))
+    return TLArray(product_symms(PS), qlabels, wmats, RMTs, Tuple(new_inds), Tuple(new_spaces))
 end
 
 """

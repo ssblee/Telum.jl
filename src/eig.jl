@@ -47,9 +47,7 @@ end
 function _eig_identity_wmats(symm::NTuple{N, Any},
                              sector_qlabels::NTuple{N, Tuple{Vararg{Int}}}) where {N}
     return ntuple(N) do n
-        ql = sector_qlabels[n]
-        dim_n = dimension(symm[n], ql)
-        LurTensor([sqrt(Float64(dim_n));;])
+        LurTensor([1.0;;])
     end
 end
 
@@ -78,6 +76,7 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
 
         rmt_zero = LurTensor(zeros(T_out, dim, dim, ones(Int, N)...))
         rmt_eye = LurTensor(reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...))
+        rmt_eye[:] .*= sqrt(Float64(cgt_dim))
         identity_wmats = _eig_identity_wmats(symm, sector_qlabels)
 
         push!(qlabels_D, sector_qlabels)
@@ -337,38 +336,40 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     eig_list = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
     for sector_index in 1:nsectors(q)
-        rmt = sector_rmt(q, sector_index).data
-        sL, sR = size(rmt, 1), size(rmt, 2)
-        @assert sL == sR "eigen: RMT must be square for eigendecomposition, got ($sL, $sR)"
-
-        mat = reshape(rmt, sL, sR)
-
-        F = eigen(Hermitian(mat))
-        eigenvalues  = T_out.(F.values)
-        eigenvectors = T_out.(F.vectors)
-
-        chi = length(eigenvalues)
         sector_qlabels = _eig_sector_qlabels(q, sector_index)
 
         # Degeneracy = product of irrep dims across all symmetries for this sector
         cgt_dim = prod(
             dimension(symmetries[n], sector_qlabels[n])
             for n in 1:N)
+        cgt_scale = sqrt(Float64(cgt_dim))
+
+        rmt = sector_rmt(q, sector_index).data
+        sL, sR = size(rmt, 1), size(rmt, 2)
+        @assert sL == sR "eigen: RMT must be square for eigendecomposition, got ($sL, $sR)"
+
+        mat = reshape(rmt, sL, sR) ./ cgt_scale
+
+        F = eigen(Hermitian(mat))
+        eigenvalues  = T_out.(F.values)
+        eigenvectors = T_out.(F.vectors)
+
+        chi = length(eigenvalues)
         for (j, ev) in enumerate(eigenvalues)
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
         end
 
         rmt_D = LurTensor(reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...))
         rmt_V = LurTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
+        rmt_D[:] .*= cgt_scale
+        rmt_V[:] .*= cgt_scale
 
         push!(qlabels_D, sector_qlabels)
         push!(qlabels_V, sector_qlabels)
         push!(RMTs_D, rmt_D)
         push!(RMTs_V, rmt_V)
         for n in 1:N
-            ql = sector_qlabels[n]
-            dim_n = dimension(symmetries[n], ql)
-            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
+            wmat_n = LurTensor([1.0;;])
             _push_wmat!(wmats_D, productsymm(q), n, wmat_n)
             _push_wmat!(wmats_V, productsymm(q), n, wmat_n)
         end
@@ -428,11 +429,18 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     eig_list  = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
     for sector_index in 1:nsectors(q)
+        sector_qlabels = _eig_sector_qlabels(q, sector_index)
+
+        cgt_dim = prod(
+            dimension(symmetries[n], sector_qlabels[n])
+            for n in 1:N)
+        cgt_scale = sqrt(Float64(cgt_dim))
+
         rmt = sector_rmt(q, sector_index).data
         sL, sR = size(rmt, 1), size(rmt, 2)
         @assert sL == sR "eigen_general: RMT must be square"
 
-        mat = reshape(rmt, sL, sR)
+        mat = reshape(rmt, sL, sR) ./ cgt_scale
 
         F = eigen(mat)
         eigenvalues      = T_out.(F.values)
@@ -440,11 +448,6 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
         eigenvectors_inv = T_out.(inv(F.vectors))
 
         chi = length(eigenvalues)
-        sector_qlabels = _eig_sector_qlabels(q, sector_index)
-
-        cgt_dim = prod(
-            dimension(symmetries[n], sector_qlabels[n])
-            for n in 1:N)
         for (j, ev) in enumerate(eigenvalues)
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
         end
@@ -452,6 +455,9 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
         rmt_D    = LurTensor(reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...))
         rmt_V    = LurTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
         rmt_Vinv = LurTensor(reshape(eigenvectors_inv, chi, sL, ones(Int, N)...))
+        rmt_D[:] .*= cgt_scale
+        rmt_V[:] .*= cgt_scale
+        rmt_Vinv[:] .*= cgt_scale
 
         push!(qlabels_D, sector_qlabels)
         push!(qlabels_V, sector_qlabels)
@@ -460,9 +466,7 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
         push!(RMTs_V, rmt_V)
         push!(RMTs_Vinv, rmt_Vinv)
         for n in 1:N
-            ql = sector_qlabels[n]
-            dim_n = dimension(symmetries[n], ql)
-            wmat_n = LurTensor([sqrt(Float64(dim_n));;])
+            wmat_n = LurTensor([1.0;;])
             _push_wmat!(wmats_D, productsymm(q), n, wmat_n)
             _push_wmat!(wmats_V, productsymm(q), n, wmat_n)
             _push_wmat!(wmats_Vinv, productsymm(q), n, wmat_n)
