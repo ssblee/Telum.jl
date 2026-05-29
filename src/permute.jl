@@ -78,7 +78,7 @@ end
 function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
                              perm::NTuple{QD, Int}) where {T, QD, N, RD}
     rmt_perm = (perm..., ntuple(n -> QD + n, N)...)
-    return LurTensor(permutedims(sector_rmt(q, sector_index).data, rmt_perm))
+    return permutedims(sector_rmt(q, sector_index), rmt_perm)
 end
 
 function _permute_sector_wmats(q::TLArray{T, QD, N}, perm::NTuple{QD, Int}, symm) where {T, QD, N}
@@ -125,7 +125,7 @@ function Base.permutedims(q::TLArray{T, QD, N, RD}, perm) where {T, QD, N, RD}
     new_spaces = Tuple(q.spaces[perm[l]] for l in 1:QD)
     
     # 3 & 4. Permute each sector (CGT metadata and RMT)
-    new_qlabels = copy(q.qlabels[collect(perm), :])
+    new_qlabels = [ntuple(l -> sector[perm[l]], Val(QD)) for sector in q.qlabels]
     new_wmats = _permute_sector_wmats(q, perm, symm(q))
     new_RMTs = _permute_sector_rmts(q, perm)
     

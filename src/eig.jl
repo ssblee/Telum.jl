@@ -47,7 +47,7 @@ end
 function _eig_identity_wmats(symm::NTuple{N, Any},
                              sector_qlabels::NTuple{N, Tuple{Vararg{Int}}}) where {N}
     return ntuple(N) do n
-        LurTensor([1.0;;])
+        [1.0;;]
     end
 end
 
@@ -74,8 +74,8 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
             push!(eig_list, (zero(T_out), cgt_dim, sector_qlabels, j))
         end
 
-        rmt_zero = LurTensor(zeros(T_out, dim, dim, ones(Int, N)...))
-        rmt_eye = LurTensor(reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...))
+        rmt_zero = zeros(T_out, dim, dim, ones(Int, N)...)
+        rmt_eye = reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...)
         rmt_eye[:] .*= sqrt(Float64(cgt_dim))
         identity_wmats = _eig_identity_wmats(symm, sector_qlabels)
 
@@ -184,7 +184,7 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
                           mode::Symbol) where {T, N, RD, QT}
     qlabels_out = QT[]
     wmat_buffers = _wmat_buffers(productsymm(template))
-    RMTs_out = LurTensor{T, RD, Array{T, RD}}[]
+    RMTs_out = Array{T, RD}[]
     sector_counts = Dict{NTuple{N, Tuple{Vararg{Int}}}, Int}()
 
     for (sector, idxs) in picks
@@ -199,16 +199,16 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
         isempty(idxs) && continue
 
         idxs_sorted = sort(idxs)
-        rmt = sector_rmt(template, sector_index).data
+        rmt = sector_rmt(template, sector_index)
         s1, s2 = size(rmt, 1), size(rmt, 2)
         mat = reshape(rmt, s1, s2)
 
         rmt_new = if mode == :diag
-            LurTensor(reshape(mat[idxs_sorted, idxs_sorted], length(idxs_sorted), length(idxs_sorted), ones(Int, N)...))
+            reshape(mat[idxs_sorted, idxs_sorted], length(idxs_sorted), length(idxs_sorted), ones(Int, N)...)
         elseif mode == :cols
-            LurTensor(reshape(mat[:, idxs_sorted], s1, length(idxs_sorted), ones(Int, N)...))
+            reshape(mat[:, idxs_sorted], s1, length(idxs_sorted), ones(Int, N)...)
         elseif mode == :firstdim
-            LurTensor(reshape(mat[idxs_sorted, :], length(idxs_sorted), s2, ones(Int, N)...))
+            reshape(mat[idxs_sorted, :], length(idxs_sorted), s2, ones(Int, N)...)
         else
             error("Unknown eig sector selection mode: $mode")
         end
@@ -330,8 +330,8 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     qlabels_V = QT[]
     wmats_D = _wmat_buffers(productsymm(q))
     wmats_V = _wmat_buffers(productsymm(q))
-    RMTs_D = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
-    RMTs_V = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
+    RMTs_D = Array{T_out, 2 + N}[]
+    RMTs_V = Array{T_out, 2 + N}[]
     # Eigenvalue, degeneracy, sector qlabels, in-sector index
     eig_list = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
@@ -344,7 +344,7 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
             for n in 1:N)
         cgt_scale = sqrt(Float64(cgt_dim))
 
-        rmt = sector_rmt(q, sector_index).data
+        rmt = sector_rmt(q, sector_index)
         sL, sR = size(rmt, 1), size(rmt, 2)
         @assert sL == sR "eigen: RMT must be square for eigendecomposition, got ($sL, $sR)"
 
@@ -359,8 +359,8 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
         end
 
-        rmt_D = LurTensor(reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...))
-        rmt_V = LurTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
+        rmt_D = reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...)
+        rmt_V = reshape(eigenvectors, sL, chi, ones(Int, N)...)
         rmt_D[:] .*= cgt_scale
         rmt_V[:] .*= cgt_scale
 
@@ -369,7 +369,7 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
         push!(RMTs_D, rmt_D)
         push!(RMTs_V, rmt_V)
         for n in 1:N
-            wmat_n = LurTensor([1.0;;])
+            wmat_n = [1.0;;]
             _push_wmat!(wmats_D, productsymm(q), n, wmat_n)
             _push_wmat!(wmats_V, productsymm(q), n, wmat_n)
         end
@@ -423,9 +423,9 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     wmats_D = _wmat_buffers(productsymm(q))
     wmats_V = _wmat_buffers(productsymm(q))
     wmats_Vinv = _wmat_buffers(productsymm(q))
-    RMTs_D = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
-    RMTs_V = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
-    RMTs_Vinv = LurTensor{T_out, 2 + N, Array{T_out, 2 + N}}[]
+    RMTs_D = Array{T_out, 2 + N}[]
+    RMTs_V = Array{T_out, 2 + N}[]
+    RMTs_Vinv = Array{T_out, 2 + N}[]
     eig_list  = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
     for sector_index in 1:nsectors(q)
@@ -436,7 +436,7 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
             for n in 1:N)
         cgt_scale = sqrt(Float64(cgt_dim))
 
-        rmt = sector_rmt(q, sector_index).data
+        rmt = sector_rmt(q, sector_index)
         sL, sR = size(rmt, 1), size(rmt, 2)
         @assert sL == sR "eigen_general: RMT must be square"
 
@@ -452,9 +452,9 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
         end
 
-        rmt_D    = LurTensor(reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...))
-        rmt_V    = LurTensor(reshape(eigenvectors, sL, chi, ones(Int, N)...))
-        rmt_Vinv = LurTensor(reshape(eigenvectors_inv, chi, sL, ones(Int, N)...))
+        rmt_D    = reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...)
+        rmt_V    = reshape(eigenvectors, sL, chi, ones(Int, N)...)
+        rmt_Vinv = reshape(eigenvectors_inv, chi, sL, ones(Int, N)...)
         rmt_D[:] .*= cgt_scale
         rmt_V[:] .*= cgt_scale
         rmt_Vinv[:] .*= cgt_scale
@@ -466,7 +466,7 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
         push!(RMTs_V, rmt_V)
         push!(RMTs_Vinv, rmt_Vinv)
         for n in 1:N
-            wmat_n = LurTensor([1.0;;])
+            wmat_n = [1.0;;]
             _push_wmat!(wmats_D, productsymm(q), n, wmat_n)
             _push_wmat!(wmats_V, productsymm(q), n, wmat_n)
             _push_wmat!(wmats_Vinv, productsymm(q), n, wmat_n)

@@ -235,7 +235,7 @@ function _contract_om_axis_data(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, 
 
     findim = Base.setindex(dims, r, axis)
     if r == 1 && k == 1
-        return LurTensor(reshape(A .* M[1, 1], findim))
+        return reshape(A .* M[1, 1], findim)
     end
 
     prod_before = 1
@@ -253,22 +253,22 @@ function _contract_om_axis_data(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, 
     if prod_after == 1
         A_mk = reshape(A_3, prod_before, k)
         R_mr = A_mk * transpose(M)
-        return LurTensor(reshape(R_mr, findim))
+        return reshape(R_mr, findim)
     end
 
     A_mk = reshape(permutedims(A_3, (1, 3, 2)), prod_before * prod_after, k)
     R_mr = A_mk * transpose(M)
     R_3  = permutedims(reshape(R_mr, prod_before, prod_after, r), (1, 3, 2))
-    return LurTensor(reshape(R_3, findim))
+    return reshape(R_3, findim)
 end
 
-function _contract_om_axis(A::LurTensor{T1, D, A1}, M::LurTensor{T2, 2, A2}, axis::Int) where {T1, T2<:Real, D, A1, A2}
-    return _contract_om_axis_data(A.data, M.data, axis)
+function _contract_om_axis(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, axis::Int) where {T1, T2<:Real, D}
+    return _contract_om_axis_data(A, M, axis)
 end
 
 const _RMT_CONTRACT_TULLIO_THRESHOLD = 1_000_000
 
-function _rmt_layout_sizes(rmt::LurTensor{T, RD},
+function _rmt_layout_sizes(rmt::AbstractArray{T, RD},
                            perm::NTuple{RD, Int},
                            nf::Int,
                            cn::Int,
@@ -276,7 +276,7 @@ function _rmt_layout_sizes(rmt::LurTensor{T, RD},
     return _rmt_layout_sizes(rmt, perm, Val(nf), Val(cn), Val(nsyms))
 end
 
-function _rmt_layout_sizes(rmt::LurTensor{T, RD},
+function _rmt_layout_sizes(rmt::AbstractArray{T, RD},
                            perm::NTuple{RD, Int},
                            ::Val{NF},
                            ::Val{CN},
@@ -288,10 +288,9 @@ function _rmt_layout_sizes(rmt::LurTensor{T, RD},
     return kept_sizes, contracted_sizes, om_sizes
 end
 
-@inline _rmt_array_data(rmt::LurTensor{T, RD}) where {T, RD} =
-    rmt.data::Array{T, RD}
+@inline _rmt_array_data(rmt::Array{T, RD}) where {T, RD} = rmt
 
-function _permuted_rmt_data(rmt::LurTensor{T, RD},
+function _permuted_rmt_data(rmt::AbstractArray{T, RD},
                             perm::NTuple{RD, Int},
                             nf::Int,
                             cn::Int,
@@ -299,7 +298,7 @@ function _permuted_rmt_data(rmt::LurTensor{T, RD},
     return _permuted_rmt_data(rmt, perm, Val(nf), Val(cn), Val(nsyms))
 end
 
-function _permuted_rmt_data(rmt::LurTensor{T, RD},
+function _permuted_rmt_data(rmt::AbstractArray{T, RD},
                             perm::NTuple{RD, Int},
                             ::Val{NF},
                             ::Val{CN},
@@ -350,15 +349,15 @@ function _cached_permuted_rmt_data!(cache::Vector{Array{T, 3}},
     return cache[idx]
 end
 
-function _combined_om_factor_info(factors::NTuple{N, LT}) where {N, LT<:LurTensor{Float64, 3}}
-    rank_sizes = ntuple(n -> size(factors[n].data, 1), Val(N))
+function _combined_om_factor_info(factors::NTuple{N, LT}) where {N, LT<:AbstractArray{Float64, 3}}
+    rank_sizes = ntuple(n -> size(factors[n], 1), Val(N))
     scale = 1.0
 
     rank_dim = 1
     om1_dim = 1
     om2_dim = 1
     for n in 1:N
-        factor = factors[n].data
+        factor = factors[n]
         r_n, om1_n, om2_n = size(factor)
 
         if r_n == 1 && om1_n == 1 && om2_n == 1
@@ -377,14 +376,14 @@ end
 function _combined_om_factor_array(factors::NTuple{N, LT},
                                    rank_dim_total::Int,
                                    om1_dim_total::Int,
-                                   om2_dim_total::Int) where {N, LT<:LurTensor{Float64, 3}}
+                                   om2_dim_total::Int) where {N, LT<:AbstractArray{Float64, 3}}
     K = ones(Float64, 1, 1, 1)
     rank_dim = 1
     om1_dim = 1
     om2_dim = 1
 
     for n in 1:N
-        factor = factors[n].data
+        factor = factors[n]
         r_n, om1_n, om2_n = size(factor)
 
         if r_n == 1 && om1_n == 1 && om2_n == 1
@@ -412,7 +411,7 @@ function _combined_om_factor_array(factors::NTuple{N, LT},
     return K
 end
 
-function _rmt_factor_array_and_rank_sizes(factors::NTuple{N, LT}) where {N, LT<:LurTensor{Float64, 3}}
+function _rmt_factor_array_and_rank_sizes(factors::NTuple{N, LT}) where {N, LT<:AbstractArray{Float64, 3}}
     rank_sizes, rank_dim, om1_dim, om2_dim, scale =
         _combined_om_factor_info(factors)
     K = _combined_om_factor_array(factors, rank_dim, om1_dim, om2_dim)
@@ -421,20 +420,20 @@ function _rmt_factor_array_and_rank_sizes(factors::NTuple{N, LT}) where {N, LT<:
 end
 
 function _prepare_compress_sector(
-    new_wmats::NTuple{N, Vector{LurTensor{Float64, 3, AW}}},
+    new_wmats::NTuple{N, Vector{AW}},
     tol::Float64 = 1e-12,
 ) where {N, AW<:AbstractArray{Float64, 3}}
     K = length(first(new_wmats))
     @assert K > 0 "_compress_sector requires at least one RMT contract"
 
-    U_mats   = Vector{LurTensor{Float64, 2, Matrix{Float64}}}(undef, N)
-    SV_split = Matrix{LurTensor{Float64, 3, AW}}(undef, N, K)
+    U_mats   = Vector{Matrix{Float64}}(undef, N)
+    SV_split = Matrix{AW}(undef, N, K)
 
     for n in 1:N
         shared = _qr_shared_isometry(new_wmats[n]; tol=tol)
         isnothing(shared) && return nothing
-        common_iso::LurTensor{Float64, 2, Matrix{Float64}},
-        factors::Vector{LurTensor{Float64, 3, AW}} = shared
+        common_iso::Matrix{Float64},
+        factors::Vector{AW} = shared
 
         U_mats[n] = common_iso
         for i in 1:K
@@ -504,7 +503,7 @@ function _rmt_contract_temp_len(A::AbstractArray,
                                   K, threshold)
 end
 
-function _rmt_contract_dims(rmt::LurTensor{T, RD},
+function _rmt_contract_dims(rmt::AbstractArray{T, RD},
                             perm::NTuple{RD, Int},
                             nf::Int,
                             cn::Int,
@@ -512,7 +511,7 @@ function _rmt_contract_dims(rmt::LurTensor{T, RD},
     return _rmt_contract_dims(rmt, perm, Val(nf), Val(cn), Val(nsyms))
 end
 
-function _rmt_contract_dims(rmt::LurTensor{T, RD},
+function _rmt_contract_dims(rmt::AbstractArray{T, RD},
                             perm::NTuple{RD, Int},
                             ::Val{NF},
                             ::Val{CN},
@@ -685,19 +684,19 @@ end
 # accumulate the result into a single (U_mats, result_RMT) pair.
 #
 #   new_wmats[n][i] : (OM3_n, OM12_n_i)  — w-matrix for pair i, symmetry n
-#   new_RMTs[i]     : LurTensor{T} (sz_free..., OM12_1_i,...,OM12_N_i)
+#   new_RMTs[i]     : AbstractArray{T} (sz_free..., OM12_1_i,...,OM12_N_i)
 #
 # Returns:
-#   U_mats[n]  : LurTensor{Float64,2} (OM3_n, r_n)  — new CGT wmat per symmetry
-#   result_RMT : LurTensor{T} (sz_free..., r_1,...,r_N)  — compressed RMT
+#   U_mats[n]  : Matrix{Float64} (OM3_n, r_n)  — new CGT wmat per symmetry
+#   result_RMT : AbstractArray{T} (sz_free..., r_1,...,r_N)  — compressed RMT
 #   nothing    : when QR reveals that any symmetry contributes no usable
 #                columns, so the whole merged sector is identically zero
 #
 # We use QR-based shared isometries for every sector, including K == 1, so the
 # resulting basis is normalized consistently with the multi-contribution case.
 function _compress_sector(
-    new_wmats ::NTuple{N, Vector{LurTensor{Float64, 2, AW}}},
-    new_RMTs  ::Vector{LurTensor{T, RD, AR}},
+    new_wmats ::NTuple{N, Vector{AW}},
+    new_RMTs  ::Vector{AR},
     QD_out    ::Int,
     tol       ::Float64 = 1e-12,
 ) where {T, N, RD, AW<:AbstractArray{Float64, 2}, AR<:AbstractArray{T, RD}}
@@ -705,15 +704,15 @@ function _compress_sector(
     @assert K > 0 "_compress_sector requires at least one RMT"
 
     # Shared QR basis per symmetry
-    U_mats   = Vector{LurTensor{Float64, 2, AW}}(undef, N)
+    U_mats   = Vector{AW}(undef, N)
     # SV pieces per symmetry and pair
-    SV_split = Matrix{LurTensor{Float64, 2, AW}}(undef, N, K)  
+    SV_split = Matrix{AW}(undef, N, K)  
 
     for n in 1:N
         shared = _qr_shared_isometry(new_wmats[n]; tol=tol)
         isnothing(shared) && return nothing
-        common_iso::LurTensor{Float64, 2, AW}, 
-        factors::Vector{LurTensor{Float64, 2, AW}} = shared
+        common_iso::AW, 
+        factors::Vector{AW} = shared
 
         U_mats[n] = common_iso
         for i in 1:K
@@ -741,7 +740,7 @@ function _compress_sector(
 end
 
 function _compress_sector(
-    new_wmats    ::NTuple{N, Vector{LurTensor{Float64, 3, AW}}},
+    new_wmats    ::NTuple{N, Vector{AW}},
     sector_pairs    ::AbstractVector{Tuple{Int, Int}},
     work1        ::Dict{Int, Array{T1, 3}},
     work2        ::Dict{Int, Array{T2, 3}},
@@ -806,7 +805,7 @@ function _contract_prepared_compress_sector(
         )
     end
 
-    return U_mats, LurTensor(result_data)
+    return U_mats, result_data
 end
 
 # ─── * operator ──────────────────────────────────────────────────────────────
@@ -816,6 +815,19 @@ end
 # when they compare equal under TLIndex == (same itags, dir, plev, green) and
 # their precomputed leg spaces are equal. The collected matching pairs define
 # legs1 / legs2 passed to `contract`.
+#function _contract_matched_legs(q1::TLArray, q2::TLArray, legs1::Vector{Int}, legs2::Vector{Int})
+#    length(legs1) == length(legs2) || throw(DimensionMismatch("matched leg vectors must have the same length"))
+#    if length(legs1) == 1
+#        return contract(q1, (legs1[1],), q2, (legs2[1],); verify_legs=false)
+#    elseif length(legs1) == 2
+#        return contract(q1, (legs1[1], legs1[2]), q2, (legs2[1], legs2[2]); verify_legs=false)
+#    elseif length(legs1) == 3
+#        return contract(q1, (legs1[1], legs1[2], legs1[3]), q2, (legs2[1], legs2[2], legs2[3]); verify_legs=false)
+#    else
+#        return contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
+#    end
+#end
+
 function Base.:*(q1::TLArray, q2::TLArray)
     # Collect candidate indices from each TLArray.
     cands1 = [(i, q1.inds[i]) for i in 1:length(q1.inds)
@@ -847,7 +859,7 @@ function Base.:*(q1::TLArray, q2::TLArray)
 
     @assert length(legs1) > 0 "No matching contractible indices found between the two TLArray objects"
 
-    return contract(q1, Tuple(legs1), q2, Tuple(legs2); verify_legs=false)
+    return contract(q1, Tuple(legs1), q2, Tuple(legs2))
 end
 
 # ─── contract ────────────────────────────────────────────────────────────────
@@ -1040,7 +1052,7 @@ function _contract_xsym_wmat(wm1::AbstractMatrix{T1},
     result = Array{WT}(undef, OM3, d1, d2)
     @tullio avx=true result[a, b, c] =
         xarr[bb, cc, a] * wm1[bb, b] * wm2[cc, c]
-    return LurTensor(result)
+    return result
 end
 
 function _fill_contract_wmat_concat!(concat::Matrix{Float64},
@@ -1077,7 +1089,7 @@ _xsym_cache_key_type(::Type{QT}, ::Val{n}, ::Val{NF1}, ::Val{NF2}, ::Val{CN}) wh
           NTuple{NF1, fieldtype(QT, n)},
           NTuple{NF2, fieldtype(QT, n)}}
 
-const _ABELIAN_WMAT_3D = LurTensor(reshape([1.0], 1, 1, 1))
+const _ABELIAN_WMAT_3D = reshape([1.0], 1, 1, 1)
 
 @generated function _xsym_cache_slot(::Type{PS}, ::Val{n}) where {PS<:ProductSymm, n}
     syms = product_symms(PS)
@@ -1258,13 +1270,13 @@ function _qr_contract_concat(concat::Matrix{Float64},
                              pair_shapes::Vector{Tuple{Int, Int}})
     nrows = size(concat, 1)
     if nrows == 1
-        Q = LurTensor(ones(1, 1))
-        factors = Vector{LurTensor{Float64, 3, Array{Float64, 3}}}(undef, length(pair_shapes))
+        Q = ones(1, 1)
+        factors = Vector{Array{Float64, 3}}(undef, length(pair_shapes))
         col = 0
         for i in eachindex(pair_shapes)
             d1, d2 = pair_shapes[i]
             width = d1 * d2
-            factors[i] = LurTensor(reshape(copy(concat[:, col+1:col+width]), 1, d1, d2))
+            factors[i] = reshape(copy(concat[:, col+1:col+width]), 1, d1, d2)
             col += width
         end
         return Q, factors
@@ -1284,14 +1296,14 @@ function _qr_contract_concat(concat::Matrix{Float64},
     end
     used == 0 && return nothing
 
-    Q = LurTensor(Qfull[:, 1:used])
+    Q = Qfull[:, 1:used]
     R = Rfull[1:used, :]
-    factors = Vector{LurTensor{Float64, 3, Array{Float64, 3}}}(undef, length(pair_shapes))
+    factors = Vector{Array{Float64, 3}}(undef, length(pair_shapes))
     col = 0
     for i in eachindex(pair_shapes)
         d1, d2 = pair_shapes[i]
         width = d1 * d2
-        factors[i] = LurTensor(reshape(copy(R[:, col+1:col+width]), used, d1, d2))
+        factors[i] = reshape(copy(R[:, col+1:col+width]), used, d1, d2)
         col += width
     end
     @assert col == size(R, 2)
@@ -1310,8 +1322,8 @@ function _prepare_contract_interval_for_symmetry(::Type{S},
                                                  legs2::NTuple{CN, Int},
                                                  ::Val{n}) where {S<:AbelianSymm, CN, n}
     K = length(interval)
-    Q = LurTensor(ones(1, 1))
-    factors = Vector{LurTensor{Float64, 3, Array{Float64, 3}}}(undef, K)
+    Q = ones(1, 1)
+    factors = Vector{Array{Float64, 3}}(undef, K)
     for i in 1:K
         factors[i] = _ABELIAN_WMAT_3D
     end
@@ -1378,15 +1390,15 @@ function _prepare_contract_interval_for_symmetry(::Type{S},
 end
 
 @generated function _prepare_contract_interval(::Type{ProductSymm{Syms}},
-                                               q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
-                                               q2::TLArray{T2, QD2, N, RD2, QT, PS, M, RMTS2},
+                                               q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
+                                               q2::TLArray{T2, QD2, N, RD2, QT, PS, M, RMT2},
                                                possible_pairs::AbstractVector,
                                                interval::UnitRange{Int},
                                                xsym_caches::CT,
                                                impossible_sets::Tuple,
                                                legs1::NTuple{CN, Int},
-                                               legs2::NTuple{CN, Int}) where {Syms, T1, QD1, N, RD1, QT, PS, M, RMTS1,
-                                                                              T2, QD2, RD2, RMTS2, CT<:Tuple, CN}
+                                               legs2::NTuple{CN, Int}) where {Syms, T1, QD1, N, RD1, QT, PS, M, RMT1,
+                                                                              T2, QD2, RD2, RMT2, CT<:Tuple, CN}
     stmts = Expr[]
     qnames = Symbol[]
     fnames = Symbol[]
@@ -1402,8 +1414,8 @@ end
                 $S, q1, q2, possible_pairs, interval, xsym_caches,
                 impossible_sets, legs1, legs2, Val($n))
             $res === nothing && return nothing
-            local $q = $res[1]::LurTensor{Float64, 2, Matrix{Float64}}
-            local $f = $res[2]::Vector{LurTensor{Float64, 3, Array{Float64, 3}}}
+            local $q = $res[1]::Matrix{Float64}
+            local $f = $res[2]::Vector{Array{Float64, 3}}
         end)
     end
     factor_tuple = Expr(:tuple, (:(SV_split[$n][i]) for n in 1:N)...)
@@ -1413,7 +1425,7 @@ end
         local K = length(interval)
         K > 0 || throw(ArgumentError("contract interval must contain at least one sector pair"))
         $(stmts...)
-        local U_mats = LurTensor{Float64, 2, Matrix{Float64}}[$(qnames...)]
+        local U_mats = Matrix{Float64}[$(qnames...)]
         local SV_split = ($(fnames...),)
         local factor_arrays = Vector{Array{Float64, 3}}(undef, K)
         local first_rank_sizes = $zero_rank_sizes
@@ -1435,12 +1447,12 @@ function contract(q1::TLArray, legs1::AbstractVector{<:Integer},
 end
 
 # ── Main entry point ──────────────────────────────────────────────────────────
-function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
+function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
                   legs1::NTuple{CN, Int},
-                  q2::TLArray{T2, QD2, N, RD2, QT, PS, M, RMTS2},
+                  q2::TLArray{T2, QD2, N, RD2, QT, PS, M, RMT2},
                   legs2::NTuple{CN, Int};
                   reduce_lock::Bool=true,
-                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, M, RMTS1, RMTS2, CN}
+                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, M, RMT1, RMT2, CN}
 
     symmetries = product_symms(PS)
 
@@ -1498,7 +1510,7 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
     valid_output = trues(length(out_keys))
 
     # ── 4. Direct-fill QR/K data and one contraction temporary ───────────────
-    PreparedSectorT = Tuple{Vector{LurTensor{Float64, 2, Matrix{Float64}}},
+    PreparedSectorT = Tuple{Vector{Matrix{Float64}},
                             Vector{Array{Float64, 3}},
                             NTuple{N, Int}}
     prepared_sectors = Vector{PreparedSectorT}(undef, length(out_keys))
@@ -1545,7 +1557,7 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
     RT = promote_type(T1, T2, Float64)
     result_qlabel_candidates = Vector{NTuple{QD_out, QT}}(undef, length(out_keys))
     final_wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, length(out_keys))
-    final_RMTs = Vector{LurTensor{RT, RD_out, Array{RT, RD_out}}}(undef, length(out_keys))
+    final_RMTs = Vector{Array{RT, RD_out}}(undef, length(out_keys))
     nonabelian_indices = nonabelian_symmetry_indices(PS)
     for out_pos in eachindex(out_keys)
         valid_output[out_pos] || continue
@@ -1569,7 +1581,7 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
         U_mats, result_RMT = _contract_prepared_compress_sector(
             prepared, sector_pairs, permuted_rmts1, permuted_rmts2,
             kept_sizes1, kept_sizes2, contract_temp, Val(RD_out))
-        if iszero(sum(abs2, result_RMT.data))
+        if iszero(sum(abs2, result_RMT))
             valid_output[out_pos] = false
             continue
         end
@@ -1577,7 +1589,7 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
             _out_key_qlabels(out_keys[out_pos], Val(QD_out))
         final_wmats[out_pos] = ntuple(Val(M)) do m
             n = nonabelian_indices[m]
-            U_mats[n].data
+            U_mats[n]
         end
         final_RMTs[out_pos] = result_RMT
     end
@@ -1615,7 +1627,7 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
     res_nsectors = count(valid_output)
     result_qlabels = Matrix{QT}(undef, QD_out, res_nsectors)
     result_wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, res_nsectors)
-    result_RMTs = Vector{LurTensor{RT, RD_out, Array{RT, RD_out}}}(undef, res_nsectors)
+    result_RMTs = Vector{Array{RT, RD_out}}(undef, res_nsectors)
     sector_index = 1
     for out_pos in eachindex(out_keys)
         valid_output[out_pos] || continue
@@ -1630,5 +1642,5 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMTS1},
 
     return TLArray(symmetries, result_qlabels, result_wmats, result_RMTs,
                           final_inds, spaces_out;
-                          drop_zero_sectors=false)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS}
+                          drop_zero_sectors=false)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS, M, Array{promote_type(T1, T2, Float64), RD_out}}
 end

@@ -2,7 +2,7 @@ function _field_subset_equal(q1::TLArray, q2::TLArray)
     q1.qlabels == q2.qlabels || return false
     q1.wmats == q2.wmats || return false
     length(q1.RMTs) == length(q2.RMTs) || return false
-    all(Telum.sector_rmt(q1, i).data == Telum.sector_rmt(q2, i).data for i in 1:Telum.nsectors(q1))
+    all(Telum.sector_rmt(q1, i) == Telum.sector_rmt(q2, i) for i in 1:Telum.nsectors(q1))
 end
 
 @testset "TLArray sector subset selection" begin
@@ -29,9 +29,9 @@ end
     @test all(Telum.sector_qlabel(subset, i, 1) != removed_sector for i in 1:Telum.nsectors(subset))
 
     clone = TLArray(q, :)
-    original_entry = Telum.sector_rmt(q, 1).data[1]
-    Telum.sector_rmt(clone, 1).data[1] += one(eltype(Telum.sector_rmt(clone, 1).data))
-    @test Telum.sector_rmt(q, 1).data[1] == original_entry
+    original_entry = Telum.sector_rmt(q, 1)[1]
+    Telum.sector_rmt(clone, 1)[1] += one(eltype(Telum.sector_rmt(clone, 1)))
+    @test Telum.sector_rmt(q, 1)[1] == original_entry
 
     original_space = q.spaces[1][1]
     clone.spaces[1][1] = (original_space[1], original_space[2] + 1)

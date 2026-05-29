@@ -45,8 +45,8 @@ function _find_leg_permutation(inds1::NTuple{QD, TLIndex}, spaces1,
     return results[1]
 end
 
-function _align_sum_input(ref::TLArray{T, QD, N, RD, QT, PS, M, RMTS1},
-                          q::TLArray{TQ, QD, N, RD, QT, PS, M, RMTS2}) where {T, TQ, QD, N, RD, QT, PS, M, RMTS1, RMTS2}
+function _align_sum_input(ref::TLArray{T, QD, N, RD, QT, PS, M, RMT1},
+                          q::TLArray{TQ, QD, N, RD, QT, PS, M, RMT2}) where {T, TQ, QD, N, RD, QT, PS, M, RMT1, RMT2}
     if ref.inds == q.inds && ref.spaces == q.spaces
         return q
     end
@@ -112,26 +112,26 @@ function _sum_sector_table(qs, ::Type{QT}, ::Val{QD}) where {QT, QD}
     return table, unique_count
 end
 
-function _sum_rmt_cpu(::Type{T}, rmt::LurTensor{T, RD, Array{T, RD}}) where {T, RD}
+function _sum_rmt_cpu(::Type{T}, rmt::Array{T, RD}) where {T, RD}
     return rmt
 end
 
-function _sum_rmt_cpu(::Type{T}, rmt::LurTensor{S, RD}) where {T, S, RD}
-    return LurTensor(Array{T, RD}(rmt.data))
+function _sum_rmt_cpu(::Type{T}, rmt::AbstractArray{S, RD}) where {T, S, RD}
+    return Array{T, RD}(rmt)
 end
 
-@inline _sum_rmt_iszero(rmt::LurTensor) = iszero(sum(abs2, rmt.data))
+@inline _sum_rmt_iszero(rmt::AbstractArray) = iszero(sum(abs2, rmt))
 
 function _sum_single_contribution!(result_keys::Vector{NTuple{QD, QT}},
                                    result_wmats::Vector{NTuple{M, Matrix{Float64}}},
-                                   result_RMTs::Vector{LurTensor{T, RD, Array{T, RD}}},
+                                   result_RMTs::Vector{Array{T, RD}},
                                    qs,
                                    entry::Tuple{NTuple{QD, QT}, Int, Int},
                                    ::Val{QD}) where {T, QD, QT, M, RD}
     key, input_index, sector_index = entry
     q = qs[input_index]
     source_rmt = sector_rmt(q, sector_index)
-    rmt = QD == 0 ? LurTensor(Array{T, RD}(source_rmt.data)) :
+    rmt = QD == 0 ? Array{T, RD}(source_rmt) :
           _sum_rmt_cpu(T, source_rmt)
     _sum_rmt_iszero(rmt) && return result_keys
     push!(result_keys, key)
@@ -143,7 +143,7 @@ end
 
 function _sum_multi_contribution!(result_keys::Vector{NTuple{QD, QT}},
                                   result_wmats::Vector{NTuple{M, Matrix{Float64}}},
-                                  result_RMTs::Vector{LurTensor{T, RD, Array{T, RD}}},
+                                  result_RMTs::Vector{Array{T, RD}},
                                   qs,
                                   table,
                                   interval::UnitRange{Int},
@@ -153,7 +153,7 @@ function _sum_multi_contribution!(result_keys::Vector{NTuple{QD, QT}},
                                   ::Val{N},
                                   ::Val{M}) where {T, QD, QT, M, RD, N, PS}
     K = length(interval)
-    new_RMTs = Vector{LurTensor{T, RD, Array{T, RD}}}(undef, K)
+    new_RMTs = Vector{Array{T, RD}}(undef, K)
     out_pos = 1
     for pos in interval
         _, input_index, sector_index = table[pos]
@@ -288,13 +288,13 @@ end
 
 function _accumulate_sum_rmts!(
     result_mat::Matrix{T},
-    new_RMTs::Vector{LurTensor{T, RD, Array{T, RD}}},
+    new_RMTs::Vector{Array{T, RD}},
     factors::Matrix{Matrix{Float64}},
     physical_dim::Int,
     ::Val{M},
 ) where {T, RD, M}
     for i in eachindex(new_RMTs)
-        source = new_RMTs[i].data
+        source = new_RMTs[i]
         source_mat = reshape(source, physical_dim, div(length(source), physical_dim))
         factor = _sum_combined_factor(factors, i, Val(M))
         @assert size(source_mat, 2) == size(factor, 2)
@@ -307,13 +307,13 @@ end
 
 function _accumulate_sum_rmts!(
     result_mat::Matrix{T},
-    new_RMTs::Vector{LurTensor{T, RD, Array{T, RD}}},
+    new_RMTs::Vector{Array{T, RD}},
     factors::Matrix{Matrix{Float64}},
     physical_dim::Int,
     ::Val{1},
 ) where {T, RD}
     for i in eachindex(new_RMTs)
-        source = new_RMTs[i].data
+        source = new_RMTs[i]
         source_mat = reshape(source, physical_dim, div(length(source), physical_dim))
         factor = factors[1, i]
         @assert size(source_mat, 2) == size(factor, 2)
@@ -328,7 +328,7 @@ function _compress_sum_sector(
     qs,
     table,
     interval::UnitRange{Int},
-    new_RMTs::Vector{LurTensor{T, RD, Array{T, RD}}},
+    new_RMTs::Vector{Array{T, RD}},
     ::Type{PS},
     ::Val{QD},
     ::Val{N},
@@ -349,7 +349,7 @@ function _compress_sum_sector(
         end
     end
 
-    source_shape = size(first(new_RMTs).data)
+    source_shape = size(first(new_RMTs))
     physical_sizes = ntuple(i -> source_shape[i], Val(QD))
     physical_dim = prod(physical_sizes; init=1)
     rank_sizes = _sum_sector_rank_sizes(factors, PS, Val(N), Val(M))
@@ -360,17 +360,15 @@ function _compress_sum_sector(
 
     _accumulate_sum_rmts!(result_mat, new_RMTs, factors, physical_dim, Val(M))
 
-    return ntuple(m -> sector_wmats[m], Val(M)), LurTensor(result_data)
+    return ntuple(m -> sector_wmats[m], Val(M)), result_data
 end
 
-function _sum_tlarrays_aligned(qs::Union{
-                                   Tuple{Vararg{<:TLArray{<:Number, QD, N, RD, QT, PS, M}}},
-                                   AbstractVector{<:TLArray{<:Number, QD, N, RD, QT, PS, M}}},
-                               ::Type{T}) where {T, QD, N, RD, QT, PS, M}
+function _sum_tlarrays_aligned(qs, ::Type{T}, ::Val{QD}, ::Val{N}, ::Type{QT}, ::Type{PS},
+                               ::Val{M}, ::Val{RD}) where {T, QD, N, RD, QT, PS, M}
     table, unique_count = _sum_sector_table(qs, QT, Val(QD))
     result_keys = Vector{NTuple{QD, QT}}()
     result_wmats = Vector{NTuple{M, Matrix{Float64}}}()
-    result_RMTs = Vector{LurTensor{T, RD, Array{T, RD}}}()
+    result_RMTs = Vector{Array{T, RD}}()
     sizehint!(result_keys, unique_count)
     sizehint!(result_wmats, unique_count)
     sizehint!(result_RMTs, unique_count)
@@ -409,20 +407,19 @@ function _sum_tlarrays(qs::Tuple{})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
 end
 
-function _sum_tlarrays_from_ref(
-    ref::TLArray{TR, QD, N, RD, QT, PS, M},
-    qs::Union{Tuple{Vararg{<:TLArray{<:Number, QD, N, RD, QT, PS, M}}},
-              AbstractVector{<:TLArray{<:Number, QD, N, RD, QT, PS, M}}},
-) where {TR, QD, N, RD, QT, PS, M}
+function _sum_tlarrays_from_ref(ref::TLArray{TR, QD, N, RD, QT, PS, M, RMTR}, qs) where {TR, QD, N, RD, QT, PS, M, RMTR}
+    for q in qs
+        q isa TLArray || throw(ArgumentError("TLArray sum entries must all be TLArray objects"))
+        q isa TLArray{<:Number} || throw(ArgumentError("TLArray sum entries must have numeric RMT element types"))
+        ndims(q) == QD && nsymms(q) == N && typeof(q).parameters[4] == RD &&
+            qlabeltype(q) == QT && productsymm(q) === PS &&
+            typeof(q).parameters[7] == M || throw(ArgumentError(
+            "TLArray sum requires matching QD, N, RD, qlabel type, product symmetry, " *
+            "and w-matrix tuple width; only RMT element/storage may differ"))
+    end
     aligned = _align_sum_inputs(qs)
     T = promote_type((_qspace_eltype(q) for q in aligned)...)
-    return _sum_tlarrays_aligned(aligned, T)
-end
-
-function _sum_tlarrays_from_ref(ref::TLArray{TR, QD, N, RD, QT, PS, M}, qs) where {TR, QD, N, RD, QT, PS, M}
-    throw(ArgumentError(
-        "TLArray sum requires matching QD, N, RD, qlabel type, product symmetry, " *
-        "and w-matrix tuple width; only RMT element/storage may differ"))
+    return _sum_tlarrays_aligned(aligned, T, Val(QD), Val(N), QT, PS, Val(M), Val(RD))
 end
 
 function _sum_tlarrays(qs::Union{Tuple{Vararg{<:TLArray}}, AbstractVector{<:TLArray}})
@@ -433,8 +430,8 @@ end
 Base.sum(qs::Tuple{Vararg{<:TLArray}}) = _sum_tlarrays(qs)
 Base.sum(qs::AbstractVector{<:TLArray}) = _sum_tlarrays(qs)
 
-function Base.:+(qs1::TLArray{T1, QD, N, RD, QT, PS},
-                 qs2::TLArray{T2, QD, N, RD, QT, PS}) where {T1, T2, QD, N, RD, QT, PS}
+function Base.:+(qs1::TLArray{T1, QD, N, RD, QT, PS}, 
+    qs2::TLArray{T2, QD, N, RD, QT, PS}) where {T1, T2, QD, N, RD, QT, PS}
     return _sum_tlarrays((qs1, qs2))
 end
 

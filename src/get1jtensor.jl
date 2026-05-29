@@ -46,10 +46,10 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
     nr = length(info.splist)
     qlabels1 = Matrix{QT}(undef, 2, nr)
     wmats1 = _wmat_vector(PS, nr)
-    RMTs1 = Vector{LurTensor{Float64, 2 + N, Array{Float64, 2 + N}}}(undef, nr)
+    RMTs1 = Vector{Array{Float64, 2 + N}}(undef, nr)
 
     for (sector_index, (qlabels, RMTd)) in enumerate(info.splist)
-        RMT1 = LurTensor(reshape(Matrix{Float64}(I, RMTd, RMTd), RMTd, RMTd, (1 for _=1:N)...))
+        RMT1 = reshape(Matrix{Float64}(I, RMTd, RMTd), RMTd, RMTd, (1 for _=1:N)...)
         dual_qlabels = Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N)
         qlabels1[1, sector_index] = qlabels
         qlabels1[2, sector_index] = dual_qlabels
@@ -57,7 +57,7 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
         cgt_dim = 1.0
         for n in 1:N
             cgt_dim *= dimension(symm[n], qlabels[n])
-            _set_sector_wmat!(wmats1, PS, sector_index, n, LurTensor([1.0;;]))
+            _set_sector_wmat!(wmats1, PS, sector_index, n, [1.0;;])
         end
         RMT1[:] .*= sqrt(cgt_dim)
 

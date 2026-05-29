@@ -16,7 +16,7 @@ leginfo{N}(symm::NTuple{N, Any}, ind::TLIndex, splist::AbstractVector) where {N}
     leginfo(symm, ind, splist)
 
 # Use precomputed spaces from TLArray
-function leginfo(q::TLArray{T, QD, N, RD, QT, PS}, i::Int) where {T, QD, N, RD, QT, PS}
+function leginfo(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, i::Int) where {T, QD, N, RD, QT, PS, M, RMT}
     return leginfo{N, QT, PS}(q.inds[i], q.spaces[i])
 end
 
@@ -157,7 +157,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     # per symmetry.
     sector_qlabels = NTuple{D + 1, QT}[]
     wmat_buffers = _wmat_buffers(PS)
-    RMTs = LurTensor{Float64, D + 1 + N, Array{Float64, D + 1 + N}}[]
+    RMTs = Array{Float64, D + 1 + N}[]
 
     for (fused_qlabels, entries) in merged_info
         #println(fused_qlabels)
@@ -187,7 +187,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
                 RMT_data[ntuple(_ -> (:), D)..., cs:cs+RMT_dim-1, m] = id_block
             end
             RMT_data .*= sqrt(cgt_dim_out)
-            RMT_t = LurTensor(reshape(RMT_data, rmts_dims..., space_cnt, oms...))
+            RMT_t = reshape(RMT_data, rmts_dims..., space_cnt, oms...)
 
             phys_qlabels = ntuple(d -> d <= D ?
                 leginfos_adj[d].splist[orig_ind[d]][1] :
@@ -197,7 +197,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
 
             for n in 1:N
                 om_n         = oms[n]
-                wmat         = LurTensor(Matrix{Float64}(I, om_n, om_n))
+                wmat         = Matrix{Float64}(I, om_n, om_n)
                 _push_wmat!(wmat_buffers, PS, n, wmat)
             end
         end
@@ -243,6 +243,4 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
 
     return q
 end
-
-
 

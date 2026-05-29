@@ -1,8 +1,8 @@
 function _assert_qlabel_storage(q::TLArray)
-    @test size(q.qlabels, 1) == ndims(q)
-    @test size(q.qlabels, 2) >= Telum.nsectors(q)
+    @test eltype(q.qlabels) <: NTuple{ndims(q), Telum.qlabeltype(q)}
+    @test length(q.qlabels) >= Telum.nsectors(q)
     for sector_index in 1:Telum.nsectors(q)
-        @test Tuple(q.qlabels[:, sector_index]) ==
+        @test q.qlabels[sector_index] ==
               ntuple(leg -> Telum.sector_qlabel(q, sector_index, leg), ndims(q))
     end
 end
@@ -34,22 +34,21 @@ function _assert_zero_sector_constructor_filter(q::TLArray)
     Telum.nsectors(q) == 0 && return
 
     old_n = Telum.nsectors(q)
-    qlabels = Matrix{eltype(q.qlabels)}(undef, ndims(q), old_n + 1)
-    qlabels[:, 1:old_n] = q.qlabels[:, 1:old_n]
-    qlabels[:, old_n + 1] = q.qlabels[:, 1]
+    qlabels = copy(q.qlabels)
+    push!(qlabels, q.qlabels[1])
 
     wmats = deepcopy(q.wmats)
     push!(wmats, deepcopy(q.wmats[1]))
     RMTs = deepcopy(q.RMTs)
     zero_rmt = deepcopy(Telum.sector_rmt(q, 1))
-    fill!(zero_rmt.data, zero(eltype(zero_rmt.data)))
+    fill!(zero_rmt, zero(eltype(zero_rmt)))
     push!(RMTs, zero_rmt)
 
     filtered = TLArray(symm(q), qlabels, wmats, RMTs, q.inds, q.spaces)
     @test Telum.nsectors(filtered) == old_n
     @test length(filtered.wmats) == old_n
     @test length(filtered.RMTs) == old_n
-    @test size(filtered.qlabels, 2) == old_n + 1
+    @test length(filtered.qlabels) == old_n + 1
 end
 
 @testset "wmat slot mappings infer" begin
@@ -121,7 +120,7 @@ end
         sorted = Telum.sort_sectors(q)
         _assert_qlabel_storage(sorted)
         @test sorted !== q
-        @test Telum.sector_rmt(sorted, 1).data !== Telum.sector_rmt(q, 1).data
+        @test Telum.sector_rmt(sorted, 1) !== Telum.sector_rmt(q, 1)
     end
 
     @testset "decomposition assembly keeps orientation" begin

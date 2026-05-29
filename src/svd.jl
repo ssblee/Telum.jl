@@ -183,7 +183,7 @@ function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::AbstractMatrix{
     return blocks
 end
 
-function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::LurTensor{Float64, 2},
+function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::AbstractMatrix{Float64},
                                    cgp::NTuple{QD, Int}, legdir::Tuple{Int, Int},
                                    left_legs) where {QD}
     leftset = Set(left_legs)
@@ -220,7 +220,7 @@ end
 
 # Concatenate w-matrices, so the element type is always Float64
 # TODO: When GPU support is added, other version should be implemented
-function _copy_hcat_mats(mats::Vector{LurTensor{Float64, 2, Array{Float64, 2}}}) 
+function _copy_hcat_mats(mats::Vector{<:AbstractMatrix{Float64}}) 
     nsectors = size(first(mats), 1)
     ncols = sum(size(mat, 2) for mat in mats)
     concat = Matrix{Float64}(undef, nsectors, ncols)
@@ -228,15 +228,15 @@ function _copy_hcat_mats(mats::Vector{LurTensor{Float64, 2, Array{Float64, 2}}})
     col = 1
     @views for mat in mats
         width = size(mat, 2)
-        copyto!(view(concat, :, col:col+width-1), mat.data)
+        copyto!(view(concat, :, col:col+width-1), mat)
         col += width
     end
     @assert col == ncols + 1
     return concat
 end
 
-function _qr_shared_isometry(mats::Vector{LurTensor{Float64, 2, AW}}; tol::Float64 = 1e-12
-    ) where {AW<:AbstractArray{Float64, 2}}
+function _qr_shared_isometry(mats::Vector{AW}; tol::Float64 = 1e-12
+    ) where {AW<:AbstractMatrix{Float64}}
     nsectors = size(first(mats), 1)
     @assert all(size(mat, 1) == nsectors for mat in mats) "_qr_shared_isometry requires a common sector dimension"
 
@@ -270,14 +270,14 @@ function _qr_shared_isometry(mats::Vector{LurTensor{Float64, 2, AW}}; tol::Float
         end
         sqrt(nrm_sq) > threshold && (used = i)
     end
-    Q = LurTensor(Qfull[:, 1:used])
+    Q = Qfull[:, 1:used]
     R = Rfull[1:used, :]
 
-    factors = Vector{LurTensor{Float64, 2, AW}}(undef, length(mats))
+    factors = Vector{Matrix{Float64}}(undef, length(mats))
     col = 0
     for (i, mat) in pairs(mats)
         width = size(mat, 2)
-        factors[i] = LurTensor(R[:, col+1:col+width])
+        factors[i] = R[:, col+1:col+width]
         col += width
     end
     @assert col == size(concat, 2)
@@ -285,25 +285,25 @@ function _qr_shared_isometry(mats::Vector{LurTensor{Float64, 2, AW}}; tol::Float
     return Q, factors
 end
 
-function _qr_shared_isometry(tensors::Vector{LurTensor{Float64, 3, AW}}; tol::Float64 = 1e-12
+function _qr_shared_isometry(tensors::Vector{AW}; tol::Float64 = 1e-12
     ) where {AW<:AbstractArray{Float64, 3}}
     nsectors = size(first(tensors), 1)
     @assert all(size(tensor, 1) == nsectors for tensor in tensors) "_qr_shared_isometry requires a common sector dimension"
 
-    mats = Vector{LurTensor{Float64, 2, Matrix{Float64}}}(undef, length(tensors))
+    mats = Vector{Matrix{Float64}}(undef, length(tensors))
     for (i, tensor) in pairs(tensors)
         d2, d3 = size(tensor, 2), size(tensor, 3)
-        mats[i] = LurTensor(reshape(tensor.data, nsectors, d2 * d3))
+        mats[i] = reshape(tensor, nsectors, d2 * d3)
     end
 
     shared = _qr_shared_isometry(mats; tol=tol)
     isnothing(shared) && return nothing
     Q, mat_factors = shared
 
-    factors = Vector{LurTensor{Float64, 3, Array{Float64, 3}}}(undef, length(tensors))
+    factors = Vector{Array{Float64, 3}}(undef, length(tensors))
     for i in eachindex(tensors)
         d2, d3 = size(tensors[i], 2), size(tensors[i], 3)
-        factors[i] = LurTensor(reshape(mat_factors[i].data, size(mat_factors[i], 1), d2, d3))
+        factors[i] = reshape(mat_factors[i], size(mat_factors[i], 1), d2, d3)
     end
 
     return Q, factors
@@ -328,8 +328,8 @@ function _share_svd_sector_side_isometries!(blocks::Vector{<:_ReducedSVDCGTBlock
         inds = pos:nextpos-1
         if length(inds) > 1
             # TODO: When GPU support is added, 'Array{Float64, 2}' here can be generalized
-            mats::Vector{LurTensor{Float64, 2, Array{Float64, 2}}} = [
-                LurTensor(side === :left ?  blocks[i].left_iso : blocks[i].right_iso)
+            mats::Vector{Matrix{Float64}} = [
+                side === :left ?  blocks[i].left_iso : blocks[i].right_iso
                 for i in inds
             ]
             shared = _qr_shared_isometry(mats; tol=tol)
@@ -339,12 +339,12 @@ function _share_svd_sector_side_isometries!(blocks::Vector{<:_ReducedSVDCGTBlock
             for (i, factor) in zip(inds, factors)
                 block = blocks[i]
                 if side === :left
-                    new_core = _contract_om_axis(LurTensor(block.core), factor, 1)
+                    new_core = _contract_om_axis(block.core, factor, 1)
                     blocks[i] = _ReducedSVDCGTBlock{length(block.q)}(
                         block.sector_index, block.left_spaces, block.right_spaces,
                         block.q, common_iso, block.right_iso, new_core)
                 else
-                    new_core = _contract_om_axis(LurTensor(block.core), factor, 2)
+                    new_core = _contract_om_axis(block.core, factor, 2)
                     blocks[i] = _ReducedSVDCGTBlock{length(block.q)}(
                         block.sector_index, block.left_spaces, block.right_spaces,
                         block.q, block.left_iso, common_iso, new_core)
@@ -585,7 +585,7 @@ end
 
 function _svd_expand_core_axis(A::AbstractArray{T}, core::Array{Float64, 3}, axis::Int) where {T}
     omLr, omRr, omM = size(core)
-    merged = _contract_om_axis(LurTensor(A), LurTensor(reshape(core, omLr * omRr, omM)), axis)
+    merged = _contract_om_axis(A, reshape(core, omLr * omRr, omM), axis)
     dims = size(merged)
     return reshape(merged, dims[1:axis-1]..., omLr, omRr, dims[axis+1:end]...)
 end
@@ -603,7 +603,7 @@ function _svd_sector_class_matrix(q::TLArray{T, QD, N, RD},
                                sector_blocks,
                                left_legs::NTuple{NL, Int},
                                right_legs::NTuple{NR, Int}) where {T, QD, N, RD, NL, NR}
-    data = sector_rmt(q, sector_index).data
+    data = sector_rmt(q, sector_index)
     for n in 1:N
         data = _svd_expand_core_axis(data, sector_blocks[n].core, QD + 2n - 1)
     end
@@ -615,9 +615,9 @@ function _svd_sector_class_matrix(q::TLArray{T, QD, N, RD},
         [QD + 2n for n in 1:N],
     ))
     permed = permutedims(data, perm)
-    left_dim = prod(size(sector_rmt(q, sector_index).data, leg) for leg in left_legs) *
+    left_dim = prod(size(sector_rmt(q, sector_index), leg) for leg in left_legs) *
                prod(size(sector_blocks[n].left_iso, 2) for n in 1:N)
-    right_dim = prod(size(sector_rmt(q, sector_index).data, leg) for leg in right_legs) *
+    right_dim = prod(size(sector_rmt(q, sector_index), leg) for leg in right_legs) *
                 prod(size(sector_blocks[n].right_iso, 2) for n in 1:N)
     return reshape(permed, left_dim, right_dim)
 end
@@ -650,7 +650,7 @@ function _svd_class_side_infos(q::TLArray{T, QD, N, RD},
     for sig in ordered
         ri = first(filter(rj -> sector_signatures[rj] == sig, class_sectors))
         sector_blocks = _svd_blocks_for_sector(prep, ri, sector)
-        phys_dims = ntuple(i -> size(sector_rmt(q, ri).data, legs[i]), L)
+        phys_dims = ntuple(i -> size(sector_rmt(q, ri), legs[i]), L)
         om_dims = ntuple(n -> size(side === :left ? sector_blocks[n].left_iso : sector_blocks[n].right_iso, 2), N)
         block_size = prod(phys_dims; init=1) * prod(om_dims; init=1)
         block_range = offset + 1:offset + block_size
@@ -668,7 +668,7 @@ function _svd_build_side_cgt_metadata(source_qlabels::NTuple{QD},
                                       phys_legs::NTuple{L, Int},
                                       bond_q,
                                       bond_first::Bool,
-                                      wmat::LurTensor{Float64, 2}) where {QD, L}
+                                      wmat::AbstractMatrix{Float64}) where {QD, L}
     stored_phys = sort!([(source_cgp[leg], leg) for leg in phys_legs]; by = first, alg=MergeSort)
     nin = source_legdir[1]
 
@@ -889,13 +889,13 @@ function _build_svd_cgtsvd_S(symm,
     base = get1jtensor(leginfo(symm, TLIndex(left_tag, '-'), bond_splist))
     qlabels = copy(base.qlabels)
     wmats = deepcopy(base.wmats)
-    RMTs = LurTensor{Float64, 2 + N, Array{Float64, 2 + N}}[]
+    RMTs = Array{Float64, 2 + N}[]
 
     for ri in 1:nsectors(base)
         sector = _svd_sector_qlabels(base, ri, N)
         svals = sector_values[sector]
         count = length(svals)
-        rmt = LurTensor(reshape(Matrix(Diagonal(svals)), count, count, ones(Int, N)...))
+        rmt = reshape(Matrix(Diagonal(svals)), count, count, ones(Int, N)...)
         cgt_dim = prod(Float64(dimension(symm[n], sector[n])) for n in 1:N)
         rmt[:] .*= sqrt(cgt_dim)
         push!(RMTs, rmt)
@@ -935,8 +935,8 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
     qlabels_Vd = NTuple{NR + 1, QT}[]
     wmat_buffers_U = _wmat_buffers(PS)
     wmat_buffers_Vd = _wmat_buffers(PS)
-    RMTs_U = LurTensor{Tout, NL + 1 + N, Array{Tout, NL + 1 + N}}[]
-    RMTs_Vd = LurTensor{Tout, NR + 1 + N, Array{Tout, NR + 1 + N}}[]
+    RMTs_U = Array{Tout, NL + 1 + N}[]
+    RMTs_Vd = Array{Tout, NR + 1 + N}[]
 
     sector_values = Dict{Any, Vector{Float64}}()
     for sector in sector_order
@@ -965,14 +965,14 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
             tmp = reshape(full, info.phys_dims..., info.om_dims..., sector_count)
             perm = Tuple(vcat(collect(1:NL), NL + N + 1, collect(NL+1:NL+N)))
             data = permutedims(tmp, perm)
-            rmt_U = LurTensor(data)
+            rmt_U = data
 
             cgts_U = ntuple(N) do n
                 source_qlabels, source_cgp, source_legdir =
                     _sector_cgt_metadata(q, info.sector_index, n)
                 _svd_build_side_cgt_metadata(
                     source_qlabels, source_cgp, source_legdir, left_legs,
-                    sector[n], false, LurTensor(copy(sector_blocks[n].left_iso)))
+                    sector[n], false, copy(sector_blocks[n].left_iso))
             end
             push!(qlabels_U,
                   _svd_physical_qlabels(QT,
@@ -990,14 +990,14 @@ function _assemble_svd_cgtsvd(q::TLArray{T, QD, N, RD},
             part = result.Vt[keep, info.range]
             full = zeros(eltype(result.Vt), sector_count, length(info.range))
             full[class_range, :] = part
-            rmt_Vd = LurTensor(reshape(full, sector_count, info.phys_dims..., info.om_dims...))
+            rmt_Vd = reshape(full, sector_count, info.phys_dims..., info.om_dims...)
 
             cgts_Vd = ntuple(N) do n
                 source_qlabels, source_cgp, source_legdir =
                     _sector_cgt_metadata(q, info.sector_index, n)
                 _svd_build_side_cgt_metadata(
                     source_qlabels, source_cgp, source_legdir, right_legs,
-                    dual_sector[n], true, LurTensor(copy(sector_blocks[n].right_iso)))
+                    dual_sector[n], true, copy(sector_blocks[n].right_iso))
             end
             push!(qlabels_Vd,
                   _svd_physical_qlabels(QT,
