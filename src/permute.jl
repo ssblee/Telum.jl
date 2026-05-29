@@ -82,9 +82,10 @@ function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
 end
 
 function _permute_sector_wmats(q::TLArray{T, QD, N}, perm::NTuple{QD, Int}, symm) where {T, QD, N}
-    out = _wmat_vector(productsymm(q), nsectors(q))
+    out = _wmat_vector(productsymm(q), sector_count(q))
     for n in 1:N
-        for sector_index in 1:nsectors(q)
+        for sector_index in sector_slots(q)
+            q.iszero[sector_index] && continue
             _set_sector_wmat!(out, productsymm(q), sector_index, n,
                               _permute_sector_wmat(q, sector_index, perm, n, symm))
         end
@@ -93,8 +94,9 @@ function _permute_sector_wmats(q::TLArray{T, QD, N}, perm::NTuple{QD, Int}, symm
 end
 
 function _permute_sector_rmts(q::TLArray{T, QD, N, RD}, perm::NTuple{QD, Int}) where {T, QD, N, RD}
-    out = similar(q.RMTs, nsectors(q))
-    for sector_index in 1:nsectors(q)
+    out = similar(q.RMTs, sector_count(q))
+    for sector_index in sector_slots(q)
+        q.iszero[sector_index] && continue
         out[sector_index] = _permute_sector_rmt(q, sector_index, perm)
     end
     return out

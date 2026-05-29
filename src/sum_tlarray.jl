@@ -92,7 +92,8 @@ function _sum_sector_table(qs, ::Type{QT}, ::Val{QD}) where {QT, QD}
     pos = 1
     for input_index in eachindex(qs)
         q = qs[input_index]
-        for sector_index in 1:nsectors(q)
+        for sector_index in sector_slots(q)
+            q.iszero[sector_index] && continue
             table[pos] = (_sum_sector_key(q, sector_index), input_index, sector_index)
             pos += 1
         end
@@ -399,8 +400,7 @@ function _sum_tlarrays_aligned(qs, ::Type{T}, ::Val{QD}, ::Val{N}, ::Type{QT}, :
 
     ref = qs[begin]
     return TLArray(symm(ref), qlabels, result_wmats, result_RMTs,
-                   ref.inds, ref.spaces;
-                   drop_zero_sectors=false)
+                   ref.inds, ref.spaces)
 end
 
 function _sum_tlarrays(qs::Tuple{})

@@ -905,12 +905,15 @@ function _contract_sector_infos(::Type{QT}, q::TLArray{T, QD, N},
     CQT = _contracted_qlabel_type(QT, Val(CN))
     Info = ContractSectorInfo{NF, QT, CQT}
     infos = Vector{Info}(undef, nsectors(q))
-    for i in 1:nsectors(q)
-        infos[i] = Info(
+    out_pos = 1
+    for i in sector_slots(q)
+        q.iszero[i] && continue
+        infos[out_pos] = Info(
             i,
             ntuple(k -> sector_qlabel(QT, q, i, free_legs[k]), Val(NF)),
             ntuple(k -> sector_qlabel(QT, q, i, legs[k]), Val(CN))::CQT,
         )
+        out_pos += 1
     end
     return sort!(infos; by = info -> info.contracted_qlabels, alg=MergeSort)
 end
@@ -1487,8 +1490,8 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
     perm1 = (free1..., legs1..., ntuple(n -> QD1 + n, Val(N))...)
     perm2 = (free2..., legs2..., ntuple(n -> QD2 + n, Val(N))...)
 
-    permuted_rmts1 = Vector{Array{T1, 3}}(undef, nsectors(q1))
-    permuted_rmts2 = Vector{Array{T2, 3}}(undef, nsectors(q2))
+    permuted_rmts1 = Vector{Array{T1, 3}}(undef, sector_count(q1))
+    permuted_rmts2 = Vector{Array{T2, 3}}(undef, sector_count(q2))
 
     # ── 1. Build sorted sector-info vectors keyed by contracted qlabels ─────────
     sector_infos1 = _contract_sector_infos(QT, q1, free1, legs1)
@@ -1555,12 +1558,25 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
 
     # ── 5. Merge each output sector ──────────────────────────────────────────
     RT = promote_type(T1, T2, Float64)
-    result_qlabel_candidates = Vector{NTuple{QD_out, QT}}(undef, length(out_keys))
-    final_wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, length(out_keys))
-    final_RMTs = Vector{Array{RT, RD_out}}(undef, length(out_keys))
+    res_nsectors = count(valid_output)
+    out_to_result = zeros(Int, length(out_keys))
+    result_pos = 1
+    for out_pos in eachindex(out_keys)
+        valid_output[out_pos] || continue
+        out_to_result[out_pos] = result_pos
+        result_pos += 1
+    end
+    result_qlabels = Matrix{QT}(undef, QD_out, res_nsectors)
+    result_wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, res_nsectors)
+    result_RMTs = Vector{Array{RT, RD_out}}(undef, res_nsectors)
     nonabelian_indices = nonabelian_symmetry_indices(PS)
     for out_pos in eachindex(out_keys)
         valid_output[out_pos] || continue
+        result_pos = out_to_result[out_pos]
+        out_qlabels = _out_key_qlabels(out_keys[out_pos], Val(QD_out))
+        for leg in 1:QD_out
+            result_qlabels[leg, result_pos] = out_qlabels[leg]
+        end
 
         prepared = prepared_sectors[out_pos]
         sector_pairs = prepared_sector_pairs[out_pos]
@@ -1582,16 +1598,13 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
             prepared, sector_pairs, permuted_rmts1, permuted_rmts2,
             kept_sizes1, kept_sizes2, contract_temp, Val(RD_out))
         if iszero(sum(abs2, result_RMT))
-            valid_output[out_pos] = false
             continue
         end
-        result_qlabel_candidates[out_pos] =
-            _out_key_qlabels(out_keys[out_pos], Val(QD_out))
-        final_wmats[out_pos] = ntuple(Val(M)) do m
+        result_wmats[result_pos] = ntuple(Val(M)) do m
             n = nonabelian_indices[m]
             U_mats[n]
         end
-        final_RMTs[out_pos] = result_RMT
+        result_RMTs[result_pos] = result_RMT
     end
 
     #nrow1 = length(permuted_rmts1)
@@ -1624,23 +1637,6 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
     spaces_out = (ntuple(i -> q1.spaces[free1[i]], Val(QD1 - CN))...,
                   ntuple(i -> q2.spaces[free2[i]], Val(QD2 - CN))...)
 
-    res_nsectors = count(valid_output)
-    result_qlabels = Matrix{QT}(undef, QD_out, res_nsectors)
-    result_wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, res_nsectors)
-    result_RMTs = Vector{Array{RT, RD_out}}(undef, res_nsectors)
-    sector_index = 1
-    for out_pos in eachindex(out_keys)
-        valid_output[out_pos] || continue
-
-        for leg in 1:QD_out
-            result_qlabels[leg, sector_index] = result_qlabel_candidates[out_pos][leg]
-        end
-        result_wmats[sector_index] = final_wmats[out_pos]
-        result_RMTs[sector_index] = final_RMTs[out_pos]
-        sector_index += 1
-    end
-
     return TLArray(symmetries, result_qlabels, result_wmats, result_RMTs,
-                          final_inds, spaces_out;
-                          drop_zero_sectors=false)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS, M, Array{promote_type(T1, T2, Float64), RD_out}}
+                          final_inds, spaces_out)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS, M, Array{promote_type(T1, T2, Float64), RD_out}}
 end

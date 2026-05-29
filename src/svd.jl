@@ -378,24 +378,22 @@ function _sort_svd_blocks_by_sector!(blocks_by_symm)
 end
 
 function _get_svd_intermediate_sector_dict(blocks_by_symm::Tuple{Vararg{<:AbstractVector, N}},
-                                         nsectors::Int) where {N}
+                                         sector_indices::Vector{Int}) where {N}
     _sort_svd_blocks_by_sector!(blocks_by_symm)
     Sector = NTuple{N, Tuple{Vararg{Int}}}
     qsectors = Dict{Sector, Vector{Int}}()
-    (nsectors == 0 || any(isempty, blocks_by_symm)) && return qsectors
+    (isempty(sector_indices) || any(isempty, blocks_by_symm)) && return qsectors
 
-    qchoices_by_sector = ntuple(_ -> [Tuple{Vararg{Int}}[] for _ in 1:nsectors], N)
+    qchoices_by_sector = ntuple(_ -> Dict(i => Tuple{Vararg{Int}}[] for i in sector_indices), N)
     for n in 1:N
-        @assert first(blocks_by_symm[n]).sector_index == 1
-        @assert last(blocks_by_symm[n]).sector_index == nsectors
         for block in blocks_by_symm[n]
             qlist = qchoices_by_sector[n][block.sector_index]
             (isempty(qlist) || qlist[end] != block.q) && push!(qlist, block.q)
         end
-        @assert all(!isempty, qchoices_by_sector[n])
+        @assert all(i -> !isempty(qchoices_by_sector[n][i]), sector_indices)
     end
 
-    for ri in 1:nsectors
+    for ri in sector_indices
         choices = ntuple(n -> qchoices_by_sector[n][ri], N)
         for sector in Iterators.product(choices...)
             push!(get!(qsectors, Tuple(sector), Int[]), ri)
@@ -416,7 +414,7 @@ function _get_svd_sector_spaces(q::TLArray{T, QD, N, RD},
             _svd_cgt_split_spaces(qlabels, legdir, left_legs_canon, right_legs_canon)
         end
         (ntuple(n -> split_spaces[n][1], N), ntuple(n -> split_spaces[n][2], N))
-    end for sector_index in 1:nsectors(q)]
+    end for sector_index in sector_slots(q) if !q.iszero[sector_index]]
     return first.(sector_spaces), last.(sector_spaces)
 end
 
@@ -529,7 +527,8 @@ function _get_svd_cgt_split_sectors(q::TLArray{T, QD, N, RD},
                                  right_legs;
                                  tol::Float64 = 1e-12) where {T, QD, N, RD}
     blocks_by_symm = ntuple(n -> Vector{_ReducedSVDCGTBlock{nzops(symm(q)[n])}}(), N)
-    for ri in 1:nsectors(q)
+    for ri in sector_slots(q)
+        q.iszero[ri] && continue
         sector_blocks = _get_svd_sector_split_blocks(q, ri, left_legs, right_legs; tol=tol)
         isnothing(sector_blocks) && continue
         for n in 1:N
@@ -567,7 +566,8 @@ function _preprocess_svd_cgtsvd(q::TLArray{T, QD, N, RD},
 
     blocks_by_symm = _get_svd_cgt_split_sectors(q, left_legs_, right_legs_; tol=tol)
     _share_svd_sector_isometries!(blocks_by_symm, symm(q); tol=tol)
-    intermediate_qsectors = _get_svd_intermediate_sector_dict(blocks_by_symm, nsectors(q))
+    active_sector_indices = [ri for ri in sector_slots(q) if !q.iszero[ri]]
+    intermediate_qsectors = _get_svd_intermediate_sector_dict(blocks_by_symm, active_sector_indices)
     intermediate_qsector_classes = _get_svd_intermediate_sector_equivclasses(
         left_signatures, right_signatures, intermediate_qsectors)
     block_lookup_by_symm = ntuple(n -> _build_svd_block_lookup(blocks_by_symm[n]), N)
@@ -891,7 +891,8 @@ function _build_svd_cgtsvd_S(symm,
     wmats = deepcopy(base.wmats)
     RMTs = Array{Float64, 2 + N}[]
 
-    for ri in 1:nsectors(base)
+    for ri in sector_slots(base)
+        base.iszero[ri] && continue
         sector = _svd_sector_qlabels(base, ri, N)
         svals = sector_values[sector]
         count = length(svals)

@@ -74,17 +74,13 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
             push!(eig_list, (zero(T_out), cgt_dim, sector_qlabels, j))
         end
 
-        rmt_zero = zeros(T_out, dim, dim, ones(Int, N)...)
         rmt_eye = reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...)
         rmt_eye[:] .*= sqrt(Float64(cgt_dim))
         identity_wmats = _eig_identity_wmats(symm, sector_qlabels)
 
-        push!(qlabels_D, sector_qlabels)
-        push!(RMTs_D, rmt_zero)
         push!(qlabels_V, sector_qlabels)
         push!(RMTs_V, rmt_eye)
         for n in 1:N
-            _push_wmat!(wmats_D, symm, n, identity_wmats[n])
             _push_wmat!(wmats_V, symm, n, identity_wmats[n])
         end
 
@@ -193,7 +189,8 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
         sector_counts[sector] = unique_count
     end
 
-    for sector_index in 1:nsectors(template)
+    for sector_index in sector_slots(template)
+        template.iszero[sector_index] && continue
         sector = _eig_sector_qlabels(template, sector_index)
         idxs = get(picks, sector, Int[])
         isempty(idxs) && continue
@@ -335,7 +332,8 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     # Eigenvalue, degeneracy, sector qlabels, in-sector index
     eig_list = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
-    for sector_index in 1:nsectors(q)
+    for sector_index in sector_slots(q)
+        q.iszero[sector_index] && continue
         sector_qlabels = _eig_sector_qlabels(q, sector_index)
 
         # Degeneracy = product of irrep dims across all symmetries for this sector
@@ -375,7 +373,7 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
         end
     end
 
-    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in 1:nsectors(q))
+    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in sector_slots(q) if !q.iszero[sector_index])
     _append_missing_eig_sectors!(symmetries, q.spaces[1], covered,
         qlabels_D, wmats_D, RMTs_D,
         qlabels_V, wmats_V, RMTs_V,
@@ -428,7 +426,8 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     RMTs_Vinv = Array{T_out, 2 + N}[]
     eig_list  = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
-    for sector_index in 1:nsectors(q)
+    for sector_index in sector_slots(q)
+        q.iszero[sector_index] && continue
         sector_qlabels = _eig_sector_qlabels(q, sector_index)
 
         cgt_dim = prod(
@@ -473,7 +472,7 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
         end
     end
 
-    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in 1:nsectors(q))
+    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in sector_slots(q) if !q.iszero[sector_index])
     _append_missing_eig_sectors!(symmetries, q.spaces[1], covered,
         qlabels_D, wmats_D, RMTs_D,
         qlabels_V, wmats_V, RMTs_V,
