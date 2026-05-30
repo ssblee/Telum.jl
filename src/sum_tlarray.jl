@@ -122,6 +122,7 @@ function _sum_rmt_cpu(::Type{T}, rmt::AbstractArray{S, RD}) where {T, S, RD}
 end
 
 @inline _sum_rmt_iszero(rmt::AbstractArray) = iszero(sum(abs2, rmt))
+@inline _sum_rmt_iszero(rmt::DiagRMT) = iszero(sum(abs2, rmt.diag))
 
 function _sum_single_contribution!(result_keys::Vector{NTuple{QD, QT}},
                                    result_wmats::Vector{NTuple{M, Matrix{Float64}}},

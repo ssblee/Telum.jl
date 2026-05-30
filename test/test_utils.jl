@@ -571,6 +571,188 @@ function test_contract_compress_sector_rmt_optimizer()
     println("test_contract_compress_sector_rmt_optimizer passed.")
 end
 
+function test_diag_rmt_storage_and_prepared_cache()
+    r = DiagRMT([2.0, -3.0], Val(3), (1, 2))
+    @test size(r) == (2, 2, 1)
+    @test r[1, 1, 1] == 2.0
+    @test r[2, 2, 1] == -3.0
+    @test r[1, 2, 1] == 0.0
+    @test Array(r) == reshape([2.0, 0.0, 0.0, -3.0], 2, 2, 1)
+
+    rv = DiagRMT([2.0, -3.0], Val(3), (2, 0))
+    @test size(rv) == (1, 4, 1)
+    @test rv[1, 1, 1] == 2.0
+    @test rv[1, 4, 1] == -3.0
+    @test rv[1, 2, 1] == 0.0
+
+    @test Telum._permuted_rmt_type(Array{Float64, 4}) == Array{Float64, 3}
+    @test Telum._permuted_rmt_type(DiagRMT{Float64, 4}) == DiagRMT{Float64, 3}
+
+    r4 = DiagRMT([2.0, -3.0], Val(4), (1, 2))
+    mixed = Telum._permuted_rmt_data(r4, (1, 2, 3, 4), Val(1), Val(2), Val(1))
+    @test mixed isa DiagRMT{Float64, 3}
+    @test mixed.axis == (1, 2)
+    @test size(mixed) == (2, 2, 1)
+
+    free_vectorized = Telum._permuted_rmt_data(r4, (1, 2, 3, 4), Val(2), Val(1), Val(1))
+    @test free_vectorized isa DiagRMT{Float64, 3}
+    @test free_vectorized.axis == (1, 0)
+    @test size(free_vectorized) == (4, 1, 1)
+
+    contracted_vectorized = Telum._permuted_rmt_data(r4, (3, 1, 2, 4), Val(1), Val(2), Val(1))
+    @test contracted_vectorized isa DiagRMT{Float64, 3}
+    @test contracted_vectorized.axis == (2, 0)
+    @test size(contracted_vectorized) == (1, 4, 1)
+
+    symm = (U1,)
+    qlabels = [(((0,),), ((0,),))]
+    wmats = Vector{NTuple{0, Matrix{Float64}}}(undef, 1)
+    RMTs = [DiagRMT([1.0, 2.0], Val(3), (1, 2))]
+    spaces = ([(((0,),), 2)], [(((0,),), 2)])
+    @test TLArray(symm, qlabels, wmats, RMTs,
+                  (TLIndex('+'), TLIndex('-')), spaces) isa TLArray
+
+    bad_RMTs = [DiagRMT([1.0, 2.0], Val(3), (1, 0))]
+    @test_throws ArgumentError TLArray(symm, qlabels, wmats, bad_RMTs,
+                                       (TLIndex('+'), TLIndex('-')), spaces)
+
+    println("test_diag_rmt_storage_and_prepared_cache passed.")
+end
+
+function test_contract_compress_sector_diag_rmt()
+    Random.seed!(423)
+
+    function reference_contract(A, B, W)
+        Ad = Array(A)
+        Bd = Array(B)
+        fdim, cdim, o1dim = size(Ad)
+        gdim, cdim2, o2dim = size(Bd)
+        @assert cdim == cdim2
+        rdim = size(W, 1)
+        reference = zeros(promote_type(eltype(Ad), eltype(Bd), eltype(W)), fdim, gdim, rdim)
+        @inbounds for r in 1:rdim, g in 1:gdim, f in 1:fdim
+            acc = 0.0
+            for o2 in 1:o2dim, o1 in 1:o1dim, c in 1:cdim
+                acc += Ad[f, c, o1] * Bd[g, c, o2] * W[r, o1, o2]
+            end
+            reference[f, g, r] = acc
+        end
+        return reference
+    end
+
+    function check_pair(A, B)
+        W = randn(4, size(A, 3), size(B, 3))
+        new_wmats = (Array{Float64, 3}[W],)
+        sector_pairs = [(1, 1)]
+        work1 = Dict(1 => A)
+        work2 = Dict(1 => B)
+        kept_sizes1 = (size(A, 1),)
+        kept_sizes2 = (size(B, 1),)
+        U_mats, result_RMT = _compress_sector(new_wmats, sector_pairs,
+                                              work1, work2,
+                                              kept_sizes1, kept_sizes2, 0.0)
+        reconstructed = _contract_om_axis(result_RMT, U_mats[1], 3)
+        @test reconstructed ≈ reference_contract(A, B, W) atol=1e-10 rtol=1e-10
+    end
+
+    Dleft = DiagRMT([1.5, -2.0], Val(3), (1, 2))
+    Bright = randn(3, 2, 5)
+    Wleft = randn(4, size(Dleft, 3), size(Bright, 3))
+    @test Telum._rmt_contract_temp_len(typeof(Dleft), typeof(Bright),
+                                       size(Dleft, 1), size(Bright, 1),
+                                       size(Dleft, 2), size(Dleft, 3),
+                                       size(Bright, 3), Wleft) == 3 * 2 * 4
+    @test Telum._rmt_contract_temp_len(Dleft, Bright, Wleft) == 3 * 2 * 4
+
+    Aleft = randn(3, 2, 5)
+    Dright = DiagRMT([0.5, 4.0], Val(3), (1, 2))
+    Wright = randn(4, size(Aleft, 3), size(Dright, 3))
+    @test Telum._rmt_contract_temp_len(typeof(Aleft), typeof(Dright),
+                                       size(Aleft, 1), size(Dright, 1),
+                                       size(Aleft, 2), size(Aleft, 3),
+                                       size(Dright, 3), Wright) == 0
+    @test Telum._rmt_contract_temp_len(Aleft, Dright, Wright) == 0
+
+    check_pair(DiagRMT([1.5, -2.0], Val(3), (1, 2)), randn(3, 2, 1))
+    check_pair(Dleft, Bright)
+    check_pair(randn(3, 2, 1), DiagRMT([0.5, 4.0], Val(3), (1, 2)))
+    check_pair(Aleft, Dright)
+    check_pair(DiagRMT([1.5, -2.0], Val(3), (2, 0)), randn(3, 4, 1))
+    check_pair(randn(3, 4, 1), DiagRMT([0.5, 4.0], Val(3), (2, 0)))
+    check_pair(DiagRMT([1.5, -2.0], Val(3), (1, 2)),
+               DiagRMT([0.5, 4.0], Val(3), (1, 2)))
+
+    println("test_contract_compress_sector_diag_rmt passed.")
+end
+
+function test_contract_diag_rmt_tlarray()
+    symm = (U1,)
+    qlabels = [(((0,),), ((0,),))]
+    wmats = Vector{NTuple{0, Matrix{Float64}}}(undef, 1)
+    spaces = ([(((0,),), 2)], [(((0,),), 2)])
+
+    q1 = TLArray(symm, qlabels, wmats,
+                 [DiagRMT([1.0, 2.0], Val(3), (1, 2))],
+                 (TLIndex("x", '+'), TLIndex("c", '-')), spaces)
+    q2 = TLArray(symm, qlabels, wmats,
+                 [reshape([1.0, 2.0, 3.0, 4.0], 2, 2, 1)],
+                 (TLIndex("c", '+'), TLIndex("y", '-')), spaces)
+
+    result = contract(q1, (2,), q2, (1,))
+    @test typeof(result.RMTs) == Vector{Array{Float64, 3}}
+    @test only(result.RMTs)[:, :, 1] == [1.0 3.0; 4.0 8.0]
+
+    qlabels3 = [(((0,),), ((0,),), ((0,),))]
+    spaces3 = ([(((0,),), 2)], [(((0,),), 2)], [(((0,),), 1)])
+    q3 = TLArray(symm, qlabels3, wmats,
+                 [DiagRMT([1.0, 2.0], Val(4), (1, 2))],
+                 (TLIndex("x2", '+'), TLIndex("y2", '+'), TLIndex("c2", '-')),
+                 spaces3)
+    q4 = TLArray(symm, [(((0,),),)], wmats,
+                 [reshape([1.0], 1, 1)],
+                 (TLIndex("c2", '+'),), ([(((0,),), 1)],))
+
+    result_free = contract(q3, (3,), q4, (1,))
+    @test typeof(result_free.RMTs) == Vector{Array{Float64, 3}}
+    @test only(result_free.RMTs)[:, :, 1] == [1.0 0.0; 0.0 2.0]
+
+    println("test_contract_diag_rmt_tlarray passed.")
+end
+
+function test_diag_rmt_producers_and_metadata_ops()
+    q = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing))
+    j = get1jtensor(q.I, 1)
+    @test typeof(j.RMTs) <: Vector{<:DiagRMT}
+
+    jp = permutedims(j, (2, 1))
+    @test typeof(jp.RMTs) == typeof(j.RMTs)
+    @test all(Telum.sector_rmt(jp, i).axis == (1, 2) for i in Telum.sector_slots(jp) if !jp.iszero[i])
+
+    jc = conj(j)
+    @test typeof(jc.RMTs) == typeof(j.RMTs)
+
+    js = 2.0 * j
+    @test typeof(js.RMTs) == typeof(j.RMTs)
+    for i in Telum.sector_slots(j)
+        j.iszero[i] && continue
+        @test Telum.sector_rmt(js, i).diag == 2.0 .* Telum.sector_rmt(j, i).diag
+    end
+
+    jzero = 0.0 * j
+    @test all(jzero.iszero)
+    @test !any(jzero.isdefined)
+
+    ja = addSingleton(j, 3)
+    @test typeof(ja.RMTs) <: Vector{<:DiagRMT}
+    jd = deleteSingleton(ja, 3)
+    @test typeof(jd.RMTs) == typeof(j.RMTs)
+
+    er = eigen(q.I; hermitian=true)
+    @test typeof(er.D.RMTs) <: Vector{<:DiagRMT}
+
+    println("test_diag_rmt_producers_and_metadata_ops passed.")
+end
+
 function test_FAcont(option::LocalSpaceOptions)
     q = getLocalSpace(option);
     qi1 = TLArray(q.I, ("lur1", "lur1"))
@@ -767,6 +949,22 @@ function test_conj(option::LocalSpaceOptions)
         ("a",  a),
         ("ct", ct),
     ]
+
+    zero_qlabels = copy(q.F.qlabels)
+    push!(zero_qlabels, first(q.F.qlabels))
+    zero_wmats = similar(q.F.wmats, length(q.F.wmats) + 1)
+    zero_RMTs = similar(q.F.RMTs, length(q.F.RMTs) + 1)
+    for sector_index in Telum.sector_slots(q.F)
+        q.F.iszero[sector_index] && continue
+        zero_wmats[sector_index] = q.F.wmats[sector_index]
+        zero_RMTs[sector_index] = q.F.RMTs[sector_index]
+    end
+    q_with_zero_sector = TLArray(symm(q.F), zero_qlabels, zero_wmats, zero_RMTs,
+                                 q.F.inds, q.F.spaces)
+    qzc = conj(q_with_zero_sector)
+    @test qzc.iszero[end]
+    @test !isassigned(qzc.RMTs, length(qzc.RMTs))
+    @test !isassigned(qzc.wmats, length(qzc.wmats))
 
     for (label, qs) in cases
         qc   = conj(qs)
@@ -1630,6 +1828,34 @@ function test_spaces_svdQS(option::LocalSpaceOptions)
 
 end
 
+function _test_svd_cgtsvd_prep(q::TLArray{T, QD, N, RD},
+                               left_legs;
+                               tol::Float64 = 1e-12) where {T, QD, N, RD}
+    left_legs_ = Telum._normalize_svd_left_legs(left_legs, QD)
+    right_legs_ = [l for l in 1:QD if l ∉ left_legs_]
+    left_signatures, right_signatures =
+        Telum._get_svd_sector_spaces(q, left_legs_, right_legs_)
+
+    blocks_by_symm = Telum._get_svd_cgt_split_sectors(q, left_legs_, right_legs_; tol=tol)
+    Telum._share_svd_sector_isometries!(blocks_by_symm, symm(q); tol=tol)
+    active_sector_indices = [ri for ri in Telum.sector_slots(q) if !q.iszero[ri]]
+    intermediate_qsectors =
+        Telum._get_svd_intermediate_sector_dict(blocks_by_symm, active_sector_indices)
+    intermediate_qsector_classes = Telum._get_svd_intermediate_sector_equivclasses(
+        left_signatures, right_signatures, intermediate_qsectors)
+    block_lookup_by_symm = ntuple(n -> Telum._build_svd_block_lookup(blocks_by_symm[n]), N)
+    return (
+        left_legs = Tuple(left_legs_),
+        right_legs = Tuple(right_legs_),
+        left_signatures = left_signatures,
+        right_signatures = right_signatures,
+        blocks_by_symm = blocks_by_symm,
+        block_lookup_by_symm = block_lookup_by_symm,
+        intermediate_qsectors = intermediate_qsectors,
+        intermediate_qsector_classes = intermediate_qsector_classes,
+    )
+end
+
 function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e-12)
     q   = getLocalSpace(option, ("lur", "lur", "op"))
     qi1 = TLArray(q.I, ("lur1", "lur1"))
@@ -1642,7 +1868,7 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
     split_blocks = Telum._get_svd_cgt_split_sectors(ct, left_legs; tol)
     expected_blocks = Telum._get_svd_cgt_split_sectors(ct, left_legs; tol)
     Telum._share_svd_sector_isometries!(expected_blocks, symm(ct); tol=tol)
-    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=tol)
     split_blocks_via_svd = prep.blocks_by_symm
 
     direct_pairs_by_symm = ntuple(_ -> Tuple{Any, Any}[], length(symm(ct)))
@@ -1759,7 +1985,7 @@ function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Floa
     ct  = qf * a
 
     left_legs = (1, 2)
-    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=tol)
     split_blocks = prep.blocks_by_symm
     got = prep.intermediate_qsectors
 
@@ -1804,7 +2030,7 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
     ct  = qf * a
 
     left_legs = (1, 2)
-    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=tol)
     qsectors = prep.intermediate_qsectors
     got_left_sigs, got_right_sigs = prep.left_signatures, prep.right_signatures
     got = prep.intermediate_qsector_classes
@@ -1890,7 +2116,7 @@ function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64
     ct  = qf * a
 
     left_legs = (1, 4)
-    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=tol)
+    prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=tol)
 
     expected_signatures = [begin
         per_symm = ntuple(length(symm(ct))) do n
@@ -2050,7 +2276,7 @@ function test_truncate_svd_cgtsvd(option::LocalSpaceOptions)
     @test all(entry -> length(entry) == 4, result.kept_list)
     @test all(entry -> entry[4] >= 1, result.kept_list)
 
-    prep = Telum._preprocess_svd_cgtsvd(ct, left_legs; tol=0.0)
+    prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=0.0)
     cutoff_result = Telum._assemble_svd_cgtsvd(
         ct, prep.left_legs, prep.right_legs, "svdL", "svdR", prep;
         cutoff=1.0, get_lists=true)

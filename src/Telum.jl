@@ -20,9 +20,10 @@ import LurCGT: nzops, remove_zeros, totxt, transf_basis!
 ⊗(a::AbstractVector, b::AbstractVector) = kron(b, a)
 comm(A, B) = A * B - B * A
 
+include("DiagRMT.jl")
 include("TLArray.jl")
 
-export TLArray, TLIndex, Itag
+export TLArray, TLIndex, Itag, DiagRMT
 export ProductSymm, productsymm, product_symms, symm, nsymms
 export LocalSpaceOptions, SpinOptions, FermionOptions, FermionSOptions
 export Z, U1, SU, SO, Sp

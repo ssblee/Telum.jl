@@ -94,6 +94,14 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
     end
 end
 
+function _eig_diagonal_rmt(::Vector{<:Array}, vals::AbstractVector{T}, scale, ::Val{RD}) where {T, RD}
+    return _dense_diagonal_rmt_from_values(vals, Val(RD), scale)
+end
+
+function _eig_diagonal_rmt(::Vector{<:DiagRMT}, vals::AbstractVector{T}, scale, ::Val{RD}) where {T, RD}
+    return _diag_rmt_from_values(vals, Val(RD), (1, 2), scale)
+end
+
 # TODO: This is not optimized.
 function _renumber_eig_entries(eig_entries)
     isempty(eig_entries) && return copy(eig_entries)
@@ -175,12 +183,12 @@ function _hermiticity_ratio(q::TLArray{T, 2, N, RD}) where {T, N, RD}
     return diffnorm / qnorm
 end
 
-function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
+function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT, PS, M, RMT},
                           picks::Dict{NTuple{N, Tuple{Vararg{Int}}}, Vector{Int}};
-                          mode::Symbol) where {T, N, RD, QT}
+                          mode::Symbol) where {T, N, RD, QT, PS, M, RMT}
     qlabels_out = QT[]
     wmat_buffers = _wmat_buffers(productsymm(template))
-    RMTs_out = Array{T, RD}[]
+    RMTs_out = mode == :diag && RMT <: DiagRMT ? DiagRMT{T, RD}[] : Array{T, RD}[]
     sector_counts = Dict{NTuple{N, Tuple{Vararg{Int}}}, Int}()
 
     for (sector, idxs) in picks
@@ -198,13 +206,18 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT},
         idxs_sorted = sort(idxs)
         rmt = sector_rmt(template, sector_index)
         s1, s2 = size(rmt, 1), size(rmt, 2)
-        mat = reshape(rmt, s1, s2)
-
         rmt_new = if mode == :diag
-            reshape(mat[idxs_sorted, idxs_sorted], length(idxs_sorted), length(idxs_sorted), ones(Int, N)...)
+            if rmt isa DiagRMT
+                DiagRMT(T[rmt.diag[i] for i in idxs_sorted], Val(RD), (1, 2))
+            else
+                mat = reshape(rmt, s1, s2)
+                reshape(mat[idxs_sorted, idxs_sorted], length(idxs_sorted), length(idxs_sorted), ones(Int, N)...)
+            end
         elseif mode == :cols
+            mat = reshape(rmt, s1, s2)
             reshape(mat[:, idxs_sorted], s1, length(idxs_sorted), ones(Int, N)...)
         elseif mode == :firstdim
+            mat = reshape(rmt, s1, s2)
             reshape(mat[idxs_sorted, :], length(idxs_sorted), s2, ones(Int, N)...)
         else
             error("Unknown eig sector selection mode: $mode")
@@ -327,7 +340,7 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     qlabels_V = QT[]
     wmats_D = _wmat_buffers(productsymm(q))
     wmats_V = _wmat_buffers(productsymm(q))
-    RMTs_D = Array{T_out, 2 + N}[]
+    RMTs_D = DiagRMT{T_out, 2 + N}[]
     RMTs_V = Array{T_out, 2 + N}[]
     # Eigenvalue, degeneracy, sector qlabels, in-sector index
     eig_list = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
@@ -357,9 +370,8 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
         end
 
-        rmt_D = reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...)
+        rmt_D = _eig_diagonal_rmt(RMTs_D, eigenvalues, cgt_scale, Val(2 + N))
         rmt_V = reshape(eigenvectors, sL, chi, ones(Int, N)...)
-        rmt_D[:] .*= cgt_scale
         rmt_V[:] .*= cgt_scale
 
         push!(qlabels_D, sector_qlabels)
@@ -421,7 +433,7 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     wmats_D = _wmat_buffers(productsymm(q))
     wmats_V = _wmat_buffers(productsymm(q))
     wmats_Vinv = _wmat_buffers(productsymm(q))
-    RMTs_D = Array{T_out, 2 + N}[]
+    RMTs_D = DiagRMT{T_out, 2 + N}[]
     RMTs_V = Array{T_out, 2 + N}[]
     RMTs_Vinv = Array{T_out, 2 + N}[]
     eig_list  = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
@@ -451,10 +463,9 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
             push!(eig_list, (ev, cgt_dim, sector_qlabels, j))
         end
 
-        rmt_D    = reshape(Matrix(Diagonal(eigenvalues)), chi, chi, ones(Int, N)...)
+        rmt_D    = _eig_diagonal_rmt(RMTs_D, eigenvalues, cgt_scale, Val(2 + N))
         rmt_V    = reshape(eigenvectors, sL, chi, ones(Int, N)...)
         rmt_Vinv = reshape(eigenvectors_inv, chi, sL, ones(Int, N)...)
-        rmt_D[:] .*= cgt_scale
         rmt_V[:] .*= cgt_scale
         rmt_Vinv[:] .*= cgt_scale
 

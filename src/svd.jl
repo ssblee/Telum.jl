@@ -94,8 +94,6 @@ function _svd_to_cgtidx(cgp::NTuple{QD, Int}, lidxs) where {QD}
     return Tuple(Int[cgp[l] for l in lidxs])
 end
 
-_svd_cgt_leftlegs(cgp::NTuple{QD, Int}, left_legs) where {QD} = _svd_to_cgtidx(cgp, left_legs)
-
 function _svd_abelian_intermediate_q(S, qlabels::NTuple{QD}, legdir::Tuple{Int, Int}, left_legs_canon) where {QD}
     nin = legdir[1]
     leftset = Set(left_legs_canon)
@@ -205,17 +203,6 @@ function _reduce_svd_cgt_block(block,
 
     return _ReducedSVDCGTBlock{length(block.q)}(
         sector_index, left_spaces, right_spaces, block.q, left_iso, right_iso, core)
-end
-
-function _reconstruct_reduced_svd_cgt_block(block::_ReducedSVDCGTBlock)
-    omLr, omRr, omM = size(block.core)
-    left_applied = reshape(
-        block.left_iso * reshape(block.core, omLr, :),
-        size(block.left_iso, 1), omRr, omM)
-    right_applied = reshape(
-        block.right_iso * reshape(permutedims(left_applied, (2, 1, 3)), omRr, :),
-        size(block.right_iso, 1), size(block.left_iso, 1), omM)
-    return permutedims(right_applied, (2, 1, 3))
 end
 
 # Concatenate w-matrices, so the element type is always Float64
@@ -556,33 +543,6 @@ function _build_svd_block_lookup(blocks)
     return lookup
 end
 
-function _preprocess_svd_cgtsvd(q::TLArray{T, QD, N, RD},
-                                left_legs;
-                                tol::Float64 = 1e-12) where {T, QD, N, RD}
-    left_legs_ = _normalize_svd_left_legs(left_legs, QD)
-    right_legs_ = [l for l in 1:QD if l ∉ left_legs_]
-    left_signatures, right_signatures = 
-    _get_svd_sector_spaces(q, left_legs_, right_legs_)
-
-    blocks_by_symm = _get_svd_cgt_split_sectors(q, left_legs_, right_legs_; tol=tol)
-    _share_svd_sector_isometries!(blocks_by_symm, symm(q); tol=tol)
-    active_sector_indices = [ri for ri in sector_slots(q) if !q.iszero[ri]]
-    intermediate_qsectors = _get_svd_intermediate_sector_dict(blocks_by_symm, active_sector_indices)
-    intermediate_qsector_classes = _get_svd_intermediate_sector_equivclasses(
-        left_signatures, right_signatures, intermediate_qsectors)
-    block_lookup_by_symm = ntuple(n -> _build_svd_block_lookup(blocks_by_symm[n]), N)
-    return (
-        left_legs = Tuple(left_legs_),
-        right_legs = Tuple(right_legs_),
-        left_signatures = left_signatures,
-        right_signatures = right_signatures,
-        blocks_by_symm = blocks_by_symm,
-        block_lookup_by_symm = block_lookup_by_symm,
-        intermediate_qsectors = intermediate_qsectors,
-        intermediate_qsector_classes = intermediate_qsector_classes,
-    )
-end
-
 function _svd_expand_core_axis(A::AbstractArray{T}, core::Array{Float64, 3}, axis::Int) where {T}
     omLr, omRr, omM = size(core)
     merged = _contract_om_axis(A, reshape(core, omLr * omRr, omM), axis)
@@ -889,21 +849,20 @@ function _build_svd_cgtsvd_S(symm,
     base = get1jtensor(leginfo(symm, TLIndex(left_tag, '-'), bond_splist))
     qlabels = copy(base.qlabels)
     wmats = deepcopy(base.wmats)
-    RMTs = Array{Float64, 2 + N}[]
+    inds_S = (TLIndex(left_tag, '+'), TLIndex(right_tag, '+'))
+    spaces_S = (bond_splist, base.spaces[2])
+    RMTs = DiagRMT{Float64, 2 + N}[]
 
     for ri in sector_slots(base)
         base.iszero[ri] && continue
         sector = _svd_sector_qlabels(base, ri, N)
         svals = sector_values[sector]
         count = length(svals)
-        rmt = reshape(Matrix(Diagonal(svals)), count, count, ones(Int, N)...)
         cgt_dim = prod(Float64(dimension(symm[n], sector[n])) for n in 1:N)
-        rmt[:] .*= sqrt(cgt_dim)
-        push!(RMTs, rmt)
+        scale = sqrt(cgt_dim)
+        push!(RMTs, _diag_rmt_from_values(svals, Val(2 + N), (1, 2), scale))
     end
 
-    inds_S = (TLIndex(left_tag, '+'), TLIndex(right_tag, '+'))
-    spaces_S = (bond_splist, base.spaces[2])
     return TLArray(symm, qlabels, wmats, RMTs, inds_S, spaces_S)
 end
 
@@ -1063,13 +1022,32 @@ function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
                     Nkeep::Union{Nothing, Int} = nothing,
                     get_lists::Bool = false) where {T, QD, N, RD}
     @assert isnothing(Nkeep) || Nkeep >= 0 "Nkeep must be non-negative"
-    prep = _preprocess_svd_cgtsvd(q, left_legs; tol=cutoff)
+    left_legs_ = _normalize_svd_left_legs(left_legs, QD)
+    right_legs_ = [l for l in 1:QD if l ∉ left_legs_]
+    left_signatures, right_signatures =
+        _get_svd_sector_spaces(q, left_legs_, right_legs_)
+
+    blocks_by_symm = _get_svd_cgt_split_sectors(q, left_legs_, right_legs_; tol=cutoff)
+    _share_svd_sector_isometries!(blocks_by_symm, symm(q); tol=cutoff)
+    active_sector_indices = [ri for ri in sector_slots(q) if !q.iszero[ri]]
+    intermediate_qsectors = _get_svd_intermediate_sector_dict(blocks_by_symm, active_sector_indices)
+    intermediate_qsector_classes = _get_svd_intermediate_sector_equivclasses(
+        left_signatures, right_signatures, intermediate_qsectors)
+    block_lookup_by_symm = ntuple(n -> _build_svd_block_lookup(blocks_by_symm[n]), N)
+    prep = (
+        left_legs = Tuple(left_legs_),
+        right_legs = Tuple(right_legs_),
+        left_signatures = left_signatures,
+        right_signatures = right_signatures,
+        blocks_by_symm = blocks_by_symm,
+        block_lookup_by_symm = block_lookup_by_symm,
+        intermediate_qsectors = intermediate_qsectors,
+        intermediate_qsector_classes = intermediate_qsector_classes,
+    )
     return _assemble_svd_cgtsvd(
         q, prep.left_legs, prep.right_legs, left_tag, right_tag, prep;
         cutoff=cutoff, Nkeep=Nkeep, get_lists=get_lists)
 end
-
-svd_cgtsvd(q::TLArray, args...; kwargs...) = svd(q, args...; kwargs...)
 
 function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
                     left_tag::AbstractString = "svdL",

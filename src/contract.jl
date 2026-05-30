@@ -1,56 +1,5 @@
-﻿# ─── RMT contraction helper ──────────────────────────────────────────────────
-# Takes two pre-permuted RMTs and contracts over the contracted-leg axes.
-# P1 shape: (free1..., contr..., om1_1,...,om1_N)   [nf1 + CN + N axes]
-# P2 shape: (free2..., contr..., om2_1,...,om2_N)   [nf2 + CN + N axes]
-# Result shape: (free1..., free2..., om1_1*om2_1, ..., om1_N*om2_N)  [nf1+nf2+N axes]
-function _contract_RMTs(P1::AbstractArray, P2::AbstractArray,
-                         nf1::Int, nf2::Int, N::Int, CN::Int)
-    sz_f1  = [size(P1, i)      for i in 1:nf1]
-    sz_c   = [size(P1, nf1+k)  for k in 1:CN]
-    sz_om1 = [size(P1, nf1+CN+n) for n in 1:N]
-    sz_f2  = [size(P2, i)      for i in 1:nf2]
-    sz_om2 = [size(P2, nf2+CN+n) for n in 1:N]
-
-    f1_dim = prod(sz_f1; init=1)
-    f2_dim = prod(sz_f2; init=1)
-    c_dim  = prod(sz_c; init=1)
-    om1_dim = prod(sz_om1; init=1)
-    om2_dim = prod(sz_om2; init=1)
-
-    P1_3 = reshape(P1, f1_dim, c_dim, om1_dim)
-    P2_3 = reshape(P2, f2_dim, c_dim, om2_dim)
-
-    R1_mat = om1_dim == 1 ? reshape(P1_3, f1_dim, c_dim) :
-             reshape(permutedims(P1_3, (1, 3, 2)), f1_dim * om1_dim, c_dim)
-    R2_mat = om2_dim == 1 ? reshape(P2_3, f2_dim, c_dim) :
-             reshape(permutedims(P2_3, (1, 3, 2)), f2_dim * om2_dim, c_dim)
-    C_mat  = R1_mat * R2_mat'
-
-    # Reshape → (f1..., om1..., f2..., om2...)
-    QD_out = nf1 + nf2
-    C = reshape(C_mat, sz_f1..., sz_om1..., sz_f2..., sz_om2...)
-
-    # Permute C directly to (f1..., f2..., om1_1, om2_1, ..., om1_N, om2_N)
-    # by composing the two permutations into one.
-    composed_perm = vcat(1:nf1, nf1+N+1:nf1+N+nf2,
-                         [[nf1+n, nf1+N+nf2+n] for n in 1:N]...)
-    C_i = permutedims(C, composed_perm)
-
-    # Merge each (om1_n, om2_n) pair → om1_n * om2_n
-    sz_om_merged = [sz_om1[n] * sz_om2[n] for n in 1:N]
-    return reshape(C_i, sz_f1..., sz_f2..., sz_om_merged...)
-end
-
+﻿# ─── RMT contraction helpers ─────────────────────────────────────────────────
 @inline _identity_perm(::Val{D}) where {D} = ntuple(identity, Val(D))
-
-@inline function _maybe_permutedims(A::AbstractArray{T, D},
-                                    perm::NTuple{D, Int}) where {T, D}
-    return perm == _identity_perm(Val(D)) ? A : permutedims(A, perm)
-end
-
-@inline function _maybe_permutedims(A::AbstractArray{T, D}, perm) where {T, D}
-    return Tuple(perm) == _identity_perm(Val(D)) ? A : permutedims(A, perm)
-end
 
 function _hptt_permutedims(A::Array{Float64, D},
                            perm::NTuple{D, Int}) where {D}
@@ -202,26 +151,6 @@ function get_new_cgp(qlabels1, legdir1, cgp1, free1, legs1,
                        qlabels2, legdir2, cgp2, Tuple(free2), Tuple(legs2))
 end
 
-function get_new_cgt_metadata(q1::TLArray{T1, QD1, N}, i1::Int,
-                              q2::TLArray{T2, QD2, N}, i2::Int,
-                              free1, free2, legs1, legs2) where {T1, QD1, T2, QD2, N}
-    ntuple(Val(N)) do n
-        qlabels1, cgp1, legdir1 = _sector_cgt_metadata(q1, i1, n)
-        qlabels2, cgp2, legdir2 = _sector_cgt_metadata(q2, i2, n)
-        get_new_cgp(qlabels1, legdir1, cgp1, free1, legs1,
-                    qlabels2, legdir2, cgp2, free2, legs2)
-    end
-end
-
-@inline function _physical_qlabels_from_cgt_metadata(::Type{QT},
-                                                     metadata,
-                                                     ::Val{QD},
-                                                     ::Val{N}) where {QT, QD, N}
-    return ntuple(Val(QD)) do leg
-        ntuple(n -> metadata[n][1][metadata[n][2][leg]], Val(N))::QT
-    end
-end
-
 # ─── merge_new_sector helpers ───────────────────────────────────────────────────
 
 # Mode-product: replace axis `axis` of array A (size k) with the output of
@@ -290,6 +219,23 @@ end
 
 @inline _rmt_array_data(rmt::Array{T, RD}) where {T, RD} = rmt
 
+@inline _permuted_rmt_type(::Type{<:Array{T,RD}}) where {T,RD} = Array{T,3}
+@inline _permuted_rmt_type(::Type{<:DiagRMT{T,RD}}) where {T,RD} = DiagRMT{T,3}
+
+@inline function _prepared_axis_group(axis::Int,
+                                      perm::NTuple{RD, Int},
+                                      ::Val{NF},
+                                      ::Val{CN}) where {RD, NF, CN}
+    @inbounds for pos in 1:RD
+        if perm[pos] == axis
+            pos <= NF && return 1
+            pos <= NF + CN && return 2
+            return 3
+        end
+    end
+    throw(BoundsError(perm, axis))
+end
+
 function _permuted_rmt_data(rmt::AbstractArray{T, RD},
                             perm::NTuple{RD, Int},
                             nf::Int,
@@ -310,6 +256,31 @@ function _permuted_rmt_data(rmt::AbstractArray{T, RD},
                    prod(contracted_sizes; init=1),
                    prod(om_sizes; init=1))
     return data
+end
+
+function _permuted_rmt_data(rmt::DiagRMT{T, RD},
+                            perm::NTuple{RD, Int},
+                            ::Val{NF},
+                            ::Val{CN},
+                            ::Val{N}) where {T, RD, NF, CN, N}
+    kept_sizes, contracted_sizes, om_sizes =
+        _rmt_layout_sizes(rmt, perm, Val(NF), Val(CN), Val(N))
+    prod(om_sizes; init=1) == 1 || throw(ArgumentError(
+        "DiagRMT prepared contraction data requires singleton OM dimension"))
+
+    if rmt.axis[2] == 0
+        prepared_axis = _prepared_axis_group(rmt.axis[1], perm, Val(NF), Val(CN))
+        prepared_axis == 3 && throw(ArgumentError(
+            "DiagRMT vectorized axis cannot be prepared on the OM dimension"))
+        return DiagRMT{T,3}(rmt.diag, (prepared_axis, 0))
+    end
+
+    axis1 = _prepared_axis_group(rmt.axis[1], perm, Val(NF), Val(CN))
+    axis2 = _prepared_axis_group(rmt.axis[2], perm, Val(NF), Val(CN))
+    (axis1 == 3 || axis2 == 3) && throw(ArgumentError(
+        "DiagRMT diagonal axes cannot be prepared on the OM dimension"))
+    axis = axis1 == axis2 ? (axis1, 0) : minmax(axis1, axis2)
+    return DiagRMT{T,3}(rmt.diag, axis)
 end
 
 function _cached_permuted_rmt_data!(cache::Vector{Array{T, 3}},
@@ -336,6 +307,19 @@ function _cached_permuted_rmt_data!(cache::Vector{Array{T, 3}},
     return cache[idx]
 end
 
+function _cached_permuted_rmt_data!(cache::Vector{PRMT},
+                                    sectors::AbstractVector,
+                                    idx::Int,
+                                    perm::NTuple{RD, Int},
+                                    ::Val{NF},
+                                    ::Val{CN},
+                                    ::Val{N}) where {PRMT<:DiagRMT, RD, NF, CN, N}
+    if !isassigned(cache, idx)
+        cache[idx] = _permuted_rmt_data(sector_rmt(sectors[idx]), perm, Val(NF), Val(CN), Val(N))
+    end
+    return cache[idx]
+end
+
 function _cached_permuted_rmt_data!(cache::Vector{Array{T, 3}},
                                     q::TLArray,
                                     idx::Int,
@@ -343,6 +327,19 @@ function _cached_permuted_rmt_data!(cache::Vector{Array{T, 3}},
                                     ::Val{NF},
                                     ::Val{CN},
                                     ::Val{N}) where {T, RD, NF, CN, N}
+    if !isassigned(cache, idx)
+        cache[idx] = _permuted_rmt_data(sector_rmt(q, idx), perm, Val(NF), Val(CN), Val(N))
+    end
+    return cache[idx]
+end
+
+function _cached_permuted_rmt_data!(cache::Vector{PRMT},
+                                    q::TLArray,
+                                    idx::Int,
+                                    perm::NTuple{RD, Int},
+                                    ::Val{NF},
+                                    ::Val{CN},
+                                    ::Val{N}) where {PRMT<:DiagRMT, RD, NF, CN, N}
     if !isassigned(cache, idx)
         cache[idx] = _permuted_rmt_data(sector_rmt(q, idx), perm, Val(NF), Val(CN), Val(N))
     end
@@ -493,13 +490,50 @@ function _rmt_contract_temp_len(fdim::Int, gdim::Int, cdim::Int,
     return _rmt_contract_temp_len(fdim, gdim, cdim, o1dim, o2dim, rank_dim, order)
 end
 
+function _rmt_contract_temp_len(::Type{A}, ::Type{B},
+                                fdim::Int, gdim::Int, cdim::Int,
+                                o1dim::Int, o2dim::Int,
+                                K::AbstractArray,
+                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD
+) where {A<:AbstractArray, B<:AbstractArray}
+    return _rmt_contract_temp_len(fdim, gdim, cdim, o1dim, o2dim, K, threshold)
+end
+
+function _rmt_contract_temp_len(::Type{A}, ::Type{B},
+                                fdim::Int, gdim::Int, cdim::Int,
+                                o1dim::Int, o2dim::Int,
+                                K::AbstractArray,
+                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD
+) where {A<:DiagRMT, B<:Array}
+    return gdim * cdim * size(K, 1)
+end
+
+function _rmt_contract_temp_len(::Type{A}, ::Type{B},
+                                fdim::Int, gdim::Int, cdim::Int,
+                                o1dim::Int, o2dim::Int,
+                                K::AbstractArray,
+                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD
+) where {A<:Array, B<:DiagRMT}
+    return 0
+end
+
+function _rmt_contract_temp_len(::Type{A}, ::Type{B},
+                                fdim::Int, gdim::Int, cdim::Int,
+                                o1dim::Int, o2dim::Int,
+                                K::AbstractArray,
+                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD
+) where {A<:DiagRMT, B<:DiagRMT}
+    return 0
+end
+
 function _rmt_contract_temp_len(A::AbstractArray,
                                 B::AbstractArray,
                                 K::AbstractArray,
                                 threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD)
     fdim, cdim, o1dim = size(A)
     gdim, _, o2dim = size(B)
-    return _rmt_contract_temp_len(fdim, gdim, cdim, o1dim, o2dim,
+    return _rmt_contract_temp_len(typeof(A), typeof(B),
+                                  fdim, gdim, cdim, o1dim, o2dim,
                                   K, threshold)
 end
 
@@ -527,11 +561,6 @@ end
                                dims::NTuple{N, Int}) where {T, N}
     @assert length(temp) >= prod(dims; init=1)
     return unsafe_wrap(Array, pointer(temp), dims; own=false)
-end
-
-@inline function _contiguous_matrix_view(A::Array{T}, offset::Int,
-                                         dims::Tuple{Int, Int}) where {T}
-    return unsafe_wrap(Array, pointer(A, offset), dims; own=false)
 end
 
 function _accumulate_small!(out::AbstractArray{T, 3},
@@ -652,6 +681,38 @@ function _accumulate_scalar_om!(out::AbstractArray{T, 3},
     return out
 end
 
+function _contract_RMT_pair_into_generic!(out::AbstractArray{T, 3},
+                                          A::AbstractArray{T1, 3},
+                                          B::AbstractArray{T2, 3},
+                                          K::AbstractArray,
+                                          beta::T = one(T)) where {T, T1, T2}
+    fdim, cdim, o1dim = size(A)
+    gdim, cdim2, o2dim = size(B)
+    rdim = size(K, 1)
+    @assert cdim == cdim2
+
+    @inbounds for r in 1:rdim
+        for g in 1:gdim
+            for f in 1:fdim
+                acc = zero(T)
+                for o2 in 1:o2dim
+                    for o1 in 1:o1dim
+                        for c in 1:cdim
+                            acc += A[f, c, o1] * B[g, c, o2] * K[r, o1, o2]
+                        end
+                    end
+                end
+                if iszero(beta)
+                    out[f, g, r] = acc
+                else
+                    out[f, g, r] = acc + beta * out[f, g, r]
+                end
+            end
+        end
+    end
+    return out
+end
+
 function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
                                   A::AbstractArray{T1, 3},
                                   B::AbstractArray{T2, 3},
@@ -676,6 +737,86 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
     end
 
     return out
+end
+
+function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
+                                  A::DiagRMT{T1, 3},
+                                  B::DiagRMT{T2, 3},
+                                  K::AbstractArray,
+                                  temp::Vector{T},
+                                  threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
+                                  beta::T = one(T)) where {T, T1, T2}
+    return _contract_RMT_pair_into_generic!(out, A, B, K, beta)
+end
+
+function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
+                                  A::DiagRMT{T1, 3},
+                                  B::AbstractArray{T2, 3},
+                                  K::AbstractArray,
+                                  temp::Vector{T},
+                                  threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
+                                  beta::T = one(T)) where {T, T1, T2}
+    if A.axis == (1, 2) && size(A, 3) == 1 && size(K, 2) == 1 && iszero(beta)
+        fdim, cdim, o1dim = size(A)
+        gdim, cdim2, o2dim = size(B)
+        rdim = size(K, 1)
+        @assert cdim == cdim2
+        @assert o1dim == 1
+        @assert size(out) == (fdim, gdim, rdim)
+
+        # Diagonal-left common path: first contract the dense right RMT with K
+        # into tmp[g, c, r], then transpose c into the output free-left axis.
+        tmp = _rmt_temp_view(temp, (gdim, cdim, rdim))
+        B_mat = reshape(B, gdim * cdim, o2dim)
+        K_mat = reshape(K, rdim, o2dim)
+        tmp_mat = reshape(tmp, gdim * cdim, rdim)
+        mul!(tmp_mat, B_mat, transpose(K_mat), one(T), zero(T))
+
+        @inbounds for r in 1:rdim
+            for g in 1:gdim
+                for f in 1:fdim
+                    out[f, g, r] = A.diag[f] * tmp[g, f, r]
+                end
+            end
+        end
+        return out
+    end
+
+    return _contract_RMT_pair_into_generic!(out, A, B, K, beta)
+end
+
+function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
+                                  A::AbstractArray{T1, 3},
+                                  B::DiagRMT{T2, 3},
+                                  K::AbstractArray,
+                                  temp::Vector{T},
+                                  threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
+                                  beta::T = one(T)) where {T, T1, T2}
+    if B.axis == (1, 2) && size(B, 3) == 1 && size(K, 3) == 1 && iszero(beta)
+        fdim, cdim, o1dim = size(A)
+        gdim, cdim2, o2dim = size(B)
+        rdim = size(K, 1)
+        @assert cdim == cdim2
+        @assert o2dim == 1
+        @assert size(out) == (fdim, gdim, rdim)
+
+        A_mat = reshape(A, fdim * cdim, o1dim)
+        K_mat = reshape(K, rdim, o1dim)
+        out_mat = reshape(out, fdim * gdim, rdim)
+        mul!(out_mat, A_mat, transpose(K_mat), one(T), zero(T))
+
+        @inbounds for r in 1:rdim
+            for g in 1:gdim
+                scale = B.diag[g]
+                for f in 1:fdim
+                    out[f, g, r] *= scale
+                end
+            end
+        end
+        return out
+    end
+
+    return _contract_RMT_pair_into_generic!(out, A, B, K, beta)
 end
 
 # ─── _compress_sector ────────────────────────────────────────────────────────
@@ -742,12 +883,13 @@ end
 function _compress_sector(
     new_wmats    ::NTuple{N, Vector{AW}},
     sector_pairs    ::AbstractVector{Tuple{Int, Int}},
-    work1        ::Dict{Int, Array{T1, 3}},
-    work2        ::Dict{Int, Array{T2, 3}},
+    work1        ::Dict{Int, AR1},
+    work2        ::Dict{Int, AR2},
     kept_sizes1  ::NTuple{NF1, Int},
     kept_sizes2  ::NTuple{NF2, Int},
     tol          ::Float64 = 1e-12,
-) where {N, AW<:AbstractArray{Float64, 3}, T1, T2, NF1, NF2}
+) where {N, AW<:AbstractArray{Float64, 3}, T1, T2, NF1, NF2,
+         AR1<:AbstractArray{T1, 3}, AR2<:AbstractArray{T2, 3}}
     prepared = _prepare_compress_sector(new_wmats, tol)
     isnothing(prepared) && return nothing
     first_i, first_j = first(sector_pairs)
@@ -1490,8 +1632,10 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
     perm1 = (free1..., legs1..., ntuple(n -> QD1 + n, Val(N))...)
     perm2 = (free2..., legs2..., ntuple(n -> QD2 + n, Val(N))...)
 
-    permuted_rmts1 = Vector{Array{T1, 3}}(undef, sector_count(q1))
-    permuted_rmts2 = Vector{Array{T2, 3}}(undef, sector_count(q2))
+    PermutedRMT1 = _permuted_rmt_type(RMT1)
+    PermutedRMT2 = _permuted_rmt_type(RMT2)
+    permuted_rmts1 = Vector{PermutedRMT1}(undef, sector_count(q1))
+    permuted_rmts2 = Vector{PermutedRMT2}(undef, sector_count(q2))
 
     # ── 1. Build sorted sector-info vectors keyed by contracted qlabels ─────────
     sector_infos1 = _contract_sector_infos(QT, q1, free1, legs1)
@@ -1546,7 +1690,8 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
                 _rmt_contract_dims(sector_rmt(q2, idx2), perm2, Val(nf2), Val(CN), Val(N))
             @assert cdim1 == cdim2
             max_temp_len = max(max_temp_len,
-                               _rmt_contract_temp_len(fdim, gdim, cdim1,
+                               _rmt_contract_temp_len(PermutedRMT1, PermutedRMT2,
+                                                      fdim, gdim, cdim1,
                                                       o1dim, o2dim,
                                                       factor_arrays[i]))
         end

@@ -358,6 +358,19 @@ function _check_unique_inds(inds::NTuple{QD, TLIndex}) where QD
     end
 end
 
+@inline _rmt_iszero(rmt::AbstractArray) = iszero(sum(abs2, rmt))
+@inline _rmt_iszero(rmt::DiagRMT) = iszero(sum(abs2, rmt.diag))
+
+@inline _check_tlarray_rmt_storage(rmt::AbstractArray, ::Val{QD}) where {QD} = nothing
+
+function _check_tlarray_rmt_storage(rmt::DiagRMT, ::Val{QD}) where {QD}
+    rmt.axis[2] == 0 && throw(ArgumentError(
+        "axis[2] == 0 DiagRMT is only valid for contraction temporaries, not TLArray sector storage"))
+    rmt.axis[2] <= QD || throw(ArgumentError(
+        "DiagRMT sector axes must refer to TLArray tensor legs, got axis=$(rmt.axis) for tensor rank $QD"))
+    return nothing
+end
+
 # T: type of element in the RMT array, can be Float64, ComplexF64, etc.
 # QD: The rank of tensor (# of legs), N: The number of symmetries
 # RD: The rank of RMT array, which is equal to QD + N
@@ -402,7 +415,8 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}}
             rmt_defined == wmat_defined ||
                 throw(ArgumentError("sector $sector_index must define both RMT and w-matrices or neither"))
             if rmt_defined
-                if iszero(sum(abs2, RMTs[sector_index]))
+                _check_tlarray_rmt_storage(RMTs[sector_index], Val(QD))
+                if _rmt_iszero(RMTs[sector_index])
                     throw(ArgumentError("sector $sector_index defines a zero RMT; zero sectors must be left undefined"))
                 end
                 sector_isdefined[sector_index] = true
@@ -616,7 +630,11 @@ function _orient_wmats!(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, 
             wmat = q.wmats[sector_index][m]
             if length(wmat) == 1 && wmat[1] < 0
                 wmat[:] .*= -1
-                sector_rmt(q, sector_index)[:] .*= -one(T)
+                if sector_rmt(q, sector_index) isa DiagRMT
+                    q.RMTs[sector_index] = -sector_rmt(q, sector_index)
+                else
+                    sector_rmt(q, sector_index)[:] .*= -one(T)
+                end
             end
         end
     end
@@ -1746,11 +1764,16 @@ end
 
 # Scalar multiplication and division: only the RMT arrays are scaled.
 # CGT metadata (w-matrices, qlabels) are left untouched.
-function Base.:*(qs::TLArray, fac::Number)
+function Base.:*(qs::TLArray{T, QD, N, RD}, fac::Number) where {T, QD, N, RD}
+    if iszero(fac)
+        RMTs = Vector{Array{promote_type(T, typeof(fac)), RD}}(undef, sector_count(qs))
+        wmats = similar(qs.wmats, sector_count(qs))
+        return TLArray(symm(qs), copy(qs.qlabels), wmats, RMTs, qs.inds, qs.spaces)
+    end
     result = deepcopy(qs)
     for sector_index in sector_slots(result)
         result.iszero[sector_index] && continue
-        result.RMTs[sector_index] .*= fac
+        result.RMTs[sector_index] = result.RMTs[sector_index] * fac
     end
     return result
 end
@@ -2212,15 +2235,16 @@ end
 #
 # adjoint(q): for TLArray tensors, defined as conj(q).
 # ─────────────────────────────────────────────────────────────────────────────
-function Base.conj(q::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
+function Base.conj(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, N, RD, QT, PS, M, RMT}
     new_inds = ntuple(l -> change_dir(q.inds[l]), QD)
 
     qlabels = copy(q.qlabels)
-    wmats = _wmat_vector(productsymm(q), sector_count(q))
+    wmats = similar(q.wmats, sector_count(q))
     RMTs = similar(q.RMTs, sector_count(q))
     for sector_index in sector_slots(q)
         q.iszero[sector_index] && continue
-        RMTs[sector_index] = conj.(sector_rmt(q, sector_index))
+        RMTs[sector_index] = conj(sector_rmt(q, sector_index))
+        M == 0 || (wmats[sector_index] = _empty_wmat_tuple(Val(M)))
 
         for n in 1:N
             ordered_qlabels, _, legdir = _sector_cgt_metadata(q, sector_index, n)
@@ -2537,6 +2561,13 @@ function _delete_singleton_rmt(rmt::AbstractArray{T, RD}, positions, qd::Int, n_
     return reshape(rmt, new_dims)
 end
 
+function _delete_singleton_rmt(rmt::DiagRMT{T, RD}, positions, qd::Int, n_symm::Int) where {T, RD}
+    any(pos -> pos == rmt.axis[1] || pos == rmt.axis[2], positions) && throw(ArgumentError(
+        "cannot preserve DiagRMT when deleting a diagonal axis"))
+    shift_axis(axis) = axis - count(pos -> pos < axis, positions)
+    return DiagRMT{T,RD - length(positions)}(rmt.diag, (shift_axis(rmt.axis[1]), shift_axis(rmt.axis[2])))
+end
+
 function _delete_singleton_impl(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, positions) where {T, QD, N, RD, QT, PS, M, RMT}
     new_qd = QD - length(positions)
     new_rd = RD - length(positions)
@@ -2546,7 +2577,8 @@ function _delete_singleton_impl(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, positi
 
     qlabels = Matrix{QT}(undef, new_qd, sector_count(q))
     wmats = similar(q.wmats, sector_count(q))
-    RMTs = Vector{Array{T, new_rd}}(undef, sector_count(q))
+    RMTs = RMT <: DiagRMT ? Vector{DiagRMT{T, new_rd}}(undef, sector_count(q)) :
+                             Vector{Array{T, new_rd}}(undef, sector_count(q))
     keep_legs = [leg for leg in 1:QD if leg ∉ positions]
     for sector_index in sector_slots(q)
         for (new_leg, old_leg) in enumerate(keep_legs)
@@ -2675,6 +2707,14 @@ function _insert_singleton_rmt(rmt::AbstractArray{T, RD},
     return reshape(rmt, Tuple(vcat(new_phys, collect(om_dims))))
 end
 
+function _insert_singleton_rmt(rmt::DiagRMT{T, RD},
+                               positions,
+                               qd::Int,
+                               n_symm::Int) where {T, RD}
+    shift_axis(axis) = axis + count(pos -> pos <= axis, positions)
+    return DiagRMT{T,RD + length(positions)}(rmt.diag, (shift_axis(rmt.axis[1]), shift_axis(rmt.axis[2])))
+end
+
 """
     addSingleton(q::TLArray; nlegs=1, itag="", plev=0, lock=0, dir='+')
 
@@ -2735,7 +2775,8 @@ function addSingleton(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
 
     qlabels = Matrix{QT}(undef, new_qd, sector_count(q))
     wmats = similar(q.wmats, sector_count(q))
-    RMTs = Vector{Array{T, new_rd}}(undef, sector_count(q))
+    RMTs = RMT <: DiagRMT ? Vector{DiagRMT{T, new_rd}}(undef, sector_count(q)) :
+                             Vector{Array{T, new_rd}}(undef, sector_count(q))
     for sector_index in sector_slots(q)
         old_leg = 1
         insert_idx = 1

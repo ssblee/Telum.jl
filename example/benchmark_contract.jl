@@ -15,6 +15,8 @@ function benchmark_smallRMT()
     return qf, a
 end
 
+do_Lanczos(Hl, Hr, M, H1, H2) = eigs_GS(Hl, [H1, H2], Hr, M; tol=1e-8, nKrylov=5, time_blocks=true)
+
 function benchmark_DMRGres(MPS, MPO, Hrl)
     Hl = Hrl[21]
     Hr = Hrl[23]'

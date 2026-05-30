@@ -414,6 +414,10 @@ end
     test_compress_sector(3, 5, 4; verbose=false)
     test_compress_sector_zero_wmat_shortcircuits()
     test_contract_compress_sector_rmt_optimizer()
+    test_diag_rmt_storage_and_prepared_cache()
+    test_contract_compress_sector_diag_rmt()
+    test_contract_diag_rmt_tlarray()
+    test_diag_rmt_producers_and_metadata_ops()
 end
 
 
