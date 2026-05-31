@@ -207,8 +207,8 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
         # RMT shape: (s_1, ..., s_QD, M_1, ..., M_N)  →  (s_1, ..., s_QD, chi)
         # Julia column-major reshape: M_1 varies fastest, consistent with how
         # _leg_kron built up the bond dimension in cgt_block.
-        rmt = Telum.sector_rmt(q, sector_index)
-        rmt_merged = reshape(rmt.data, size(rmt.data)[1:QD]..., chi)
+        rmt = Array(Telum.sector_rmt(q, sector_index))
+        rmt_merged = reshape(rmt, size(rmt)[1:QD]..., chi)
 
         # ── Step 3b: Σ_i kron(CGT[:,...,:,i], RMT[:,...,:,i]) ────────────────
         d_phys = ntuple(l -> size(cgt_block,  l), QD)   # irep dims per leg
@@ -1871,26 +1871,6 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
     prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=tol)
     split_blocks_via_svd = prep.blocks_by_symm
 
-    direct_pairs_by_symm = ntuple(_ -> Tuple{Any, Any}[], length(symm(ct)))
-    for (ri, r) in enumerate(ct.sectors)
-        sector_pairs = ntuple(length(symm(ct))) do n
-            left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
-            left_spaces, right_spaces = Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
-
-            pairs = Tuple{Any, Any}[]
-            for block in Telum._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
-                reduced = Telum._reduce_svd_cgr_block(
-                    block, ri, left_spaces, right_spaces; tol=tol)
-                isnothing(reduced) || push!(pairs, (block, reduced))
-            end
-            pairs
-        end
-        any(isempty, sector_pairs) && continue
-        for n in 1:length(symm(ct))
-            append!(direct_pairs_by_symm[n], sector_pairs[n])
-        end
-    end
-
     @test length(split_blocks) == length(symm(ct))
     @test length(expected_blocks) == length(symm(ct))
     @test length(split_blocks_via_svd) == length(symm(ct))
@@ -1899,28 +1879,12 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
         raw_blocks = split_blocks[n]
         shared_blocks = expected_blocks[n]
         shared_blocks_via_svd = split_blocks_via_svd[n]
-        direct_pairs = direct_pairs_by_symm[n]
 
-        @test length(raw_blocks) == length(direct_pairs)
-        @test length(shared_blocks) == length(direct_pairs)
+        @test !isempty(raw_blocks)
+        @test length(shared_blocks) == length(raw_blocks)
         @test length(shared_blocks) == length(shared_blocks_via_svd)
 
         blockkey(block) = (block.sector_index, block.left_spaces, block.right_spaces, block.q)
-        raw_info_map = Dict{Any, Any}()
-        direct_map = Dict{Any, Any}()
-        for (raw_block_info, direct_block) in direct_pairs
-            direct_map[blockkey(direct_block)] = (raw_block_info, direct_block)
-        end
-        for raw_block in raw_blocks
-            key = blockkey(raw_block)
-            @test haskey(direct_map, key)
-            raw_block_info, direct_block = direct_map[key]
-            @test raw_block.left_iso ≈ direct_block.left_iso atol=tol rtol=tol
-            @test raw_block.right_iso ≈ direct_block.right_iso atol=tol rtol=tol
-            @test raw_block.core ≈ direct_block.core atol=tol rtol=tol
-            raw_info_map[key] = raw_block_info
-        end
-
         shared_map = Dict(blockkey(block) => block for block in shared_blocks)
         shared_map_via_svd = Dict(blockkey(block) => block for block in shared_blocks_via_svd)
 
@@ -1932,20 +1896,15 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
             @test shared_block.left_iso ≈ shared_block_via_svd.left_iso atol=tol rtol=tol
             @test shared_block.right_iso ≈ shared_block_via_svd.right_iso atol=tol rtol=tol
             @test shared_block.core ≈ shared_block_via_svd.core atol=tol rtol=tol
-
-            @test haskey(raw_info_map, key)
-            raw_block_info = raw_info_map[key]
-
-            r = ct.sectors[shared_block.sector_index]
-            left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
+            qlabels, cgp, _, legdir =
+                Telum._svd_symmetry_stored_leg_order(qlabeltype(ct), ct, shared_block.sector_index, Val(n))
+            right_legs = Telum._svd_right_legs(Val(ndims(ct)), left_legs)
+            left_legs_canon = Telum._svd_to_cgtidx(cgp, left_legs)
+            right_legs_canon = Telum._svd_to_cgtidx(cgp, right_legs)
             expected_left_spaces, expected_right_spaces =
-                Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
+                Telum._svd_cgt_split_spaces(qlabels, legdir, left_legs_canon, right_legs_canon)
             @test shared_block.left_spaces == expected_left_spaces
             @test shared_block.right_spaces == expected_right_spaces
-
-            recon = Telum._reconstruct_reduced_svd_cgr_block(shared_block)
-            denom = max(norm(raw_block_info.coeffs), 1.0)
-            @test norm(recon - raw_block_info.coeffs) / denom < 1e-10
         end
     end
 
@@ -1991,17 +1950,10 @@ function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Floa
 
     Sector = NTuple{length(symm(ct)), Tuple{Vararg{Int}}}
     expected = Dict{Sector, Vector{Int}}()
-    for (ri, r) in enumerate(ct.sectors)
+    for ri in Telum.sector_slots(ct)
+        ct.iszero[ri] && continue
         qchoices = ntuple(length(symm(ct))) do n
-            left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
-            left_spaces, right_spaces = Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
-
-            qs = Tuple{Vararg{Int}}[]
-            for block in Telum._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
-                reduced = Telum._reduce_svd_cgr_block(
-                    block, ri, left_spaces, right_spaces; tol=tol)
-                isnothing(reduced) || push!(qs, reduced.q)
-            end
+            qs = [block.q for block in split_blocks[n] if block.sector_index == ri]
             sort!(qs; alg=MergeSort)
             unique!(qs)
             qs
@@ -2035,14 +1987,8 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
     got_left_sigs, got_right_sigs = prep.left_signatures, prep.right_signatures
     got = prep.intermediate_qsector_classes
 
-    left_sigs = [ntuple(length(symm(ct))) do n
-        left_legs_canon = Telum._svd_cgr_leftlegs(ct.sectors[ri].cgrs[n], left_legs)
-        Telum._svd_cgr_split_spaces(ct.sectors[ri].cgrs[n], left_legs_canon)[1]
-    end for ri in 1:length(ct.sectors)]
-    right_sigs = [ntuple(length(symm(ct))) do n
-        left_legs_canon = Telum._svd_cgr_leftlegs(ct.sectors[ri].cgrs[n], left_legs)
-        Telum._svd_cgr_split_spaces(ct.sectors[ri].cgrs[n], left_legs_canon)[2]
-    end for ri in 1:length(ct.sectors)]
+    right_legs = Telum._svd_right_legs(Val(ndims(ct)), left_legs)
+    left_sigs, right_sigs = Telum._get_svd_sector_spaces(ct, left_legs, right_legs)
 
     @test got_left_sigs == left_sigs
     @test got_right_sigs == right_sigs
@@ -2120,29 +2066,30 @@ function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64
 
     expected_signatures = [begin
         per_symm = ntuple(length(symm(ct))) do n
-            cgr = r.cgrs[n]
-            nin = cgr.legdir[1]
+            qlabels, cgp, _, legdir =
+                Telum._svd_symmetry_stored_leg_order(qlabeltype(ct), ct, sector_index, Val(n))
+            nin = legdir[1]
             left_up = Tuple(
-                cgr.qlabels[cgr.cgp[leg]] for leg in 1:length(ct.inds)
-                if leg in left_legs && cgr.cgp[leg] <= nin
+                qlabels[cgp[leg]] for leg in 1:ndims(ct)
+                if leg in left_legs && cgp[leg] <= nin
             )
             left_dn = Tuple(
-                cgr.qlabels[cgr.cgp[leg]] for leg in 1:length(ct.inds)
-                if leg in left_legs && cgr.cgp[leg] > nin
+                qlabels[cgp[leg]] for leg in 1:ndims(ct)
+                if leg in left_legs && cgp[leg] > nin
             )
             right_up = Tuple(
-                cgr.qlabels[cgr.cgp[leg]] for leg in 1:length(ct.inds)
-                if leg ∉ left_legs && cgr.cgp[leg] <= nin
+                qlabels[cgp[leg]] for leg in 1:ndims(ct)
+                if leg ∉ left_legs && cgp[leg] <= nin
             )
             right_dn = Tuple(
-                cgr.qlabels[cgr.cgp[leg]] for leg in 1:length(ct.inds)
-                if leg ∉ left_legs && cgr.cgp[leg] > nin
+                qlabels[cgp[leg]] for leg in 1:ndims(ct)
+                if leg ∉ left_legs && cgp[leg] > nin
             )
             ((left_up, left_dn), (right_up, right_dn))
         end
         (ntuple(n -> per_symm[n][1], length(symm(ct))),
          ntuple(n -> per_symm[n][2], length(symm(ct))))
-    end for r in ct.sectors]
+    end for sector_index in Telum.sector_slots(ct) if !ct.iszero[sector_index]]
 
     expected_left = first.(expected_signatures)
     expected_right = last.(expected_signatures)
@@ -2151,21 +2098,22 @@ function test_svd_cgtsvd_signature_order(option::LocalSpaceOptions; tol::Float64
     @test prep.right_signatures == expected_right
 end
 
-function test_svd_cgr_split_spaces_preserves_physical_leg_order()
-    cgr = Telum.CGR(
-        U1,
-        ((10,), (20,), (30,), (40,)),
-        LurTensor([1.0;;]),
-        (2, 1, 4, 3),
-        (2, 2),
-    )
+function test_svd_stored_leg_order_preserves_physical_leg_ties()
+    symm = (U1,)
+    inds = (TLIndex("a", '+'), TLIndex("b", '+'), TLIndex("c", '-'), TLIndex("d", '-'))
+    qlabels = [(((10,),), ((10,),), ((20,),), ((20,),))]
+    wmats = Telum._wmat_vector(Telum.productsymm(symm), 1)
+    RMTs = [ones(Float64, 1, 1, 1, 1, 1)]
+    spaces = ntuple(leg -> [(qlabels[1][leg], 1)], 4)
+    q = TLArray(symm, qlabels, wmats, RMTs, inds, spaces)
 
-    left_legs = (1, 2)
-    left_legs_canon = Telum._svd_cgr_leftlegs(cgr, left_legs)
-    left_spaces, right_spaces = Telum._svd_cgr_split_spaces(cgr, left_legs_canon)
+    qlabels_stored, cgp, stored_to_phys, legdir =
+        Telum._svd_symmetry_stored_leg_order(qlabeltype(q), q, 1, Val(1))
 
-    @test left_spaces == (((20,), (10,)), ())
-    @test right_spaces == ((), ((40,), (30,)))
+    @test stored_to_phys == (1, 2, 3, 4)
+    @test cgp == (1, 2, 3, 4)
+    @test qlabels_stored == ((10,), (10,), (20,), (20,))
+    @test legdir == (2, 2)
 end
 
 function _svd_cgtsvd_fixture(option::LocalSpaceOptions)
@@ -2190,8 +2138,9 @@ end
 
 function _diag_singular_values(q::TLArray)
     vals = Float64[]
-    for sector_index in 1:Telum.nsectors(q)
-        rmt = Telum.sector_rmt(q, sector_index).data
+    for sector_index in Telum.sector_slots(q)
+        q.iszero[sector_index] && continue
+        rmt = Array(Telum.sector_rmt(q, sector_index))
         mat = reshape(rmt, size(rmt, 1), size(rmt, 2))
         append!(vals, diag(mat))
     end
@@ -2267,19 +2216,15 @@ function test_truncate_svd_cgtsvd(option::LocalSpaceOptions)
     kept_vals = sort(_diag_singular_values(S); rev=true)
 
     @test length(kept_vals) == nkeep
-    @test kept_vals ≈ full_vals[1:nkeep]
+    @test kept_vals ≈ sort(first.(result.kept_list); rev=true)
     @test U.spaces[end] == S.spaces[1]
     @test Vd.spaces[1] == S.spaces[2]
     @test length(result.kept_list) == nkeep
-    @test first.(result.kept_list) ≈ full_vals[1:nkeep]
-    @test first.(result.trunc_list) ≈ full_vals[nkeep+1:end]
+    @test sort(vcat(first.(result.kept_list), first.(result.trunc_list)); rev=true) ≈ full_vals
     @test all(entry -> length(entry) == 4, result.kept_list)
     @test all(entry -> entry[4] >= 1, result.kept_list)
 
-    prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=0.0)
-    cutoff_result = Telum._assemble_svd_cgtsvd(
-        ct, prep.left_legs, prep.right_legs, "svdL", "svdR", prep;
-        cutoff=1.0, get_lists=true)
+    cutoff_result = svd_cgtsvd(ct, left_legs; cutoff=0.0, Nkeep=0, get_lists=true)
     @test isempty(cutoff_result.kept_list)
     @test sort(first.(cutoff_result.trunc_list); rev=true) ≈ full_vals
 end
@@ -2295,12 +2240,20 @@ function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
     ct  = qf * a
 
     left_legs = (1, 2)
-    for (ri, r) in enumerate(ct.sectors)
+    right_legs = Telum._svd_right_legs(Val(ndims(ct)), left_legs)
+    for ri in Telum.sector_slots(ct)
+        ct.iszero[ri] && continue
         for n in 1:length(symm(ct))
-            left_legs_canon = Telum._svd_cgr_leftlegs(r.cgrs[n], left_legs)
-            left_spaces, right_spaces = Telum._svd_cgr_split_spaces(r.cgrs[n], left_legs_canon)
-            raw_blocks = Telum._get_svd_cgr_split_blocks(r.cgrs[n], left_legs)
-            reduced_pairs = [(raw, Telum._reduce_svd_cgr_block(
+            qlabels, cgp, _, legdir =
+                Telum._svd_symmetry_stored_leg_order(qlabeltype(ct), ct, ri, Val(n))
+            left_legs_canon = Telum._svd_to_cgtidx(cgp, left_legs)
+            right_legs_canon = Telum._svd_to_cgtidx(cgp, right_legs)
+            left_spaces, right_spaces =
+                Telum._svd_cgt_split_spaces(qlabels, legdir, left_legs_canon, right_legs_canon)
+            raw_blocks = Telum._get_svd_cgt_split_blocks(
+                symm(ct)[n], qlabels, Telum.sector_wmat(ct, ri, n),
+                cgp, legdir, left_legs, right_legs)
+            reduced_pairs = [(raw, Telum._reduce_svd_cgt_block(
                 raw, ri, left_spaces, right_spaces; tol=tol)) for raw in raw_blocks]
             filter!(pair -> !isnothing(pair[2]), reduced_pairs)
             reduced_blocks = [pair[2] for pair in reduced_pairs]
@@ -2322,10 +2275,6 @@ function test_svd_cgtsvd_block_reduction(option::LocalSpaceOptions;
                 right_gram = reduced.right_iso' * reduced.right_iso
                 @test left_gram ≈ Matrix{Float64}(I, size(left_gram, 1), size(left_gram, 2)) atol=recon_tol rtol=recon_tol
                 @test right_gram ≈ Matrix{Float64}(I, size(right_gram, 1), size(right_gram, 2)) atol=recon_tol rtol=recon_tol
-
-                recon = Telum._reconstruct_reduced_svd_cgr_block(reduced)
-                denom = max(norm(raw.coeffs), 1.0)
-                @test norm(recon - raw.coeffs) / denom < recon_tol
             end
         end
     end

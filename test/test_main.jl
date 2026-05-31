@@ -133,7 +133,7 @@ end
 @testset "CGTSVD signature order for svd" begin
     test_svd_cgtsvd_signature_order(FermionSOptions(1, :U1, :SU2, nothing))
     test_svd_cgtsvd_signature_order(FermionSOptions(3, :U1, :SU2, :SU3))
-    test_svd_cgr_split_spaces_preserves_physical_leg_order()
+    test_svd_stored_leg_order_preserves_physical_leg_ties()
 end
 
 @testset "CGTSVD block reduction for svd" begin

@@ -27,7 +27,7 @@ function benchmark_DMRGres(MPS, MPO, Hrl)
 end
 
 function get_DMRGres(Nkeep=50)
-    MPO = HubbardMPO(8.0, 1.5, 1.0, 40)
+    MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
     MPS, E, sp = init_MPS(MPO, Nkeep; tol=0.0)
     DMRG_GS_2site!(MPS, MPO, Nkeep, 1)
     Hrl = getHrl(MPO, MPS)
