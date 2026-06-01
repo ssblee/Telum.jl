@@ -195,7 +195,7 @@ function _contract_om_axis(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, axis:
     return _contract_om_axis_data(A, M, axis)
 end
 
-const _RMT_CONTRACT_TULLIO_THRESHOLD = 1_000_000
+const _RMT_CONTRACT_TULLIO_THRESHOLD = 0
 
 function _rmt_layout_sizes(rmt::AbstractArray{T, RD},
                            perm::NTuple{RD, Int},

@@ -1833,26 +1833,24 @@ function _test_svd_cgtsvd_prep(q::TLArray{T, QD, N, RD},
                                tol::Float64 = 1e-12) where {T, QD, N, RD}
     left_legs_ = Telum._normalize_svd_left_legs(left_legs, QD)
     right_legs_ = [l for l in 1:QD if l ∉ left_legs_]
+    left_legs_tuple = Tuple(left_legs_)
+    right_legs_tuple = Tuple(right_legs_)
     left_signatures, right_signatures =
-        Telum._get_svd_sector_spaces(q, left_legs_, right_legs_)
+        Telum._get_svd_sector_spaces(q, left_legs_tuple, right_legs_tuple)
 
-    blocks_by_symm = Telum._get_svd_cgt_split_sectors(q, left_legs_, right_legs_; tol=tol)
+    blocks_by_symm = Telum._get_svd_cgt_split_sectors(q, left_legs_tuple, right_legs_tuple; tol=tol)
     Telum._share_svd_sector_isometries!(blocks_by_symm, symm(q); tol=tol)
     active_sector_indices = [ri for ri in Telum.sector_slots(q) if !q.iszero[ri]]
-    intermediate_qsectors =
-        Telum._get_svd_intermediate_sector_dict(blocks_by_symm, active_sector_indices)
-    intermediate_qsector_classes = Telum._get_svd_intermediate_sector_equivclasses(
-        left_signatures, right_signatures, intermediate_qsectors)
-    block_lookup_by_symm = ntuple(n -> Telum._build_svd_block_lookup(blocks_by_symm[n]), N)
+    candidate_rows = Telum._get_svd_candidate_rows(blocks_by_symm, active_sector_indices, Val(N))
+    candidate_row_classes = Telum._get_svd_candidate_row_classes(candidate_rows)
     return (
-        left_legs = Tuple(left_legs_),
-        right_legs = Tuple(right_legs_),
+        left_legs = left_legs_tuple,
+        right_legs = right_legs_tuple,
         left_signatures = left_signatures,
         right_signatures = right_signatures,
         blocks_by_symm = blocks_by_symm,
-        block_lookup_by_symm = block_lookup_by_symm,
-        intermediate_qsectors = intermediate_qsectors,
-        intermediate_qsector_classes = intermediate_qsector_classes,
+        candidate_rows = candidate_rows,
+        candidate_row_classes = candidate_row_classes,
     )
 end
 
@@ -1865,8 +1863,9 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
     ct  = qf * a
 
     left_legs = (1, 2)
-    split_blocks = Telum._get_svd_cgt_split_sectors(ct, left_legs; tol)
-    expected_blocks = Telum._get_svd_cgt_split_sectors(ct, left_legs; tol)
+    right_legs = Telum._svd_right_legs(Val(ndims(ct)), left_legs)
+    split_blocks = Telum._get_svd_cgt_split_sectors(ct, left_legs, right_legs; tol)
+    expected_blocks = Telum._get_svd_cgt_split_sectors(ct, left_legs, right_legs; tol)
     Telum._share_svd_sector_isometries!(expected_blocks, symm(ct); tol=tol)
     prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=tol)
     split_blocks_via_svd = prep.blocks_by_symm
@@ -1946,7 +1945,6 @@ function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Floa
     left_legs = (1, 2)
     prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=tol)
     split_blocks = prep.blocks_by_symm
-    got = prep.intermediate_qsectors
 
     Sector = NTuple{length(symm(ct)), Tuple{Vararg{Int}}}
     expected = Dict{Sector, Vector{Int}}()
@@ -1965,7 +1963,16 @@ function test_svd_cgtsvd_intermediate_qrows(option::LocalSpaceOptions; tol::Floa
         end
     end
 
-    @test got == expected
+    candidate_row_sectors = Dict{Sector, Vector{Int}}()
+    for row in prep.candidate_rows
+        push!(get!(candidate_row_sectors, row.intermediate_sector, Int[]), row.sector_index)
+    end
+    @test candidate_row_sectors == expected
+    @test prep.candidate_rows == sort(copy(prep.candidate_rows);
+        by = row -> (row.intermediate_sector, row.left_signature,
+                     row.right_signature, row.sector_index),
+        alg=MergeSort)
+
     for blocks in split_blocks
         row_q_pairs = [(block.sector_index, block.q) for block in blocks]
         @test row_q_pairs == sort(copy(row_q_pairs); alg=MergeSort)
@@ -1983,9 +1990,7 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
 
     left_legs = (1, 2)
     prep = _test_svd_cgtsvd_prep(ct, left_legs; tol=tol)
-    qsectors = prep.intermediate_qsectors
     got_left_sigs, got_right_sigs = prep.left_signatures, prep.right_signatures
-    got = prep.intermediate_qsector_classes
 
     right_legs = Telum._svd_right_legs(Val(ndims(ct)), left_legs)
     left_sigs, right_sigs = Telum._get_svd_sector_spaces(ct, left_legs, right_legs)
@@ -1994,6 +1999,10 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
     @test got_right_sigs == right_sigs
 
     Sector = NTuple{length(symm(ct)), Tuple{Vararg{Int}}}
+    qsectors = Dict{Sector, Vector{Int}}()
+    for row in prep.candidate_rows
+        push!(get!(qsectors, row.intermediate_sector, Int[]), row.sector_index)
+    end
     expected = Dict{Sector, Vector{Vector{Int}}}()
     LeftSig = eltype(left_sigs)
     RightSig = eltype(right_sigs)
@@ -2050,6 +2059,11 @@ function test_svd_cgtsvd_intermediate_qrow_equivclasses(option::LocalSpaceOption
         expected[sector] = classes
     end
 
+    got = Dict(
+        sector => [sort!([row.sector_index for row in class_rows]; alg=MergeSort)
+                   for class_rows in classes]
+        for (sector, classes) in prep.candidate_row_classes
+    )
     @test got == expected
 end
 
@@ -2194,6 +2208,31 @@ function test_svd_cgtsvd_heterogeneous_product_qlabels()
     @test Vd isa TLArray
     @test qlabeltype(U) == qlabeltype(q.S)
     @test qlabeltype(Vd) == qlabeltype(q.S)
+end
+
+function test_svd_cgtsvd_zero_leading_sector()
+    ct, left_legs = _svd_cgtsvd_fixture(FermionSOptions(1, :U1, :SU2, nothing))
+    @test length(ct.RMTs) > 1
+
+    zero_wmats = similar(ct.wmats, length(ct.wmats))
+    zero_RMTs = similar(ct.RMTs, length(ct.RMTs))
+    for sector_index in Telum.sector_slots(ct)
+        (sector_index == 1 || ct.iszero[sector_index]) && continue
+        zero_wmats[sector_index] = ct.wmats[sector_index]
+        zero_RMTs[sector_index] = ct.RMTs[sector_index]
+    end
+    A = TLArray(symm(ct), copy(ct.qlabels), zero_wmats, zero_RMTs, ct.inds, ct.spaces)
+    @test A.iszero[1]
+    @test any(!A.iszero[i] for i in Telum.sector_slots(A))
+
+    result = svd_cgtsvd(A, left_legs; cutoff=0.0)
+    U, S, Vd = result.U, result.S, result.Vd
+    @test U isa TLArray
+    @test S isa TLArray
+    @test Vd isa TLArray
+    @test !isempty(U.RMTs)
+    @test !isempty(S.RMTs)
+    @test !isempty(Vd.RMTs)
 end
 
 function test_truncate_svd_cgtsvd(option::LocalSpaceOptions)

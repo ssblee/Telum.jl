@@ -145,6 +145,7 @@ end
     test_svd_cgtsvd_factorization(FermionSOptions(1, :U1, :SU2, nothing))
     test_svd_cgtsvd_factorization(FermionSOptions(3, :U1, :SU2, :SU3))
     test_svd_cgtsvd_heterogeneous_product_qlabels()
+    test_svd_cgtsvd_zero_leading_sector()
 end
 
 @testset "CGTSVD truncation" begin
