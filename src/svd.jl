@@ -106,14 +106,67 @@ function _svd_symmetry_stored_leg_order(
     return stored_qlabels, phys_to_stored, stored_to_phys, legdir
 end
 
-struct _ReducedSVDCGTBlock{NZ}
+@inline _svd_physical_qlabel_key(::Type{QT},
+                                 q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                 sector_index::Int,
+                                 ::Val{n}) where {T, QD, N, RD, QT, PS, M, RMT, n} =
+    ntuple(leg -> sector_qlabel(QT, q, sector_index, leg)[n], Val(QD))
+
+@inline _svd_physical_product_key(::Type{QT},
+                                  q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                  sector_index::Int) where {T, QD, N, RD, QT, PS, M, RMT} =
+    ntuple(leg -> sector_qlabel(QT, q, sector_index, leg), Val(QD))
+
+function _svd_physical_key_stored_order(physical_key::NTuple{QD},
+                                        inds::NTuple{QD, TLIndex}) where {QD}
+    incoming = Int[]
+    outgoing = Int[]
+    sizehint!(incoming, QD)
+    sizehint!(outgoing, QD)
+    for leg in 1:QD
+        if inds[leg].dir == '+'
+            push!(incoming, leg)
+        else
+            push!(outgoing, leg)
+        end
+    end
+
+    sort!(incoming; by = leg -> physical_key[leg], alg=MergeSort)
+    sort!(outgoing; by = leg -> physical_key[leg], alg=MergeSort)
+
+    nin = length(incoming)
+    stored_to_phys = ntuple(i -> i <= nin ? incoming[i] : outgoing[i - nin], Val(QD))
+    phys_to_stored = _phys_to_stored_order(stored_to_phys)
+    stored_qlabels = ntuple(i -> physical_key[stored_to_phys[i]], Val(QD))
+    legdir = (nin, QD - nin)
+    return stored_qlabels, phys_to_stored, stored_to_phys, legdir
+end
+
+function _svd_physical_key_split_args(::Type{S},
+                                      physical_key::NTuple{QD, NTuple{NZ, Int}},
+                                      inds::NTuple{QD, TLIndex},
+                                      left_legs::NTuple{L, Int}) where {S<:NonabelianSymm, QD, NZ, L}
+    @assert NZ == nzops(S)
+    stored_qlabels, phys_to_stored, _, legdir =
+        _svd_physical_key_stored_order(physical_key, inds)
+    upsp, dnsp = _svd_cgt_updn(stored_qlabels, legdir)
+    left_legs_canon = _svd_to_cgtidx(phys_to_stored, left_legs)::NTuple{L, Int}
+    return upsp, dnsp, left_legs_canon
+end
+
+@inline function _svd_physical_key_side_signatures(physical_key::NTuple{QD, QT},
+                                                   left_legs::NTuple{L, Int},
+                                                   right_legs::NTuple{R, Int}) where {QD, QT, L, R}
+    left_signature = ntuple(i -> physical_key[left_legs[i]], Val(L))
+    right_signature = ntuple(i -> physical_key[right_legs[i]], Val(R))
+    return left_signature, right_signature
+end
+
+struct _SVDSplitRow{L, R, QT}
     sector_index::Int
-    left_spaces::Tuple{Tuple{Vararg{NTuple{NZ, Int}}}, Tuple{Vararg{NTuple{NZ, Int}}}}
-    right_spaces::Tuple{Tuple{Vararg{NTuple{NZ, Int}}}, Tuple{Vararg{NTuple{NZ, Int}}}}
-    q::NTuple{NZ, Int}
-    left_iso::Matrix{Float64}
-    right_iso::Matrix{Float64}
-    core::Array{Float64, 3}
+    q::QT
+    left_signature::NTuple{L, QT}
+    right_signature::NTuple{R, QT}
 end
 
 function _svd_cgt_updn(qlabels::NTuple{QD}, legdir::Tuple{Int, Int}) where {QD}
@@ -176,7 +229,8 @@ end
 
 function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::AbstractMatrix{Float64},
                                    cgp::NTuple{QD, Int}, legdir::Tuple{Int, Int},
-                                   left_legs, right_legs, cgtsvd_cache = nothing) where {QD}
+                                   left_legs, right_legs, physical_key,
+                                   cgtsvd_cache = nothing) where {QD}
     left_legs_canon = _svd_to_cgtidx(cgp, left_legs)
     right_legs_canon = _svd_to_cgtidx(cgp, right_legs)
     NZ = length(qlabels[1])
@@ -191,7 +245,7 @@ function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::AbstractMatrix{
     end
 
     upsp, dnsp = _svd_cgt_updn(qlabels, legdir)
-    cgtsvd = _svd_get_cgtsvd(S, upsp, dnsp, left_legs_canon, cgtsvd_cache)
+    cgtsvd = _svd_get_cgtsvd(S, physical_key, upsp, dnsp, left_legs_canon, cgtsvd_cache)
 
     blocks = BlockInfo[]
     if cgtsvd isa LurCGT.CGTSVD
@@ -219,27 +273,25 @@ function _get_svd_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::AbstractMatrix{
                                    left_legs) where {QD}
     leftset = Set(left_legs)
     right_legs = Tuple(l for l in 1:QD if l ∉ leftset)
-    return _get_svd_cgt_split_blocks(S, qlabels, wmat, cgp, legdir, left_legs, right_legs)
+    physical_key = ntuple(i -> qlabels[cgp[i]], Val(QD))
+    return _get_svd_cgt_split_blocks(S, qlabels, wmat, cgp, legdir, left_legs, right_legs, physical_key)
 end
 
-@inline _svd_get_cgtsvd(::Type{S}, upsp, dnsp, left_legs_canon, cache) where {S<:AbelianSymm} =
+@inline _svd_get_cgtsvd(::Type{S}, physical_key, upsp, dnsp, left_legs_canon, cache) where {S<:AbelianSymm} =
     getNsave_CGTSVD(S, upsp, dnsp, left_legs_canon; save=true)
 
-function _svd_get_cgtsvd(::Type{S}, upsp, dnsp, left_legs_canon, cache) where {S<:NonabelianSymm}
+function _svd_get_cgtsvd(::Type{S}, physical_key, upsp, dnsp, left_legs_canon, cache) where {S<:NonabelianSymm}
     cache === nothing && return getNsave_CGTSVD(S, upsp, dnsp, left_legs_canon; save=true)
-    key = (upsp, dnsp, left_legs_canon)
-    if haskey(cache, key)
-        return cache[key]
+    if haskey(cache, physical_key)
+        return cache[physical_key]
     end
     cgtsvd = getNsave_CGTSVD(S, upsp, dnsp, left_legs_canon; save=true)
-    cache[key] = cgtsvd
+    cache[physical_key] = cgtsvd
     return cgtsvd
 end
 
-_cgtsvd_cache_key_type(::Type{S}, ::Val{U}, ::Val{D}, ::Val{L}) where {S<:NonabelianSymm, U, D, L} =
-    Tuple{NTuple{U, NTuple{nzops(S), Int}},
-          NTuple{D, NTuple{nzops(S), Int}},
-          NTuple{L, Int}}
+_cgtsvd_cache_key_type(::Type{QT}, ::Val{n}, ::Val{QD}) where {QT, n, QD} =
+    NTuple{QD, fieldtype(QT, n)}
 
 @generated function _cgtsvd_cache_slot(::Type{PS}, ::Val{n}) where {PS<:ProductSymm, n}
     syms = product_symms(PS)
@@ -268,15 +320,15 @@ end
     return caches[slot]
 end
 
-@generated function _new_cgtsvd_caches(::Type{PS}, ::Val{U}, ::Val{D}, ::Val{L}) where {PS<:ProductSymm, U, D, L}
+@generated function _new_cgtsvd_caches(::Type{PS}, ::Type{QT}, ::Val{QD}) where {PS<:ProductSymm, QT, QD}
     syms = product_symms(PS)
     seen = Type[]
     exprs = Expr[]
-    for S in syms
+    for (n, S) in pairs(syms)
         S <: AbelianSymm && continue
         S in seen && continue
         push!(seen, S)
-        Key = _cgtsvd_cache_key_type(S, Val(U), Val(D), Val(L))
+        Key = _cgtsvd_cache_key_type(QT, Val(n), Val(QD))
         # LurCGT standardization can change U/D/L or collapse to a Boolean
         # all-left/all-right shortcut, so the value type is keyed by symmetry.
         Value = Union{Bool, LurCGT.CGTSVD{S}}
@@ -286,16 +338,20 @@ end
     return Expr(:tuple, exprs...)
 end
 
-function _new_cgtsvd_caches(q::TLArray{T, QD, N, RD, QT, PS}, ::Val{L}) where {T, QD, N, RD, QT, PS, L}
-    U = count(idx -> idx.dir == '+', q.inds)
-    return _new_cgtsvd_caches(PS, Val(U), Val(QD - U), Val(L))
-end
+_new_cgtsvd_caches(::TLArray{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
+    _new_cgtsvd_caches(PS, QT, Val(QD))
 
-function _reduce_svd_cgt_block(block,
+_svd_symmetry_split_type(::Type{QTN}, ::Val{L}, ::Val{R}) where {QTN, L, R} =
+    NamedTuple{(:sector_index, :q, :left_signature, :right_signature,
+                :left_iso, :right_iso, :core),
+        Tuple{Int, QTN, NTuple{L, QTN}, NTuple{R, QTN},
+              Matrix{Float64}, Matrix{Float64}, Array{Float64, 3}}}
+
+function _reduce_svd_cgt_split(block,
                                sector_index::Int,
-                               left_spaces,
-                               right_spaces;
-                               tol::Float64 = 1e-12)
+                               left_signature::NTuple{L, QTN},
+                               right_signature::NTuple{R, QTN};
+                               tol::Float64 = 1e-12) where {L, R, QTN}
     coeffs = block.coeffs
     left_iso, left_reduced, _ = svd_leg(coeffs, 1; cutoff=tol)
     size(left_iso, 2) == 0 && return nothing
@@ -303,8 +359,9 @@ function _reduce_svd_cgt_block(block,
     right_iso, core, _ = svd_leg(left_reduced, 2; cutoff=tol)
     size(right_iso, 2) == 0 && return nothing
 
-    return _ReducedSVDCGTBlock{length(block.q)}(
-        sector_index, left_spaces, right_spaces, block.q, left_iso, right_iso, core)
+    Split = _svd_symmetry_split_type(QTN, Val(L), Val(R))
+    return Split((sector_index, block.q, left_signature, right_signature,
+                  left_iso, right_iso, core))
 end
 
 # Concatenate w-matrices, so the element type is always Float64
@@ -398,19 +455,32 @@ function _qr_shared_isometry(tensors::Vector{AW}; tol::Float64 = 1e-12
     return Q, factors
 end
 
-function _share_svd_sector_side_isometries!(blocks::Vector{<:_ReducedSVDCGTBlock},
-                                         side::Symbol;
-                                         tol::Float64 = 1e-12)
-    isempty(blocks) && return blocks
-    spacekey(block) = side === :left ? block.left_spaces : block.right_spaces
-    sort!(blocks; by = block -> (spacekey(block), block.q), alg=MergeSort)
+@inline _svd_split_signature(split, ::Val{:left}) = split.left_signature
+@inline _svd_split_signature(split, ::Val{:right}) = split.right_signature
+@inline _svd_split_iso(split, ::Val{:left}) = split.left_iso
+@inline _svd_split_iso(split, ::Val{:right}) = split.right_iso
+
+function _replace_svd_split_payload(split, common_iso, factor, ::Val{:left})
+    return merge(split, (left_iso = common_iso,
+                         core = _contract_om_axis(split.core, factor, 1)))
+end
+
+function _replace_svd_split_payload(split, common_iso, factor, ::Val{:right})
+    return merge(split, (right_iso = common_iso,
+                         core = _contract_om_axis(split.core, factor, 2)))
+end
+
+function _share_svd_split_side_isometries!(splits::Vector, side;
+                                           tol::Float64 = 1e-12)
+    isempty(splits) && return splits
+    sort!(splits; by = split -> (_svd_split_signature(split, side), split.q), alg=MergeSort)
 
     pos = 1
-    while pos <= length(blocks)
-        current_key = (spacekey(blocks[pos]), blocks[pos].q)
+    while pos <= length(splits)
+        current_key = (_svd_split_signature(splits[pos], side), splits[pos].q)
         nextpos = pos
-        while nextpos <= length(blocks) &&
-              (spacekey(blocks[nextpos]), blocks[nextpos].q) == current_key
+        while nextpos <= length(splits) &&
+              (_svd_split_signature(splits[nextpos], side), splits[nextpos].q) == current_key
             nextpos += 1
         end
 
@@ -418,7 +488,7 @@ function _share_svd_sector_side_isometries!(blocks::Vector{<:_ReducedSVDCGTBlock
         if length(inds) > 1
             # TODO: When GPU support is added, 'Array{Float64, 2}' here can be generalized
             mats::Vector{Matrix{Float64}} = [
-                side === :left ?  blocks[i].left_iso : blocks[i].right_iso
+                _svd_split_iso(splits[i], side)
                 for i in inds
             ]
             shared = _qr_shared_isometry(mats; tol=tol)
@@ -426,107 +496,123 @@ function _share_svd_sector_side_isometries!(blocks::Vector{<:_ReducedSVDCGTBlock
             common_iso, factors = shared
 
             for (i, factor) in zip(inds, factors)
-                block = blocks[i]
-                if side === :left
-                    new_core = _contract_om_axis(block.core, factor, 1)
-                    blocks[i] = _ReducedSVDCGTBlock{length(block.q)}(
-                        block.sector_index, block.left_spaces, block.right_spaces,
-                        block.q, common_iso, block.right_iso, new_core)
-                else
-                    new_core = _contract_om_axis(block.core, factor, 2)
-                    blocks[i] = _ReducedSVDCGTBlock{length(block.q)}(
-                        block.sector_index, block.left_spaces, block.right_spaces,
-                        block.q, block.left_iso, common_iso, new_core)
-                end
+                splits[i] = _replace_svd_split_payload(splits[i], common_iso, factor, side)
             end
         end
 
         pos = nextpos
     end
 
-    return blocks
+    return splits
 end
 
-function _share_svd_sector_isometries!(blocks_by_symm,
-                                    symm;
-                                    tol::Float64 = 1e-12)
-    isempty(symm) && return blocks_by_symm
+function _share_svd_split_isometries!(splits_by_symm,
+                                      symm;
+                                      tol::Float64 = 1e-12)
+    isempty(symm) && return splits_by_symm
     for n in eachindex(symm)
         isabelian(symm[n]) && continue
-        _share_svd_sector_side_isometries!(blocks_by_symm[n], :left; tol=tol)
-        _share_svd_sector_side_isometries!(blocks_by_symm[n], :right; tol=tol)
+        _share_svd_split_side_isometries!(splits_by_symm[n], Val(:left); tol=tol)
+        _share_svd_split_side_isometries!(splits_by_symm[n], Val(:right); tol=tol)
     end
-    return blocks_by_symm
+    return splits_by_symm
 end
 
-function _sort_svd_blocks_by_sector!(blocks_by_symm)
-    for blocks in blocks_by_symm
-        sort!(blocks; by = block -> (block.sector_index, block.q), alg=MergeSort)
+function _sort_svd_splits_by_sector!(splits_by_symm)
+    for splits in splits_by_symm
+        sort!(splits; by = split -> (split.sector_index, split.q), alg=MergeSort)
     end
-    return blocks_by_symm
+    return splits_by_symm
 end
 
-function _get_svd_candidate_rows(blocks_by_symm::Tuple{Vararg{<:AbstractVector, N}},
-                                 sector_indices::Vector{Int},
-                                 ::Val{N}) where {N}
-    _sort_svd_blocks_by_sector!(blocks_by_symm)
-    Sector = NTuple{N, Tuple{Vararg{Int}}}
-    BlockTuple = Tuple{(eltype.(fieldtypes(typeof(blocks_by_symm))))...}
-    BlockTypes = fieldtypes(BlockTuple)
-    LeftSig = Tuple{(fieldtype.(BlockTypes, Ref(:left_spaces)))...}
-    RightSig = Tuple{(fieldtype.(BlockTypes, Ref(:right_spaces)))...}
-    Row = NamedTuple{(:sector_index, :left_signature, :intermediate_sector, :right_signature, :sector_blocks),
-        Tuple{Int, LeftSig, Sector, RightSig, BlockTuple}}
+@inline _svd_trivial_iso() = ones(Float64, 1, 1)
+@inline _svd_trivial_core() = reshape(ones(Float64, 1), 1, 1, 1)
+
+function _svd_payload_tuples(::Type{PS}, sector_splits::Tuple{Vararg{Any, N}}) where {PS<:ProductSymm, N}
+    M = _wmat_tuple_width(PS)
+    left_isos = ntuple(Val(M)) do slot
+        n = product_symmetry_index_from_wmat_slot(PS, Val(slot))
+        sector_splits[n].left_iso
+    end
+    right_isos = ntuple(Val(M)) do slot
+        n = product_symmetry_index_from_wmat_slot(PS, Val(slot))
+        sector_splits[n].right_iso
+    end
+    cores = ntuple(Val(M)) do slot
+        n = product_symmetry_index_from_wmat_slot(PS, Val(slot))
+        sector_splits[n].core
+    end
+    return left_isos, right_isos, cores
+end
+
+function _get_svd_split_rows(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+                             splits_by_symm::Tuple{Vararg{<:AbstractVector, N}},
+                             sector_indices::Vector{Int},
+                             left_legs::NTuple{L, Int},
+                             right_legs::NTuple{R, Int},
+                             ::Val{N}) where {T, QD, N, RD, QT, PS, M, RMT, L, R}
+    _sort_svd_splits_by_sector!(splits_by_symm)
+    Row = _SVDSplitRow{L, R, QT}
     rows = Row[]
-    (isempty(sector_indices) || any(isempty, blocks_by_symm)) && return rows
+    left_isos = NTuple{M, Matrix{Float64}}[]
+    right_isos = NTuple{M, Matrix{Float64}}[]
+    cores = NTuple{M, Array{Float64, 3}}[]
+    (isempty(sector_indices) || any(isempty, splits_by_symm)) &&
+        return rows, left_isos, right_isos, cores
 
     nslots = maximum(sector_indices; init=0)
-    choices_by_sector = ntuple(n -> [eltype(blocks_by_symm[n])[] for _ in 1:nslots], N)
+    choices_by_sector = ntuple(n -> [eltype(splits_by_symm[n])[] for _ in 1:nslots], N)
     for n in 1:N
-        for block in blocks_by_symm[n]
-            push!(choices_by_sector[n][block.sector_index], block)
+        for split in splits_by_symm[n]
+            push!(choices_by_sector[n][split.sector_index], split)
         end
         @assert all(i -> !isempty(choices_by_sector[n][i]), sector_indices)
     end
 
     for ri in sector_indices
+        physical_key = _svd_physical_product_key(QT, q, ri)
+        left_signature, right_signature =
+            _svd_physical_key_side_signatures(physical_key, left_legs, right_legs)
         choices = ntuple(n -> choices_by_sector[n][ri], N)
-        for blocks in Iterators.product(choices...)
-            sector_blocks = Tuple(blocks)
-            sector = ntuple(n -> sector_blocks[n].q, N)
-            left_signature = ntuple(n -> sector_blocks[n].left_spaces, N)
-            right_signature = ntuple(n -> sector_blocks[n].right_spaces, N)
-            push!(rows, Row((ri, left_signature, sector, right_signature, sector_blocks)))
+        for splits in Iterators.product(choices...)
+            sector_splits = Tuple(splits)
+            sector = ntuple(n -> sector_splits[n].q, Val(N))::QT
+            liso, riso, core = _svd_payload_tuples(PS, sector_splits)
+            push!(rows, Row(ri, sector, left_signature, right_signature))
+            push!(left_isos, liso)
+            push!(right_isos, riso)
+            push!(cores, core)
         end
     end
 
-    sort!(rows; by = row -> (row.intermediate_sector, row.left_signature,
-                             row.right_signature, row.sector_index), alg=MergeSort)
-    return rows
+    perm = sortperm(eachindex(rows);
+        by = i -> (rows[i].q, rows[i].left_signature, rows[i].right_signature,
+                   rows[i].sector_index),
+        alg=MergeSort)
+    return rows[perm], left_isos[perm], right_isos[perm], cores[perm]
 end
 
-function _get_svd_candidate_row_classes(rows::Vector{Row}) where {Row}
-    Sector = fieldtype(Row, :intermediate_sector)
+function _get_svd_split_row_classes(rows::Vector{Row}) where {Row}
+    QT = fieldtype(Row, :q)
     LeftSig = fieldtype(Row, :left_signature)
     RightSig = fieldtype(Row, :right_signature)
-    classes_by_sector = Dict{Sector, Vector{Vector{Row}}}()
+    classes_by_sector = Dict{QT, Vector{Vector{Int}}}()
     isempty(rows) && return classes_by_sector
 
     pos = 1
     while pos <= length(rows)
-        sector = rows[pos].intermediate_sector
+        sector = rows[pos].q
         nextpos = pos
-        while nextpos <= length(rows) && rows[nextpos].intermediate_sector == sector
+        while nextpos <= length(rows) && rows[nextpos].q == sector
             nextpos += 1
         end
 
-        sector_rows = pos:nextpos-1
-        sectors = sort!(unique([rows[i].sector_index for i in sector_rows]); alg=MergeSort)
+        row_range = pos:nextpos-1
+        sectors = sort!(unique([rows[i].sector_index for i in row_range]); alg=MergeSort)
         rows_by_sector = Dict{Int, Vector{Int}}()
         left_groups = Dict{LeftSig, Vector{Int}}()
         right_groups = Dict{RightSig, Vector{Int}}()
-
-        for i in sector_rows
+        for i in row_range
             row = rows[i]
             push!(get!(rows_by_sector, row.sector_index, Int[]), i)
             push!(get!(left_groups, row.left_signature, Int[]), row.sector_index)
@@ -542,7 +628,7 @@ function _get_svd_candidate_row_classes(rows::Vector{Row}) where {Row}
         end
 
         unassigned = Set(sectors)
-        classes = Vector{Vector{Row}}()
+        classes = Vector{Vector{Int}}()
         for seed in sectors
             seed in unassigned || continue
             component = Int[seed]
@@ -555,7 +641,6 @@ function _get_svd_candidate_row_classes(rows::Vector{Row}) where {Row}
                 ri = pop!(frontier)
                 for row_index in rows_by_sector[ri]
                     row = rows[row_index]
-
                     if row.left_signature ∉ seen_left
                         push!(seen_left, row.left_signature)
                         for rj in left_groups[row.left_signature]
@@ -565,7 +650,6 @@ function _get_svd_candidate_row_classes(rows::Vector{Row}) where {Row}
                             push!(component, rj)
                         end
                     end
-
                     if row.right_signature ∉ seen_right
                         push!(seen_right, row.right_signature)
                         for rj in right_groups[row.right_signature]
@@ -579,17 +663,15 @@ function _get_svd_candidate_row_classes(rows::Vector{Row}) where {Row}
             end
 
             sort!(component; alg=MergeSort)
-            class_rows = Row[]
+            class_rows = Int[]
             for ri in component
-                for row_index in rows_by_sector[ri]
-                    push!(class_rows, rows[row_index])
-                end
+                append!(class_rows, rows_by_sector[ri])
             end
-            sort!(class_rows; by = row -> (row.sector_index, row.left_signature,
-                                           row.right_signature), alg=MergeSort)
+            sort!(class_rows; by = i -> (rows[i].sector_index, rows[i].left_signature,
+                                         rows[i].right_signature), alg=MergeSort)
             push!(classes, class_rows)
         end
-        sort!(classes; by = cls -> cls[1].sector_index, alg=MergeSort)
+        sort!(classes; by = cls -> rows[cls[1]].sector_index, alg=MergeSort)
         classes_by_sector[sector] = classes
         pos = nextpos
     end
@@ -625,53 +707,49 @@ function _get_svd_sector_spaces(q::TLArray{T, QD, N, RD, QT},
     return left_by_slot, right_by_slot
 end
 
-function _get_svd_sector_split_blocks(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
-                                   sector_index::Int,
-                                   left_legs::NTuple{L, Int},
-                                   right_legs::NTuple{R, Int};
-                                   tol::Float64 = 1e-12,
-                                   cgtsvd_caches = _new_cgtsvd_caches(q, Val(length(left_legs)))) where {T, QD, N, RD, QT, PS, M, RMT, L, R}
-    split_spaces = ntuple(N) do n
-        qlabels, cgp, _, legdir =
-            _svd_symmetry_stored_leg_order(QT, q, sector_index, Val(n))
-        left_legs_canon::NTuple{L, Int} = _svd_to_cgtidx(cgp, left_legs)
-        right_legs_canon::NTuple{R, Int} = _svd_to_cgtidx(cgp, right_legs)
-        _svd_cgt_split_spaces(qlabels, legdir, left_legs_canon, right_legs_canon)
+function _get_svd_symmetry_splits(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                  sector_index::Int,
+                                  left_legs::NTuple{L, Int},
+                                  right_legs::NTuple{R, Int},
+                                  ::Val{n};
+                                  tol::Float64 = 1e-12,
+                                  cgtsvd_caches = _new_cgtsvd_caches(q)) where {T, QD, N, RD, QT, PS, M, RMT, L, R, n}
+    physical_key = _svd_physical_qlabel_key(QT, q, sector_index, Val(n))
+    QTN = typeof(physical_key[1])
+    splits = Vector{_svd_symmetry_split_type(QTN, Val(L), Val(R))}()
+    left_signature, right_signature =
+        _svd_physical_key_side_signatures(physical_key, left_legs, right_legs)
+    qlabels, cgp, _, legdir =
+        _svd_symmetry_stored_leg_order(QT, q, sector_index, Val(n))
+    cache = _cgtsvd_cache_for(cgtsvd_caches, symm(q)[n], productsymm(q), Val(n))
+    for block in _get_svd_cgt_split_blocks(symm(q)[n], qlabels, sector_wmat(q, sector_index, n),
+                                           cgp, legdir, left_legs, right_legs, physical_key, cache)
+        split = _reduce_svd_cgt_split(
+            block, sector_index, left_signature, right_signature; tol=tol)
+        isnothing(split) || push!(splits, split)
     end
-    symm_blocks = ntuple(N) do n
-        qlabels, cgp, _, legdir =
-            _svd_symmetry_stored_leg_order(QT, q, sector_index, Val(n))
-        left_spaces_n, right_spaces_n = split_spaces[n]
-        reduced = Vector{_ReducedSVDCGTBlock{nzops(symm(q)[n])}}()
-        cache = _cgtsvd_cache_for(cgtsvd_caches, symm(q)[n], productsymm(q), Val(n))
-        for block in _get_svd_cgt_split_blocks(symm(q)[n], qlabels, sector_wmat(q, sector_index, n),
-                                               cgp, legdir, left_legs, right_legs, cache)
-            reduced_block = _reduce_svd_cgt_block(
-                block, sector_index, left_spaces_n, right_spaces_n; tol=tol)
-            isnothing(reduced_block) || push!(reduced, reduced_block)
-        end
-        reduced
-    end
-    any(isempty, symm_blocks) && return nothing
-    return symm_blocks
+    return splits
 end
 
 function _get_svd_cgt_split_sectors(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
-                                 left_legs::NTuple{L, Int},
-                                 right_legs::NTuple{R, Int};
-                                 tol::Float64 = 1e-12) where {T, QD, N, RD, QT, PS, M, RMT, L, R}
-    blocks_by_symm = ntuple(n -> Vector{_ReducedSVDCGTBlock{nzops(symm(q)[n])}}(), N)
-    cgtsvd_caches = _new_cgtsvd_caches(q, Val(L))
+                                    left_legs::NTuple{L, Int},
+                                    right_legs::NTuple{R, Int};
+                                    tol::Float64 = 1e-12) where {T, QD, N, RD, QT, PS, M, RMT, L, R}
+    splits_by_symm = ntuple(Val(N)) do n
+        QTN = fieldtype(QT, n)
+        Vector{_svd_symmetry_split_type(QTN, Val(L), Val(R))}()
+    end
+    cgtsvd_caches = _new_cgtsvd_caches(q)
     for ri in sector_slots(q)
         q.iszero[ri] && continue
-        sector_blocks = _get_svd_sector_split_blocks(
-            q, ri, left_legs, right_legs; tol=tol, cgtsvd_caches=cgtsvd_caches)
-        isnothing(sector_blocks) && continue
         for n in 1:N
-            append!(blocks_by_symm[n], sector_blocks[n])
+            append!(splits_by_symm[n], _get_svd_symmetry_splits(
+                q, ri, left_legs, right_legs, Val(n); tol=tol,
+                cgtsvd_caches=cgtsvd_caches))
         end
     end
-    return blocks_by_symm
+    _share_svd_split_isometries!(splits_by_symm, symm(q); tol=tol)
+    return splits_by_symm
 end
 
 function _svd_expand_core_axis(A::AbstractArray{T}, core::Array{Float64, 3}, axis::Int) where {T}
@@ -681,14 +759,28 @@ function _svd_expand_core_axis(A::AbstractArray{T}, core::Array{Float64, 3}, axi
     return reshape(merged, dims[1:axis-1]..., omLr, omRr, dims[axis+1:end]...)
 end
 
-function _svd_sector_class_matrix(q::TLArray{T, QD, N, RD},
+@inline _svd_payload_slot(::Type{PS}, ::Val{n}) where {PS<:ProductSymm, n} =
+    isabelian(product_symms(PS)[n]) ? nothing : nonabelian_wmat_slot(PS, Val(n))
+
+@inline _svd_left_iso(payload::NTuple{M, Matrix{Float64}}, ::Type{PS}, ::Val{n}) where {M, PS<:ProductSymm, n} =
+    isabelian(product_symms(PS)[n]) ? _svd_trivial_iso() : payload[nonabelian_wmat_slot(PS, Val(n))]
+
+@inline _svd_right_iso(payload::NTuple{M, Matrix{Float64}}, ::Type{PS}, ::Val{n}) where {M, PS<:ProductSymm, n} =
+    isabelian(product_symms(PS)[n]) ? _svd_trivial_iso() : payload[nonabelian_wmat_slot(PS, Val(n))]
+
+@inline _svd_core(payload::NTuple{M, Array{Float64, 3}}, ::Type{PS}, ::Val{n}) where {M, PS<:ProductSymm, n} =
+    isabelian(product_symms(PS)[n]) ? _svd_trivial_core() : payload[nonabelian_wmat_slot(PS, Val(n))]
+
+function _svd_sector_class_matrix(q::TLArray{T, QD, N, RD, QT, PS},
                                sector_index::Int,
-                               sector_blocks,
+                               left_payload,
+                               right_payload,
+                               core_payload,
                                left_legs::NTuple{NL, Int},
-                               right_legs::NTuple{NR, Int}) where {T, QD, N, RD, NL, NR}
+                               right_legs::NTuple{NR, Int}) where {T, QD, N, RD, QT, PS, NL, NR}
     data = sector_rmt(q, sector_index)
     for n in 1:N
-        data = _svd_expand_core_axis(data, sector_blocks[n].core, QD + 2n - 1)
+        data = _svd_expand_core_axis(data, _svd_core(core_payload, PS, Val(n)), QD + 2n - 1)
     end
 
     perm = Tuple(vcat(
@@ -700,55 +792,62 @@ function _svd_sector_class_matrix(q::TLArray{T, QD, N, RD},
     permed = permutedims(data, perm)
     rmt_size = size(sector_rmt(q, sector_index))
     left_dim = prod(rmt_size[leg] for leg in left_legs) *
-               prod(size(sector_blocks[n].left_iso, 2) for n in 1:N)
+               prod(size(_svd_left_iso(left_payload, PS, Val(n)), 2) for n in 1:N)
     right_dim = prod(rmt_size[leg] for leg in right_legs) *
-                prod(size(sector_blocks[n].right_iso, 2) for n in 1:N)
+                prod(size(_svd_right_iso(right_payload, PS, Val(n)), 2) for n in 1:N)
     return reshape(permed, left_dim, right_dim)
 end
 
 @inline _svd_row_signature(row, ::Val{:left}) = row.left_signature
 @inline _svd_row_signature(row, ::Val{:right}) = row.right_signature
-@inline _svd_row_iso(blocks, n::Int, ::Val{:left}) = blocks[n].left_iso
-@inline _svd_row_iso(blocks, n::Int, ::Val{:right}) = blocks[n].right_iso
 @inline _svd_signature_field(::Val{:left}) = :left_signature
 @inline _svd_signature_field(::Val{:right}) = :right_signature
 
-function _svd_ordered_unique_signature_rows(class_rows::Vector{Row}, side) where {Row}
+function _svd_ordered_unique_split_rows(rows::Vector{Row},
+                                        class_row_indices::Vector{Int},
+                                        side) where {Row}
     Sig = fieldtype(Row, _svd_signature_field(side))
-    ordered = Row[]
+    ordered = Int[]
     seen = Set{Sig}()
-    for row in class_rows
+    for row_index in class_row_indices
+        row = rows[row_index]
         sig = _svd_row_signature(row, side)
         sig in seen && continue
         push!(seen, sig)
-        push!(ordered, row)
+        push!(ordered, row_index)
     end
     return ordered
 end
 
-function _svd_class_side_infos(q::TLArray{T, QD, N, RD},
-                               class_rows::Vector{Row},
+function _svd_class_side_infos(q::TLArray{T, QD, N, RD, QT, PS},
+                               rows::Vector{Row},
+                               class_row_indices::Vector{Int},
+                               left_payloads,
+                               right_payloads,
                                legs::NTuple{L, Int},
-                               side) where {T, QD, N, RD, L, Row}
-    ordered = _svd_ordered_unique_signature_rows(class_rows, side)
+                               side) where {T, QD, N, RD, QT, PS, L, Row}
+    ordered = _svd_ordered_unique_split_rows(rows, class_row_indices, side)
     Sig = fieldtype(Row, _svd_signature_field(side))
-    BlockTuple = fieldtype(Row, :sector_blocks)
-    Info = NamedTuple{(:signature, :sector_index, :sector_blocks, :phys_dims, :om_dims, :range),
-        Tuple{Sig, Int, BlockTuple, NTuple{L, Int}, NTuple{N, Int}, UnitRange{Int}}}
+    Info = NamedTuple{(:signature, :row_index, :sector_index, :phys_dims, :om_dims, :range),
+        Tuple{Sig, Int, Int, NTuple{L, Int}, NTuple{N, Int}, UnitRange{Int}}}
     infos = Info[]
     ranges = Dict{Sig, UnitRange{Int}}()
     offset = 0
 
-    for row in ordered
+    for row_index in ordered
+        row = rows[row_index]
         sig = _svd_row_signature(row, side)
         ri = row.sector_index
-        sector_blocks = row.sector_blocks
         rmt_size = size(sector_rmt(q, ri))
         phys_dims = ntuple(i -> rmt_size[legs[i]], L)
-        om_dims = ntuple(n -> size(_svd_row_iso(sector_blocks, n, side), 2), N)
+        om_dims = ntuple(Val(N)) do n
+            side === Val(:left) ?
+                size(_svd_left_iso(left_payloads[row_index], PS, Val(n)), 2) :
+                size(_svd_right_iso(right_payloads[row_index], PS, Val(n)), 2)
+        end
         block_size = prod(phys_dims; init=1) * prod(om_dims; init=1)
         block_range = offset + 1:offset + block_size
-        push!(infos, Info((sig, ri, sector_blocks, phys_dims, om_dims, block_range)))
+        push!(infos, Info((sig, row_index, ri, phys_dims, om_dims, block_range)))
         ranges[sig] = block_range
         offset += block_size
     end
@@ -798,28 +897,32 @@ function _svd_build_side_cgt_metadata(source_qlabels::NTuple{QD},
     return (qlabels = qlabels, wmat = wmat, cgp = final_cgp, legdir = legdir)
 end
 
-function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD},
-                                 sector,
-                                 class_rows::Vector{Row},
+function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                 sector::QT,
+                                 rows::Vector{Row},
+                                 class_row_indices::Vector{Int},
+                                 left_payloads,
+                                 right_payloads,
+                                 core_payloads,
                                  left_legs::NTuple{NL, Int},
-                                 right_legs::NTuple{NR, Int}) where {T, QD, N, RD, NL, NR, Row}
+                                 right_legs::NTuple{NR, Int}) where {T, QD, N, RD, QT, PS, M, RMT, NL, NR, Row}
     left_infos, left_ranges, total_left = _svd_class_side_infos(
-        q, class_rows, left_legs, Val(:left))
-    
+        q, rows, class_row_indices, left_payloads, right_payloads, left_legs, Val(:left))
+
     right_infos, right_ranges, total_right = _svd_class_side_infos(
-        q, class_rows, right_legs, Val(:right))
+        q, rows, class_row_indices, left_payloads, right_payloads, right_legs, Val(:right))
 
     Tmat = promote_type(T, Float64)
     mat = zeros(Tmat, total_left, total_right)
-    for row in class_rows
-        ri = row.sector_index
-        sector_blocks = row.sector_blocks
-        block_mat = _svd_sector_class_matrix(q, ri, sector_blocks, left_legs, right_legs)
+    for row_index in class_row_indices
+        row = rows[row_index]
+        block_mat = _svd_sector_class_matrix(
+            q, row.sector_index, left_payloads[row_index], right_payloads[row_index],
+            core_payloads[row_index], left_legs, right_legs)
         lrange = left_ranges[row.left_signature]
         rrange = right_ranges[row.right_signature]
         mat[lrange, rrange] .+= block_mat
     end
-
 
     F = svd(mat; full=false)
     dimq = prod(Float64(dimension(symm(q)[n], sector[n])) for n in 1:N)
@@ -829,8 +932,6 @@ function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD},
         left_infos = left_infos,
         right_infos = right_infos,
         U = F.U .* scale,
-        # `get1jtensor` contributes the remaining 1/sqrt(dimq) normalization
-        # when the center bridge is materialized as a rank-2 TLArray sector.
         S = F.S ./ scale,
         Vt = F.Vt .* scale,
     )
@@ -1036,16 +1137,17 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     R = QD - L
     right_legs::NTuple{R, Int} = _svd_right_legs(Val(QD), left_legs)
 
-    blocks_by_symm = _get_svd_cgt_split_sectors(q, left_legs, right_legs; tol=cutoff)
-    _share_svd_sector_isometries!(blocks_by_symm, symm(q); tol=cutoff)
+    splits_by_symm = _get_svd_cgt_split_sectors(q, left_legs, right_legs; tol=cutoff)
     active_sector_indices = [ri for ri in sector_slots(q) if !q.iszero[ri]]
-    candidate_rows = _get_svd_candidate_rows(blocks_by_symm, active_sector_indices, Val(N))
-    candidate_row_classes = _get_svd_candidate_row_classes(candidate_rows)
+    split_rows, left_payloads, right_payloads, core_payloads =
+        _get_svd_split_rows(q, splits_by_symm, active_sector_indices, left_legs, right_legs, Val(N))
+    split_row_classes = _get_svd_split_row_classes(split_rows)
 
     class_results = nothing
-    for sector in sort!(collect(keys(candidate_row_classes)); alg=MergeSort)
-        for class_rows in candidate_row_classes[sector]
-            result = _build_svd_cgtsvd_class(q, sector, class_rows,
+    for sector in sort!(collect(keys(split_row_classes)); alg=MergeSort)
+        for class_row_indices in split_row_classes[sector]
+            result = _build_svd_cgtsvd_class(q, sector, split_rows, class_row_indices,
+                                             left_payloads, right_payloads, core_payloads,
                                              left_legs, right_legs)
             class_results = _svd_append_class_result(class_results, result)
         end
@@ -1087,6 +1189,7 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
         class_range = class_ranges[ci]
 
         for info in result.left_infos
+            left_payload = left_payloads[info.row_index]
             part = result.U[info.range, keep]
             full = zeros(eltype(result.U), length(info.range), sector_count)
             full[:, class_range] = part
@@ -1098,9 +1201,11 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
             cgts_U = ntuple(N) do n
                 source_qlabels, source_cgp, _, source_legdir =
                     _svd_symmetry_stored_leg_order(QT, q, info.sector_index, Val(n))
+                wmat = isabelian(symm(q)[n]) ? _svd_trivial_iso() :
+                    copy(_svd_left_iso(left_payload, PS, Val(n)))
                 _svd_build_side_cgt_metadata(
                     source_qlabels, source_cgp, source_legdir, left_legs,
-                    sector[n], false, copy(info.sector_blocks[n].left_iso))
+                    sector[n], false, wmat)
             end
             push!(qlabels_U,
                   _svd_physical_qlabels(QT,
@@ -1114,6 +1219,7 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
         end
 
         for info in result.right_infos
+            right_payload = right_payloads[info.row_index]
             part = result.Vt[keep, info.range]
             full = zeros(eltype(result.Vt), sector_count, length(info.range))
             full[class_range, :] = part
@@ -1122,9 +1228,11 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
             cgts_Vd = ntuple(N) do n
                 source_qlabels, source_cgp, _, source_legdir =
                     _svd_symmetry_stored_leg_order(QT, q, info.sector_index, Val(n))
+                wmat = isabelian(symm(q)[n]) ? _svd_trivial_iso() :
+                    copy(_svd_right_iso(right_payload, PS, Val(n)))
                 _svd_build_side_cgt_metadata(
                     source_qlabels, source_cgp, source_legdir, right_legs,
-                    dual_sector[n], true, copy(info.sector_blocks[n].right_iso))
+                    dual_sector[n], true, wmat)
             end
             push!(qlabels_Vd,
                   _svd_physical_qlabels(QT,
