@@ -69,6 +69,11 @@ end
 
 _svd_dual_sector(symm, sector) = Tuple(get_dualq(symm[n], sector[n]) for n in 1:length(symm))
 
+@generated function _svd_dual_sector(::Type{PS}, sector::QT, ::Val{N}) where {PS<:ProductSymm, QT, N}
+    syms = product_symms(PS)
+    return Expr(:tuple, [:(get_dualq($(syms[n]), sector[$n])) for n in 1:N]...)
+end
+
 _svd_stable_sort_tuple(spaces) = Tuple(sort!(collect(spaces); alg=MergeSort))
 
 _is_zero_array(arr::AbstractArray) = all(iszero, arr)
@@ -512,12 +517,12 @@ function _count_svd_symmetry_splits(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
                                     left_legs::NTuple{L, Int},
                                     cgtsvd_caches::CT,
                                     ::Val{n}) where {T, QD, N, RD, QT, PS, M, RMT, L, CT<:Tuple, n}
-    S = symm(q)[n]
+    S = nth_symm(PS, Val(n))
     isabelian(S) && return 1
     physical_key = _svd_physical_qlabel_key(QT, q, sector_index, Val(n))
     upsp, dnsp, left_legs_canon =
         _svd_physical_key_split_args(S, physical_key, q.inds, left_legs)
-    cache = _cgtsvd_cache_for(cgtsvd_caches, S, productsymm(q), Val(n))
+    cache = _cgtsvd_cache_for(cgtsvd_caches, S, PS, Val(n))
     cgtsvd = _svd_get_cgtsvd(S, physical_key, upsp, dnsp, left_legs_canon, cache)
     return _svd_cgtsvd_split_count(cgtsvd)
 end
@@ -1272,13 +1277,6 @@ function _get_svd_cgt_split_sectors(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
         left_legs, right_legs; tol=tol)
 end
 
-function _svd_expand_core_axis(A::AbstractArray{T}, core::Array{Float64, 3}, axis::Int) where {T}
-    omLr, omRr, omM = size(core)
-    merged = _contract_om_axis(A, reshape(core, omLr * omRr, omM), axis)
-    dims = size(merged)
-    return reshape(merged, dims[1:axis-1]..., omLr, omRr, dims[axis+1:end]...)
-end
-
 @inline _svd_payload_slot(::Type{PS}, ::Val{n}) where {PS<:ProductSymm, n} =
     isabelian(product_symms(PS)[n]) ? nothing : nonabelian_wmat_slot(PS, Val(n))
 
@@ -1291,31 +1289,126 @@ end
 @inline _svd_core(payload::NTuple{M, Array{Float64, 3}}, ::Type{PS}, ::Val{n}) where {M, PS<:ProductSymm, n} =
     isabelian(product_symms(PS)[n]) ? _svd_trivial_core() : payload[nonabelian_wmat_slot(PS, Val(n))]
 
-function _svd_sector_class_matrix(q::TLArray{T, QD, N, RD, QT, PS},
-                               sector_index::Int,
-                               left_payload,
-                               right_payload,
-                               core_payload,
-                               left_legs::NTuple{NL, Int},
-                               right_legs::NTuple{NR, Int}) where {T, QD, N, RD, QT, PS, NL, NR}
-    data = sector_rmt(q, sector_index)
-    for n in 1:N
-        data = _svd_expand_core_axis(data, _svd_core(core_payload, PS, Val(n)), QD + 2n - 1)
-    end
+@generated function _svd_core_tuple(core_payload::CP,
+                                    ::Type{PS},
+                                    ::Val{N}) where {CP, PS<:ProductSymm, N}
+    return Expr(:tuple, [:( _svd_core(core_payload, PS, Val($n)) ) for n in 1:N]...)
+end
 
-    perm = Tuple(vcat(
-        collect(left_legs),
-        [QD + 2n - 1 for n in 1:N],
-        collect(right_legs),
-        [QD + 2n for n in 1:N],
-    ))
-    permed = permutedims(data, perm)
-    rmt_size = size(sector_rmt(q, sector_index))
+function _svd_core_kron_matrix(cores::NTuple{N, Array{Float64, 3}}) where {N}
+    core = cores[1]
+    mat = reshape(core, size(core, 1) * size(core, 2), size(core, 3))
+    for n in 2:N
+        core = cores[n]
+        mat_n = reshape(core, size(core, 1) * size(core, 2), size(core, 3))
+        mat = kron(mat_n, mat)
+    end
+    return mat
+end
+
+@generated function _svd_expanded_core_dims(rmt_size,
+                                            cores::CT,
+                                            ::Val{QD},
+                                            ::Val{N}) where {CT<:Tuple, QD, N}
+    exprs = Any[:(rmt_size[$i]) for i in 1:QD]
+    for n in 1:N
+        push!(exprs, :(size(cores[$n], 1)))
+        push!(exprs, :(size(cores[$n], 2)))
+    end
+    return Expr(:tuple, exprs...)
+end
+
+@generated function _svd_expanded_class_perm(left_legs::NTuple{NL, Int},
+                                             right_legs::NTuple{NR, Int},
+                                             ::Val{QD},
+                                             ::Val{N}) where {NL, NR, QD, N}
+    exprs = Any[:(left_legs[$i]) for i in 1:NL]
+    append!(exprs, [:(QD + 2 * $n - 1) for n in 1:N])
+    append!(exprs, [:(right_legs[$i]) for i in 1:NR])
+    append!(exprs, [:(QD + 2 * $n) for n in 1:N])
+    return Expr(:tuple, exprs...)
+end
+
+function _svd_permutedims_to_buffer!(permute_buffer::Matrix{T},
+                                     storage::Matrix{T},
+                                     dims::NTuple{D, Int},
+                                     perm::NTuple{D, Int}) where {T, D}
+    data = reshape(view(storage, 1:prod(dims; init=1)), dims)
+    output_size = prod(dims; init=1)
+    @assert length(permute_buffer) >= output_size
+    permute_view = reshape(view(permute_buffer, 1:output_size), ntuple(i -> dims[perm[i]], Val(D)))
+    permute_view .= permutedims(data, perm)
+    return permute_view
+end
+
+function _svd_permutedims_to_buffer!(permute_buffer::Matrix{Float64},
+                                     storage::Matrix{Float64},
+                                     dims::NTuple{D, Int},
+                                     perm::NTuple{D, Int}) where {D}
+    output_size = prod(dims; init=1)
+    @assert length(permute_buffer) >= output_size
+    permute_mat = reshape(view(permute_buffer, 1:output_size), output_size, 1)
+    perm0 = Int32[perm[i] - 1 for i in 1:D]
+    sizeA = Int32[dims[i] for i in 1:D]
+    ccall((:dTensorTranspose, HPTT_jll.libhptt), Cvoid,
+          (Ptr{Int32}, Cint, Float64, Ptr{Float64}, Ptr{Int32}, Ptr{Int32},
+           Float64, Ptr{Float64}, Ptr{Int32}, Cint, Cint),
+          perm0, D, 1.0, storage, sizeA, C_NULL,
+          0.0, permute_mat, C_NULL, max(1, Threads.nthreads()), 0)
+    return reshape(view(permute_buffer, 1:output_size), ntuple(i -> dims[perm[i]], Val(D)))
+end
+
+function _svd_permutedims_to_buffer!(permute_buffer::Matrix{ComplexF64},
+                                     storage::Matrix{ComplexF64},
+                                     dims::NTuple{D, Int},
+                                     perm::NTuple{D, Int}) where {D}
+    output_size = prod(dims; init=1)
+    @assert length(permute_buffer) >= output_size
+    permute_mat = reshape(view(permute_buffer, 1:output_size), output_size, 1)
+    perm0 = Int32[perm[i] - 1 for i in 1:D]
+    sizeA = Int32[dims[i] for i in 1:D]
+    ccall((:zTensorTranspose, HPTT_jll.libhptt), Cvoid,
+          (Ptr{Int32}, Cint, ComplexF64, Cuchar, Ptr{ComplexF64}, Ptr{Int32}, Ptr{Int32},
+           ComplexF64, Ptr{ComplexF64}, Ptr{Int32}, Cint, Cint),
+          perm0, D, one(ComplexF64), false, storage, sizeA, C_NULL,
+          zero(ComplexF64), permute_mat, C_NULL, max(1, Threads.nthreads()), 0)
+    return reshape(view(permute_buffer, 1:output_size), ntuple(i -> dims[perm[i]], Val(D)))
+end
+
+function _svd_sector_class_matrix!(dest::AbstractMatrix{Tbuf},
+                                   q::TLArray{T, QD, N, RD, QT, PS},
+                                   sector_index::Int,
+                                   left_payload,
+                                   right_payload,
+                                   core_payload,
+                                   left_legs::NTuple{NL, Int},
+                                   right_legs::NTuple{NR, Int},
+                                   product_buffer::Matrix{Tbuf},
+                                   permute_buffer::Matrix{Tbuf}) where {T, QD, N, RD, QT, PS, NL, NR, Tbuf}
+    rmt = sector_rmt(q, sector_index)
+    rmt_size = size(rmt)
+    phys_dim = prod(rmt_size[i] for i in 1:QD)
+    om_dim = prod(rmt_size[QD + n] for n in 1:N)
+    cores = _svd_core_tuple(core_payload, PS, Val(N))
+    core_mat = _svd_core_kron_matrix(cores)
+    @assert size(core_mat, 2) == om_dim
+
+    expanded_om_dim = size(core_mat, 1)
+    product_size = phys_dim * expanded_om_dim
+    @assert length(product_buffer) >= product_size
+    product_mat = reshape(view(product_buffer, 1:product_size), phys_dim, expanded_om_dim)
+    mul!(product_mat, reshape(rmt, phys_dim, om_dim), transpose(core_mat), one(Tbuf), zero(Tbuf))
+
+    expanded_dims = _svd_expanded_core_dims(rmt_size, cores, Val(QD), Val(N))
+    perm = _svd_expanded_class_perm(left_legs, right_legs, Val(QD), Val(N))
     left_dim = prod(rmt_size[leg] for leg in left_legs) *
                prod(size(_svd_left_iso(left_payload, PS, Val(n)), 2) for n in 1:N)
     right_dim = prod(rmt_size[leg] for leg in right_legs) *
                 prod(size(_svd_right_iso(right_payload, PS, Val(n)), 2) for n in 1:N)
-    return reshape(permed, left_dim, right_dim)
+    @assert size(dest) == (left_dim, right_dim)
+    permed = _svd_permutedims_to_buffer!(permute_buffer, product_buffer, expanded_dims, perm)
+    dest .+= reshape(permed, left_dim, right_dim)
+    return dest
 end
 
 @inline _svd_row_signature(row, ::Val{:left}) = row.left_signature
@@ -1470,7 +1563,9 @@ function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
                                  left_legs::NTuple{NL, Int},
                                  right_legs::NTuple{NR, Int},
                                  irrepdim_caches::ICT,
-                                 buffer::AbstractMatrix{Tbuf}) where {T, QD, N, RD, QT, PS, M, RMT, NL, NR, Row, Meta, ICT<:Tuple, Tbuf}
+                                 buffer::AbstractMatrix{Tbuf},
+                                 product_buffer::Matrix{Tbuf},
+                                 permute_buffer::Matrix{Tbuf}) where {T, QD, N, RD, QT, PS, M, RMT, NL, NR, Row, Meta, ICT<:Tuple, Tbuf}
     sector = class_metadata.sector
     class_row_indices = class_metadata.rows
     left_ranges = class_metadata.left_ranges
@@ -1483,12 +1578,12 @@ function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     fill!(mat, zero(Tbuf))
     for row_index in class_row_indices
         row = rows[row_index]
-        block_mat = _svd_sector_class_matrix(
-            q, row.sector_index, left_payloads[row_index], right_payloads[row_index],
-            core_payloads[row_index], left_legs, right_legs)
         lrange = left_ranges[row.left_signature]
         rrange = right_ranges[row.right_signature]
-        mat[lrange, rrange] .+= block_mat
+        block = @view mat[lrange, rrange]
+        _svd_sector_class_matrix!(
+            block, q, row.sector_index, left_payloads[row_index], right_payloads[row_index],
+            core_payloads[row_index], left_legs, right_legs, product_buffer, permute_buffer)
     end
 
     F = svd(mat; full=false)
@@ -1514,12 +1609,14 @@ function _build_svd_cgtsvd_classes(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     isempty(class_metadata) && throw(ArgumentError("svd produced no CGTSVD classes"))
     Tmat = promote_type(T, Float64)
     buffer = Matrix{Tmat}(undef, max_left, max_right)
+    product_buffer = similar(buffer)
+    permute_buffer = similar(buffer)
     Result = _svd_cgtsvd_class_result_type(Meta, Tmat)
     class_results = Vector{Result}(undef, length(class_metadata))
     for ci in eachindex(class_metadata)
         class_results[ci] = _build_svd_cgtsvd_class(
             q, class_metadata[ci], rows, left_payloads, right_payloads, core_payloads,
-            left_legs, right_legs, irrepdim_caches, buffer)
+            left_legs, right_legs, irrepdim_caches, buffer, product_buffer, permute_buffer)
     end
     return class_results
 end
@@ -1682,32 +1779,39 @@ end
 _svd_cgtsvd_class_ranges(class_results, keep_per_class) =
     _svd_cgtsvd_class_ranges(class_results, keep_per_class, Val(length(first(class_results).sector)))
 
-function _build_svd_cgtsvd_S(symm,
+function _build_svd_cgtsvd_S(::Type{PS},
+                             symmetries::NTuple{N, Any},
                              bond_splist,
                              left_tag::AbstractString,
                              right_tag::AbstractString,
                              sector_values,
-                             irrepdim_caches)
-    N = length(symm)
-    PS = productsymm(symm)
-    base = get1jtensor(leginfo(symm, TLIndex(left_tag, '-'), bond_splist))
-    qlabels = copy(base.qlabels)
-    wmats = deepcopy(base.wmats)
+                             irrepdim_caches) where {PS<:ProductSymm, N}
+    QT = fieldtype(eltype(bond_splist), 1)
+    qlabels = Vector{NTuple{2, QT}}(undef, length(bond_splist))
+    wmats = _wmat_vector(PS, length(bond_splist))
     inds_S = (TLIndex(left_tag, '+'), TLIndex(right_tag, '+'))
-    spaces_S = (bond_splist, base.spaces[2])
-    RMTs = DiagRMT{Float64, 2 + N}[]
+    ET = eltype(bond_splist)
+    dual_splist = ET[
+        (_svd_dual_sector(PS, sector, Val(N)), dim)
+        for (sector, dim) in bond_splist
+    ]
+    sort!(dual_splist; by = first, alg=MergeSort)
+    spaces_S = (bond_splist, dual_splist)
+    RMTs = Vector{DiagRMT{Float64, 2 + N}}(undef, length(bond_splist))
 
-    for ri in sector_slots(base)
-        base.iszero[ri] && continue
-        sector = _svd_sector_qlabels(base, ri, N)
+    for (sector_index, (sector, _)) in enumerate(bond_splist)
+        dual_sector = _svd_dual_sector(PS, sector, Val(N))
+        qlabels[sector_index] = (sector, dual_sector)
+        for n in 1:N
+            _set_sector_wmat!(wmats, PS, sector_index, n, [1.0;;])
+        end
         svals = sector_values[sector]
-        count = length(svals)
         cgt_dim = Float64(_svd_sector_degeneracy(PS, sector, irrepdim_caches, Val(N)))
         scale = sqrt(cgt_dim)
-        push!(RMTs, _diag_rmt_from_values(svals, Val(2 + N), (1, 2), scale))
+        RMTs[sector_index] = _diag_rmt_from_values(svals, Val(2 + N), (1, 2), scale)
     end
 
-    return TLArray(symm, qlabels, wmats, RMTs, inds_S, spaces_S)
+    return TLArray(symmetries, qlabels, wmats, RMTs, inds_S, spaces_S)
 end
 
 function _svd_right_legs(::Val{QD}, left_legs::NTuple{L, Int}) where {QD, L}
@@ -1733,6 +1837,7 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     @assert isnothing(Nkeep) || Nkeep >= 0 "Nkeep must be non-negative"
     @assert issorted(left_legs)
     @assert length(unique(left_legs)) == length(left_legs)
+    symmetries = product_symms(PS)
 
     R = QD - L
     right_legs::NTuple{R, Int} = _svd_right_legs(Val(QD), left_legs)
@@ -1786,7 +1891,7 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
         isempty(keep) && continue
 
         sector = result.sector
-        dual_sector = _svd_dual_sector(symm(q), sector)
+        dual_sector = _svd_dual_sector(PS, sector, Val(N))
         sector_count = sector_counts[sector]
         class_range = class_ranges[ci]
 
@@ -1803,7 +1908,7 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
             cgts_U = ntuple(N) do n
                 source_qlabels, source_cgp, _, source_legdir =
                     _svd_symmetry_stored_leg_order(QT, q, info.sector_index, Val(n))
-                wmat = isabelian(symm(q)[n]) ? _svd_trivial_iso() :
+                wmat = isabelian(nth_symm(PS, Val(n))) ? _svd_trivial_iso() :
                     copy(_svd_left_iso(left_payload, PS, Val(n)))
                 _svd_build_side_cgt_metadata(
                     source_qlabels, source_cgp, source_legdir, left_legs,
@@ -1830,7 +1935,7 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
             cgts_Vd = ntuple(N) do n
                 source_qlabels, source_cgp, _, source_legdir =
                     _svd_symmetry_stored_leg_order(QT, q, info.sector_index, Val(n))
-                wmat = isabelian(symm(q)[n]) ? _svd_trivial_iso() :
+                wmat = isabelian(nth_symm(PS, Val(n))) ? _svd_trivial_iso() :
                     copy(_svd_right_iso(right_payload, PS, Val(n)))
                 _svd_build_side_cgt_metadata(
                     source_qlabels, source_cgp, source_legdir, right_legs,
@@ -1852,7 +1957,7 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
         (sector, sector_counts[sector]) for sector in sector_order
     ]
     dual_bond_splist = Tuple{NTuple{N, Tuple{Vararg{Int}}}, Int}[
-        (_svd_dual_sector(symm(q), sector), sector_counts[sector]) for sector in sector_order
+        (_svd_dual_sector(PS, sector, Val(N)), sector_counts[sector]) for sector in sector_order
     ]
     sort!(dual_bond_splist; by = first, alg=MergeSort)
 
@@ -1873,10 +1978,10 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
 
     wmats_U = _wmat_vector_from_buffers(PS, wmat_buffers_U, length(RMTs_U))
     wmats_Vd = _wmat_vector_from_buffers(PS, wmat_buffers_Vd, length(RMTs_Vd))
-    U = TLArray(symm(q), U_qlabels, wmats_U, RMTs_U, inds_U, spaces_U)
-    S = _build_svd_cgtsvd_S(symm(q), bond_splist, left_tag, right_tag,
+    U = TLArray(symmetries, U_qlabels, wmats_U, RMTs_U, inds_U, spaces_U)
+    S = _build_svd_cgtsvd_S(PS, symmetries, bond_splist, left_tag, right_tag,
                             sector_values, irrepdim_caches)
-    Vd = TLArray(symm(q), Vd_qlabels, wmats_Vd, RMTs_Vd, inds_Vd, spaces_Vd)
+    Vd = TLArray(symmetries, Vd_qlabels, wmats_Vd, RMTs_Vd, inds_Vd, spaces_Vd)
     return SVDResult(U, S, Vd, kept_list, trunc_list)
 end
 
