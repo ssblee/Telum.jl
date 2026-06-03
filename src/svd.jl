@@ -186,6 +186,55 @@ struct _SVDCGTBlockInfo{NZ}
     coeffs::Array{Float64, 3}
 end
 
+struct _SVDClassSideInfo{Sig, L, N}
+    signature::Sig
+    row_index::Int
+    sector_index::Int
+    phys_dims::NTuple{L, Int}
+    om_dims::NTuple{N, Int}
+    range::UnitRange{Int}
+end
+
+struct _SVDCGTClassMetadata{QT, LI, LR, RI, RR}
+    sector::QT
+    rows::UnitRange{Int}
+    left_infos::LI
+    left_ranges::LR
+    total_left::Int
+    right_infos::RI
+    right_ranges::RR
+    total_right::Int
+end
+
+struct _SVDCGTClassResult{QT, LI, RI, U, S, Vt}
+    sector::QT
+    left_infos::LI
+    right_infos::RI
+    U::U
+    S::S
+    Vt::Vt
+end
+
+_svd_class_side_info_type(::Type{QT}, ::Val{L}, ::Val{N}) where {QT, L, N} =
+    _SVDClassSideInfo{NTuple{L, QT}, L, N}
+
+function _svd_cgtsvd_class_metadata_type(::Type{QT}, ::Val{NL}, ::Val{NR}, ::Val{N}) where {QT, NL, NR, N}
+    LeftSig = NTuple{NL, QT}
+    RightSig = NTuple{NR, QT}
+    LI = Vector{_svd_class_side_info_type(QT, Val(NL), Val(N))}
+    RI = Vector{_svd_class_side_info_type(QT, Val(NR), Val(N))}
+    LR = Dict{LeftSig, UnitRange{Int}}
+    RR = Dict{RightSig, UnitRange{Int}}
+    return _SVDCGTClassMetadata{QT, LI, LR, RI, RR}
+end
+
+function _svd_cgtsvd_class_result_type(
+    ::Type{_SVDCGTClassMetadata{QT, LI, LR, RI, RR}},
+    ::Type{Tmat}) where {QT, LI, LR, RI, RR, Tmat}
+    S = Vector{real(Tmat)}
+    return _SVDCGTClassResult{QT, LI, RI, Matrix{Tmat}, S, Matrix{Tmat}}
+end
+
 function _svd_cgt_updn(qlabels::NTuple{QD}, legdir::Tuple{Int, Int}) where {QD}
     nin = legdir[1]
     upsp = Tuple(qlabels[i] for i in 1:nin)
@@ -365,6 +414,17 @@ end
 @inline _cgtsvd_cache_for(caches::CT, ::Type{S}, ::Type{PS}, ::Val{n}) where {CT<:Tuple, S, PS<:ProductSymm, n} =
     _cgtsvd_cache_for(S, caches, PS, Val(n))
 
+@inline _irrepdim_cache_for(::Type{S}, caches, ::Type{PS}, ::Val{n}) where {S<:AbelianSymm, PS<:ProductSymm, n} = nothing
+@inline function _irrepdim_cache_for(::Type{S}, caches, ::Type{PS}, ::Val{n}) where {S<:NonabelianSymm, PS<:ProductSymm, n}
+    slot = _cgtsvd_cache_slot(PS, Val(n))
+    slot === nothing &&
+        throw(ArgumentError("symmetry index $n is Abelian and has no irrep-dimension cache"))
+    return caches[slot]
+end
+
+@inline _irrepdim_cache_for(caches::CT, ::Type{S}, ::Type{PS}, ::Val{n}) where {CT<:Tuple, S, PS<:ProductSymm, n} =
+    _irrepdim_cache_for(S, caches, PS, Val(n))
+
 @generated function _new_cgtsvd_caches(::Type{PS}, ::Type{QT}, ::Val{QD}) where {PS<:ProductSymm, QT, QD}
     syms = product_symms(PS)
     seen = Type[]
@@ -385,6 +445,64 @@ end
 
 _new_cgtsvd_caches(::TLArray{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
     _new_cgtsvd_caches(PS, QT, Val(QD))
+
+@generated function _new_irrepdim_caches(::Type{PS}, ::Type{QT}) where {PS<:ProductSymm, QT}
+    syms = product_symms(PS)
+    seen = Type[]
+    exprs = Expr[]
+    for (n, S) in pairs(syms)
+        S <: AbelianSymm && continue
+        S in seen && continue
+        push!(seen, S)
+        QTN = fieldtype(QT, n)
+        Cache = Dict{QTN, Int}
+        push!(exprs, :($Cache()))
+    end
+    return Expr(:tuple, exprs...)
+end
+
+_new_irrepdim_caches(::TLArray{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
+    _new_irrepdim_caches(PS, QT)
+
+@inline _svd_irrep_dimension(::Type{S}, qlabel, cache) where {S<:AbelianSymm} =
+    dimension(S, qlabel)
+
+function _svd_irrep_dimension(::Type{S}, qlabel, cache::Dict{QTN, Int}) where {S<:NonabelianSymm, QTN}
+    dim = get(cache, qlabel, 0)
+    dim != 0 && return dim
+    dim = dimension(S, qlabel)
+    cache[qlabel] = dim
+    return dim
+end
+
+@generated function _fill_irrepdim_caches_for_sector!(irrepdim_caches::CT,
+                                                      sector::QT,
+                                                      ::Type{PS}) where {CT<:Tuple, QT, PS<:ProductSymm}
+    syms = product_symms(PS)
+    exprs = Expr[]
+    for n in eachindex(syms)
+        S = syms[n]
+        S <: AbelianSymm && continue
+        push!(exprs, quote
+            qlabel = sector[$n]
+            cache = _irrepdim_cache_for(irrepdim_caches, $S, PS, Val($n))
+            if !haskey(cache, qlabel)
+                cache[qlabel] = dimension($S, qlabel)
+            end
+        end)
+    end
+    push!(exprs, :(return irrepdim_caches))
+    return Expr(:block, exprs...)
+end
+
+function _fill_irrepdim_caches!(irrepdim_caches::CT,
+                                class_metadata::AbstractVector,
+                                ::Type{PS}) where {CT<:Tuple, PS<:ProductSymm}
+    for metadata in class_metadata
+        _fill_irrepdim_caches_for_sector!(irrepdim_caches, metadata.sector, PS)
+    end
+    return irrepdim_caches
+end
 
 @inline _svd_cgtsvd_split_count(cgtsvd::LurCGT.CGTSVD) = length(cgtsvd.bond_sps)
 @inline _svd_cgtsvd_split_count(::Bool) = 1
@@ -1230,8 +1348,7 @@ function _svd_class_side_infos(q::TLArray{T, QD, N, RD, QT, PS},
                                side) where {T, QD, N, RD, QT, PS, L, Row}
     ordered = _svd_ordered_unique_split_rows(rows, class_row_indices, side)
     Sig = fieldtype(Row, _svd_signature_field(side))
-    Info = NamedTuple{(:signature, :row_index, :sector_index, :phys_dims, :om_dims, :range),
-        Tuple{Sig, Int, Int, NTuple{L, Int}, NTuple{N, Int}, UnitRange{Int}}}
+    Info = _SVDClassSideInfo{Sig, L, N}
     infos = Info[]
     ranges = Dict{Sig, UnitRange{Int}}()
     offset = 0
@@ -1249,7 +1366,7 @@ function _svd_class_side_infos(q::TLArray{T, QD, N, RD, QT, PS},
         end
         block_size = prod(phys_dims; init=1) * prod(om_dims; init=1)
         block_range = offset + 1:offset + block_size
-        push!(infos, Info((sig, row_index, ri, phys_dims, om_dims, block_range)))
+        push!(infos, Info(sig, row_index, ri, phys_dims, om_dims, block_range))
         ranges[sig] = block_range
         offset += block_size
     end
@@ -1312,16 +1429,10 @@ function _svd_cgtsvd_class_metadata(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     right_infos, right_ranges, total_right = _svd_class_side_infos(
         q, rows, class_row_indices, left_payloads, right_payloads, right_legs, Val(:right))
 
-    return (
-        sector = rows[first(class_row_indices)].q,
-        rows = class_row_indices,
-        left_infos = left_infos,
-        left_ranges = left_ranges,
-        total_left = total_left,
-        right_infos = right_infos,
-        right_ranges = right_ranges,
-        total_right = total_right,
-    )
+    return _SVDCGTClassMetadata(
+        rows[first(class_row_indices)].q, class_row_indices,
+        left_infos, left_ranges, total_left,
+        right_infos, right_ranges, total_right)
 end
 
 function _svd_cgtsvd_class_metadata(
@@ -1334,15 +1445,12 @@ function _svd_cgtsvd_class_metadata(
     right_legs::NTuple{NR, Int}) where {T, QD, N, RD, QT, PS, M, RMT, NL, NR, Row}
     isempty(class_ranges) && throw(ArgumentError("svd produced no CGTSVD classes"))
 
-    first_item = _svd_cgtsvd_class_metadata(
-        q, rows, first(class_ranges), left_payloads, right_payloads,
-        left_legs, right_legs)
-    metadata = Vector{typeof(first_item)}(undef, length(class_ranges))
-    metadata[1] = first_item
-    max_left = first_item.total_left
-    max_right = first_item.total_right
+    Meta = _svd_cgtsvd_class_metadata_type(QT, Val(NL), Val(NR), Val(N))
+    metadata = Vector{Meta}(undef, length(class_ranges))
+    max_left = 0
+    max_right = 0
 
-    for ci in 2:length(class_ranges)
+    for ci in eachindex(class_ranges)
         item = _svd_cgtsvd_class_metadata(
             q, rows, class_ranges[ci], left_payloads, right_payloads,
             left_legs, right_legs)
@@ -1361,7 +1469,8 @@ function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
                                  core_payloads,
                                  left_legs::NTuple{NL, Int},
                                  right_legs::NTuple{NR, Int},
-                                 buffer::AbstractMatrix{Tbuf}) where {T, QD, N, RD, QT, PS, M, RMT, NL, NR, Row, Meta, Tbuf}
+                                 irrepdim_caches::ICT,
+                                 buffer::AbstractMatrix{Tbuf}) where {T, QD, N, RD, QT, PS, M, RMT, NL, NR, Row, Meta, ICT<:Tuple, Tbuf}
     sector = class_metadata.sector
     class_row_indices = class_metadata.rows
     left_ranges = class_metadata.left_ranges
@@ -1383,16 +1492,12 @@ function _build_svd_cgtsvd_class(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     end
 
     F = svd(mat; full=false)
-    dimq = prod(Float64(dimension(nth_symm(PS, Val(n)), sector[n])) for n in 1:N)
+    dimq = Float64(_svd_sector_degeneracy(PS, sector, irrepdim_caches, Val(N)))
     scale = sqrt(dimq)
-    return (
-        sector = sector,
-        left_infos = class_metadata.left_infos,
-        right_infos = class_metadata.right_infos,
-        U = F.U .* scale,
-        S = F.S ./ scale,
-        Vt = F.Vt .* scale,
-    )
+    Result = _svd_cgtsvd_class_result_type(Meta, Tbuf)
+    return Result(
+        sector, class_metadata.left_infos, class_metadata.right_infos,
+        F.U .* scale, F.S ./ scale, F.Vt .* scale)
 end
 
 function _build_svd_cgtsvd_classes(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
@@ -1404,45 +1509,58 @@ function _build_svd_cgtsvd_classes(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
                                    right_payloads,
                                    core_payloads,
                                    left_legs::NTuple{NL, Int},
-                                   right_legs::NTuple{NR, Int}) where {T, QD, N, RD, QT, PS, M, RMT, Meta, Row, NL, NR}
+                                   right_legs::NTuple{NR, Int},
+                                   irrepdim_caches::ICT) where {T, QD, N, RD, QT, PS, M, RMT, Meta, Row, NL, NR, ICT<:Tuple}
     isempty(class_metadata) && throw(ArgumentError("svd produced no CGTSVD classes"))
     Tmat = promote_type(T, Float64)
     buffer = Matrix{Tmat}(undef, max_left, max_right)
-    first_result = _build_svd_cgtsvd_class(
-        q, class_metadata[1], rows, left_payloads, right_payloads, core_payloads,
-        left_legs, right_legs, buffer)
-    class_results = Vector{typeof(first_result)}(undef, length(class_metadata))
-    class_results[1] = first_result
-    for ci in 2:length(class_metadata)
+    Result = _svd_cgtsvd_class_result_type(Meta, Tmat)
+    class_results = Vector{Result}(undef, length(class_metadata))
+    for ci in eachindex(class_metadata)
         class_results[ci] = _build_svd_cgtsvd_class(
             q, class_metadata[ci], rows, left_payloads, right_payloads, core_payloads,
-            left_legs, right_legs, buffer)
+            left_legs, right_legs, irrepdim_caches, buffer)
     end
     return class_results
 end
 
-function _svd_cgtsvd_entry_degeneracy(symm::NTuple{N, Any},
-                                      sector::NTuple{N, Tuple{Vararg{Int}}}) where {N}
-    total = 1
+@generated function _svd_sector_degeneracy(::Type{PS},
+                                           sector::QT,
+                                           irrepdim_caches::CT,
+                                           ::Val{N}) where {PS<:ProductSymm, QT, CT<:Tuple, N}
+    expr = :(1)
+    syms = product_symms(PS)
     for n in 1:N
-        total *= dimension(symm[n], sector[n])
+        S = syms[n]
+        if S <: AbelianSymm
+            term = :(dimension($S, sector[$n]))
+        else
+            term = :(_svd_irrep_dimension($S, sector[$n],
+                _irrepdim_cache_for(irrepdim_caches, $S, PS, Val($n))))
+        end
+        expr = :($expr * $term)
     end
-    return total
+    return expr
 end
 
 function _select_svd_cgtsvd_entries(class_results,
-                                    symm::NTuple{N, Any},
+                                    ::Type{PS},
+                                    irrepdim_caches::ICT,
                                     cutoff::Float64,
                                     Nkeep;
-                                    get_lists::Bool = false) where {N}
-    return _select_svd_cgtsvd_entries(class_results, symm, cutoff, Nkeep, Val(get_lists))
+                                    get_lists::Bool = false) where {PS<:ProductSymm, ICT<:Tuple}
+    return _select_svd_cgtsvd_entries(
+        class_results, PS, irrepdim_caches, cutoff, Nkeep,
+        Val(get_lists), Val(length(product_symms(PS))))
 end
 
 function _select_svd_cgtsvd_entries(class_results,
-                                    ::NTuple{N, Any},
+                                    ::Type{PS},
+                                    irrepdim_caches::ICT,
                                     cutoff::Float64,
                                     Nkeep,
-                                    ::Val{false}) where {N}
+                                    ::Val{false},
+                                    ::Val{N}) where {PS<:ProductSymm, ICT<:Tuple, N}
     entries = Tuple{Float64, Int, Int}[]
     sv_global_max = 0.0
 
@@ -1473,10 +1591,12 @@ function _select_svd_cgtsvd_entries(class_results,
 end
 
 function _select_svd_cgtsvd_entries(class_results,
-                                    symm::NTuple{N, Any},
+                                    ::Type{PS},
+                                    irrepdim_caches::ICT,
                                     cutoff::Float64,
                                     Nkeep,
-                                    ::Val{true}) where {N}
+                                    ::Val{true},
+                                    ::Val{N}) where {PS<:ProductSymm, ICT<:Tuple, N}
     entries = Tuple{Float64, Int, Int}[]
     sv_global_max = 0.0
     Entry = Tuple{Float64, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}
@@ -1489,7 +1609,7 @@ function _select_svd_cgtsvd_entries(class_results,
         sv_global_max = max(sv_global_max, result.S[1])
         sector = result.sector::NTuple{N, Tuple{Vararg{Int}}}
         offset = get(sector_counts, sector, 0)
-        degeneracy = _svd_cgtsvd_entry_degeneracy(symm, sector)
+        degeneracy = _svd_sector_degeneracy(PS, sector, irrepdim_caches, Val(N))
         for j in eachindex(result.S)
             display_sv = result.S[j] * sqrt(Float64(degeneracy))
             push!(entries, (result.S[j], ci, j))
@@ -1566,8 +1686,10 @@ function _build_svd_cgtsvd_S(symm,
                              bond_splist,
                              left_tag::AbstractString,
                              right_tag::AbstractString,
-                             sector_values)
+                             sector_values,
+                             irrepdim_caches)
     N = length(symm)
+    PS = productsymm(symm)
     base = get1jtensor(leginfo(symm, TLIndex(left_tag, '-'), bond_splist))
     qlabels = copy(base.qlabels)
     wmats = deepcopy(base.wmats)
@@ -1580,7 +1702,7 @@ function _build_svd_cgtsvd_S(symm,
         sector = _svd_sector_qlabels(base, ri, N)
         svals = sector_values[sector]
         count = length(svals)
-        cgt_dim = prod(Float64(dimension(symm[n], sector[n])) for n in 1:N)
+        cgt_dim = Float64(_svd_sector_degeneracy(PS, sector, irrepdim_caches, Val(N)))
         scale = sqrt(cgt_dim)
         push!(RMTs, _diag_rmt_from_values(svals, Val(2 + N), (1, 2), scale))
     end
@@ -1628,12 +1750,14 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     class_metadata, max_left, max_right = _svd_cgtsvd_class_metadata(
         q, split_rows, split_row_classes, left_payloads, right_payloads,
         left_legs, right_legs)
+    irrepdim_caches = _fill_irrepdim_caches!(_new_irrepdim_caches(q), class_metadata, PS)
     class_results = _build_svd_cgtsvd_classes(
         q, class_metadata, max_left, max_right, split_rows,
-        left_payloads, right_payloads, core_payloads, left_legs, right_legs)
+        left_payloads, right_payloads, core_payloads, left_legs, right_legs,
+        irrepdim_caches)
 
     keep_per_class, kept_list, trunc_list =
-        _select_svd_cgtsvd_entries(class_results, symm(q), cutoff, Nkeep;
+        _select_svd_cgtsvd_entries(class_results, PS, irrepdim_caches, cutoff, Nkeep;
                                    get_lists=get_lists)
     class_ranges, sector_counts, sector_order =
         _svd_cgtsvd_class_ranges(class_results, keep_per_class, Val(N))
@@ -1750,7 +1874,8 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     wmats_U = _wmat_vector_from_buffers(PS, wmat_buffers_U, length(RMTs_U))
     wmats_Vd = _wmat_vector_from_buffers(PS, wmat_buffers_Vd, length(RMTs_Vd))
     U = TLArray(symm(q), U_qlabels, wmats_U, RMTs_U, inds_U, spaces_U)
-    S = _build_svd_cgtsvd_S(symm(q), bond_splist, left_tag, right_tag, sector_values)
+    S = _build_svd_cgtsvd_S(symm(q), bond_splist, left_tag, right_tag,
+                            sector_values, irrepdim_caches)
     Vd = TLArray(symm(q), Vd_qlabels, wmats_Vd, RMTs_Vd, inds_Vd, spaces_Vd)
     return SVDResult(U, S, Vd, kept_list, trunc_list)
 end

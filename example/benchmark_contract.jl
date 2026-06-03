@@ -38,3 +38,9 @@ end
 function benchmark_sum(vec)
     @time for _=1:100 sum(vec) end
 end
+
+function svd_testtensor(Nkeep=50)
+    MPS, MPO, Hrl = get_DMRGres(Nkeep)
+    Hl, Hr, M, H1, H2 = benchmark_DMRGres(MPS, MPO, Hrl)
+    return do_Lanczos(Hl, Hr, M, H1, H2)
+end
