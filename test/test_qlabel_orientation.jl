@@ -6,6 +6,7 @@ function _assert_qlabel_storage(q::TLArray)
               ntuple(leg -> Telum.sector_qlabel(q, sector_index, leg), ndims(q))
     end
 end
+_assert_qlabel_storage(q::TLArrayView) = _assert_qlabel_storage(Telum.materialize(q))
 
 function _assert_wmat_storage(q::TLArray)
     nonabelian = Telum.nonabelian_symmetry_indices(Telum.productsymm(q))
@@ -124,6 +125,9 @@ end
         @test norm(sum((q, q, q))) ≈ 3norm(q)
 
         q_perm = permutedims(q, (2, 1, 3))
+        @test q_perm isa TLArrayView
+        @test conj(q) isa TLArrayView
+        @test q * 2.0 isa TLArrayView
         from_permuted_only = sum((zero(q), q_perm))
         _assert_qlabel_storage(from_permuted_only)
         @test norm(from_permuted_only - q) < 1e-10
@@ -132,6 +136,38 @@ end
         _assert_qlabel_storage(sorted)
         @test sorted !== q
         @test Telum.sector_rmt(sorted, 1) !== Telum.sector_rmt(q, 1)
+    end
+
+    @testset "internal TLArrayView materialization" begin
+        q = fermion_su2.F
+        active = first(i for i in Telum.sector_slots(q) if !Telum.is_sector_zero(q, i))
+
+        vp = Telum._view_permutedims(q, (2, 1, 3))
+        @test vp isa TLArrayView
+        @test norm(Telum.materialize(vp) - permutedims(q, (2, 1, 3))) < 1e-10
+
+        vc = Telum._view_conj(q)
+        @test vc isa TLArrayView
+        @test norm(Telum.materialize(vc) - conj(q)) < 1e-10
+
+        vs = Telum._view_scale(q, 2.0)
+        @test vs isa TLArrayView
+        rmt, alpha = Telum.sector_rmt_with_scale(vs, active)
+        @test rmt === Telum.sector_rmt(q, active)
+        @test alpha == 2.0
+        @test norm(Telum.materialize(vs) - q * 2.0) < 1e-10
+
+        z = Telum._view_scale(q, 0.0)
+        @test z isa TLArray
+        @test Telum.sector_count(z) == Telum.sector_count(q)
+        @test Telum.nsectors(z) == 0
+        @test all(!Telum.is_sector_defined(z, i) && Telum.is_sector_zero(z, i)
+                  for i in Telum.sector_slots(z))
+
+        @test Telum._view_conj(Telum._view_conj(q)) === q
+        @test Telum._view_scale(Telum._view_scale(q, 2.0), 0.5) === q
+        @test Telum._view_permutedims(Telum._view_permutedims(q, (2, 1, 3)),
+                                      (2, 1, 3)) === q
     end
 
     @testset "decomposition assembly keeps orientation" begin

@@ -16,8 +16,8 @@ leginfo{N}(symm::NTuple{N, Any}, ind::TLIndex, splist::AbstractVector) where {N}
     leginfo(symm, ind, splist)
 
 # Use precomputed spaces from TLArray
-function leginfo(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, i::Int) where {T, QD, N, RD, QT, PS, M, RMT}
-    return leginfo{N, QT, PS}(q.inds[i], q.spaces[i])
+function leginfo(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}, i::Int) where {T, QD, N, RD, QT, PS, M, RMT}
+    return leginfo{N, QT, PS}(inds(q)[i], spaces(q)[i])
 end
 
 productsymm(::leginfo{N, QT, PS}) where {N, QT, PS} = PS
@@ -36,13 +36,13 @@ Base.propertynames(::leginfo, private::Bool=false) =
 
 # Variadic entry point: accepts multiple (TLArray, Int) pairs as positional arguments
 # Keyword arguments control the fused output leg's TLIndex properties
-function getIdentity(legs::Vararg{Tuple{TLArray, Int}};
+function getIdentity(legs::Vararg{Tuple{<:AbstractTLArray, Int}};
                      itag::AbstractString="", plev::Int=0, lock::Int=0)
     leginfos = Tuple(leginfo(q, i) for (q, i) in legs)
     return getIdentity(leginfos; itag=itag, plev=plev, lock=lock)
 end
 
-function _normalize_getIdentity_legs(q::TLArray{T, QD}, legs) where {T, QD}
+function _normalize_getIdentity_legs(q::AbstractTLArray{T, QD}, legs) where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
     isempty(positions) && throw(ArgumentError("getIdentity requires at least one leg"))
     all(1 <= leg <= QD for leg in positions) || throw(ArgumentError(
@@ -52,13 +52,13 @@ function _normalize_getIdentity_legs(q::TLArray{T, QD}, legs) where {T, QD}
     return Tuple(positions)
 end
 
-function getIdentity(q::TLArray{T, QD}, legs::LegList;
+function getIdentity(q::AbstractTLArray{T, QD}, legs::LegList;
                      itag::AbstractString="", plev::Int=0, lock::Int=0) where {T, QD}
     positions = _normalize_getIdentity_legs(q, legs)
     return getIdentity(((q, leg) for leg in positions)...; itag=itag, plev=plev, lock=lock)
 end
 
-function getIdentity(q::TLArray{T, QD}, leg::Integer, morelegs::Vararg{Integer};
+function getIdentity(q::AbstractTLArray{T, QD}, leg::Integer, morelegs::Vararg{Integer};
                      itag::AbstractString="", plev::Int=0, lock::Int=0) where {T, QD}
     return getIdentity(q, (Int(leg), (Int(l) for l in morelegs)...); itag=itag, plev=plev, lock=lock)
 end
@@ -243,4 +243,3 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
 
     return q
 end
-

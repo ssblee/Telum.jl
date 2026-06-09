@@ -532,6 +532,9 @@ function LinearAlgebra.eigen(q::TLArray{T, 2, N, RD},
     return use_hermitian ? _eigen_hermitian(q_work, eig_tag) : _eigen_general(q_work, eig_tag)
 end
 
+LinearAlgebra.eigen(q::TLArrayView, args...; kwargs...) =
+    eigen(materialize(q), args...; kwargs...)
+
 """
     discard_eigen(result::EigenResult, Nkeep, tol, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))
 

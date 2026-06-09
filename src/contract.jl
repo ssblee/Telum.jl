@@ -346,6 +346,45 @@ function _cached_permuted_rmt_data!(cache::Vector{PRMT},
     return cache[idx]
 end
 
+function prepared_sector_rmt(q::TLArray{T},
+                             idx::Int,
+                             perm::NTuple{RD, Int},
+                             ::Val{NF},
+                             ::Val{CN},
+                             ::Val{N}) where {T, RD, NF, CN, N}
+    rmt, alpha = sector_rmt_with_scale(q, idx)
+    return _permuted_rmt_data(rmt, perm, Val(NF), Val(CN), Val(N)), alpha
+end
+
+function prepared_sector_rmt(q::TLArrayView{T, QD},
+                             idx::Int,
+                             perm::NTuple{RD, Int},
+                             ::Val{NF},
+                             ::Val{CN},
+                             ::Val{N}) where {T, QD, RD, NF, CN, N}
+    source_perm = ntuple(pos -> perm[pos] <= QD ? q.perm[perm[pos]] : perm[pos], Val(RD))
+    prepared, alpha = prepared_sector_rmt(q.arr, idx, source_perm, Val(NF), Val(CN), Val(N))
+    scale = alpha * q.scale
+    if q.conj
+        T <: Real && return prepared, scale
+        return conj(prepared), conj(scale)
+    end
+    return prepared, scale
+end
+
+function _cached_prepared_sector_rmt!(cache::Vector{Tuple{PRMT, T}},
+                                      q::AbstractTLArray{T},
+                                      idx::Int,
+                                      perm::NTuple{RD, Int},
+                                      ::Val{NF},
+                                      ::Val{CN},
+                                      ::Val{N}) where {PRMT, T, RD, NF, CN, N}
+    if !isassigned(cache, idx)
+        cache[idx] = prepared_sector_rmt(q, idx, perm, Val(NF), Val(CN), Val(N))
+    end
+    return cache[idx]
+end
+
 function _combined_om_factor_info(factors::NTuple{N, LT}) where {N, LT<:AbstractArray{Float64, 3}}
     rank_sizes = ntuple(n -> size(factors[n], 1), Val(N))
     scale = 1.0
@@ -911,6 +950,11 @@ function _compress_sector(
                                               Val(NF1 + NF2 + N))
 end
 
+@inline _prepared_cache_rmt(x::Tuple) = x[1]
+@inline _prepared_cache_rmt(x::AbstractArray) = x
+@inline _prepared_cache_scale(x::Tuple) = x[2]
+@inline _prepared_cache_scale(x::AbstractArray{T}) where {T} = one(T)
+
 function _contract_prepared_compress_sector(
     prepared,
     sector_pairs    ::AbstractVector{Tuple{Int, Int}},
@@ -922,8 +966,8 @@ function _contract_prepared_compress_sector(
     ::Val{RD_out}
 ) where {NF1, NF2, RT, RD_out}
     first_i, first_j = first(sector_pairs)
-    first_data1 = work1[first_i]
-    first_data2 = work2[first_j]
+    first_data1 = _prepared_cache_rmt(work1[first_i])
+    first_data2 = _prepared_cache_rmt(work2[first_j])
     U_mats, factor_arrays, rank_sizes = prepared
 
     result_shape::NTuple{RD_out, Int} = (kept_sizes1..., kept_sizes2..., rank_sizes...)
@@ -935,12 +979,19 @@ function _contract_prepared_compress_sector(
 
     for i in eachindex(sector_pairs)
         idx1, idx2 = sector_pairs[i]
+        entry1 = work1[idx1]
+        entry2 = work2[idx2]
+        data1 = _prepared_cache_rmt(entry1)
+        data2 = _prepared_cache_rmt(entry2)
+        pair_alpha = _prepared_cache_scale(entry1) * _prepared_cache_scale(entry2)
+        factors = factor_arrays[i]
+        factors_scaled = pair_alpha == one(typeof(pair_alpha)) ? factors : factors .* pair_alpha
         beta = i == firstindex(sector_pairs) ? zero(RT) : one(RT)
         _contract_RMT_pair_into!(
             result_view,
-            work1[idx1],
-            work2[idx2],
-            factor_arrays[i],
+            data1,
+            data2,
+            factors_scaled,
             temp,
             _RMT_CONTRACT_TULLIO_THRESHOLD,
             beta,
@@ -970,12 +1021,16 @@ end
 #    end
 #end
 
-function Base.:*(q1::TLArray, q2::TLArray)
+function Base.:*(q1::AbstractTLArray, q2::AbstractTLArray)
+    inds1 = inds(q1)
+    inds2 = inds(q2)
+    spaces1 = spaces(q1)
+    spaces2 = spaces(q2)
     # Collect candidate indices from each TLArray.
-    cands1 = [(i, q1.inds[i]) for i in 1:length(q1.inds)
-              if !isempty(q1.inds[i].itags) && q1.inds[i].lock == 0]
-    cands2 = [(j, q2.inds[j]) for j in 1:length(q2.inds)
-              if !isempty(q2.inds[j].itags) && q2.inds[j].lock == 0]
+    cands1 = [(i, inds1[i]) for i in 1:length(inds1)
+              if !isempty(inds1[i].itags) && inds1[i].lock == 0]
+    cands2 = [(j, inds2[j]) for j in 1:length(inds2)
+              if !isempty(inds2[j].itags) && inds2[j].lock == 0]
 
     # Match candidates: for each index in cands1, find the unique equal index
     # in cands2.  Raise an error if a tag appears more than once on either side.
@@ -986,7 +1041,7 @@ function Base.:*(q1::TLArray, q2::TLArray)
     for (i::Int, idx1) in cands1
         hits = [(pos, j, idx2) for (pos, (j, idx2)) in enumerate(cands2)
                 if idx1 == change_dir(idx2) &&
-                   q1.spaces[i] == q2.spaces[j] &&
+                   spaces1[i] == spaces2[j] &&
                    pos ∉ matched2]::Vector{Tuple{Int, Int, TLIndex}}
         if length(hits) > 1
             error("Ambiguous contraction: tag \"$(idx1.itags)\" matches more than one index in q2")
@@ -1033,15 +1088,18 @@ function _free_legs(::Val{QD}, legs::NTuple{CN, Int}) where {QD, CN}
     end
 end
 
-_contracted_qlabel_type(::Type{QT}, ::Val{CN}) where {QT, CN} = NTuple{CN, QT}
+_contracted_qlabel_type(::Type{QT}, ::Val{CN}) where {QT, CN} = NTuple{CN, Tuple{QT, Int}}
+
+@inline _sector_leg_dim(q::AbstractTLArray, sector::Int, leg::Int) =
+    sector_rmt_axis_dim(q, sector, leg)
 
 struct ContractSectorInfo{NF, QT, CQT}
     sector_index::Int
-    free_qlabels::NTuple{NF, QT}
+    free_qlabels::NTuple{NF, Tuple{QT, Int}}
     contracted_qlabels::CQT
 end
 
-function _contract_sector_infos(::Type{QT}, q::TLArray{T, QD, N},
+function _contract_sector_infos(::Type{QT}, q::AbstractTLArray{T, QD, N},
                              free_legs::NTuple{NF, Int},
                              legs::NTuple{CN, Int}) where {QT, T, QD, N, NF, CN}
     CQT = _contracted_qlabel_type(QT, Val(CN))
@@ -1049,11 +1107,11 @@ function _contract_sector_infos(::Type{QT}, q::TLArray{T, QD, N},
     infos = Vector{Info}(undef, nsectors(q))
     out_pos = 1
     for i in sector_slots(q)
-        q.iszero[i] && continue
+        is_sector_zero(q, i) && continue
         infos[out_pos] = Info(
             i,
-            ntuple(k -> sector_qlabel(QT, q, i, free_legs[k]), Val(NF)),
-            ntuple(k -> sector_qlabel(QT, q, i, legs[k]), Val(CN))::CQT,
+            ntuple(k -> (sector_qlabel(QT, q, i, free_legs[k]), _sector_leg_dim(q, i, free_legs[k])), Val(NF)),
+            ntuple(k -> (sector_qlabel(QT, q, i, legs[k]), _sector_leg_dim(q, i, legs[k])), Val(CN))::CQT,
         )
         out_pos += 1
     end
@@ -1120,8 +1178,8 @@ end
 
 function _possible_pair_table(infos1::AbstractVector{ContractSectorInfo{NF1, QT, CQT}},
                               infos2::AbstractVector{ContractSectorInfo{NF2, QT, CQT}}) where {NF1, NF2, QT, CQT}
-    FreeKey1 = NTuple{NF1, QT}
-    FreeKey2 = NTuple{NF2, QT}
+    FreeKey1 = NTuple{NF1, Tuple{QT, Int}}
+    FreeKey2 = NTuple{NF2, Tuple{QT, Int}}
     OutKey = Tuple{FreeKey1, FreeKey2}
     PairT = Tuple{CQT, OutKey, Int, Int}
     overlaps, n_possible = _contracted_qlabel_overlaps(infos1, infos2)
@@ -1166,6 +1224,13 @@ function _out_key_qlabels(out_key::Tuple{NTuple{NF1, QT}, NTuple{NF2, QT}},
                           ::Val{QD_out}) where {NF1, NF2, QT, QD_out}
     return ntuple(Val(QD_out)) do leg
         leg <= NF1 ? out_key[1][leg] : out_key[2][leg - NF1]
+    end
+end
+
+function _out_key_qlabels(out_key::Tuple{NTuple{NF1, Tuple{QT, Int}}, NTuple{NF2, Tuple{QT, Int}}},
+                          ::Val{QD_out}) where {NF1, NF2, QT, QD_out}
+    return ntuple(Val(QD_out)) do leg
+        leg <= NF1 ? out_key[1][leg][1] : out_key[2][leg - NF1][1]
     end
 end
 
@@ -1226,8 +1291,11 @@ end
 @inline _symmetry_qlabels(qlabels::NTuple{NF, QT}, ::Val{n}) where {NF, QT, n} =
     ntuple(k -> qlabels[k][n], Val(NF))
 
-@inline _symmetry_contracted_qlabel(qlabels::NTuple{CN, QT}, ::Val{n}, ::Val{CN}) where {CN, QT, n} =
-    ntuple(k -> qlabels[k][n], Val(CN))
+@inline _symmetry_qlabels(qlabels::NTuple{NF, Tuple{QT, Int}}, ::Val{n}) where {NF, QT, n} =
+    ntuple(k -> qlabels[k][1][n], Val(NF))
+
+@inline _symmetry_contracted_qlabel(qlabels::NTuple{CN, Tuple{QT, Int}}, ::Val{n}, ::Val{CN}) where {CN, QT, n} =
+    ntuple(k -> qlabels[k][1][n], Val(CN))
 
 _xsym_cache_key_type(::Type{QT}, ::Val{n}, ::Val{NF1}, ::Val{NF2}, ::Val{CN}) where {QT, n, NF1, NF2, CN} =
     Tuple{NTuple{CN, fieldtype(QT, n)},
@@ -1288,6 +1356,12 @@ end
     (_symmetry_qlabels(free_qlabels1, Val(n)),
      _symmetry_qlabels(free_qlabels2, Val(n)))
 
+@inline _impossible_key(free_qlabels1::NTuple{NF1, Tuple{QT, Int}},
+                        free_qlabels2::NTuple{NF2, Tuple{QT, Int}},
+                        ::Val{n}) where {NF1, NF2, QT, n} =
+    (_symmetry_qlabels(free_qlabels1, Val(n)),
+     _symmetry_qlabels(free_qlabels2, Val(n)))
+
 @generated function _new_impossible_sets(::Type{PS}, ::Type{QT},
                                          ::Val{NF1}, ::Val{NF2}) where {PS<:ProductSymm, QT, NF1, NF2}
     syms = product_symms(PS)
@@ -1305,7 +1379,7 @@ end
 
 @generated function _out_key_is_impossible(::Type{ProductSymm{Syms}},
                                            impossible_sets,
-                                           out_key::Tuple{NTuple{NF1, QT}, NTuple{NF2, QT}}) where {Syms, NF1, NF2, QT}
+                                           out_key::Tuple{NTuple{NF1, Tuple{QT, Int}}, NTuple{NF2, Tuple{QT, Int}}}) where {Syms, NF1, NF2, QT}
     stmts = Expr[]
     for n in 1:length(Syms.parameters)
         S = Syms.parameters[n]
@@ -1321,16 +1395,16 @@ end
 end
 
 @inline function _xsym_cache_key(::Type{QT},
-                                 contracted_qlabels::NTuple{CN, QT},
-                                 free_qlabels1::NTuple{NF1, QT},
-                                 free_qlabels2::NTuple{NF2, QT},
+                                 contracted_qlabels::NTuple{CN, Tuple{QT, Int}},
+                                 free_qlabels1::NTuple{NF1, Tuple{QT, Int}},
+                                 free_qlabels2::NTuple{NF2, Tuple{QT, Int}},
                                  ::Val{n}) where {QT, NF1, NF2, n, CN}
     return (_symmetry_contracted_qlabel(contracted_qlabels, Val(n), Val(CN)),
             _symmetry_qlabels(free_qlabels1, Val(n)),
             _symmetry_qlabels(free_qlabels2, Val(n)))
 end
 
-@inline _symmetry_sector_qlabels(q::TLArray{T, QD, N}, sector::Int, ::Val{n}) where {T, QD, N, n} =
+@inline _symmetry_sector_qlabels(q::AbstractTLArray{T, QD, N}, sector::Int, ::Val{n}) where {T, QD, N, n} =
     ntuple(l -> sector_qlabel(q, sector, l)[n], Val(QD))
 
 function _stored_symmetry_leg_order(qlabels::NTuple{QD, NTuple{NZ, Int}},
@@ -1355,12 +1429,12 @@ end
 @inline _stored_contract_legs(phys_to_stored::NTuple{QD, Int}, legs::NTuple{CN, Int}) where {QD, CN} =
     ntuple(k -> phys_to_stored[legs[k]], Val(CN))
 
-function _xsymbol_sector_args(q::TLArray{T, QD, N},
+function _xsymbol_sector_args(q::AbstractTLArray{T, QD, N},
                               sector::Int,
                               legs::NTuple{CN, Int},
                               ::Val{n}) where {T, QD, N, CN, n}
     qlabels_by_phys = _symmetry_sector_qlabels(q, sector, Val(n))
-    stored_to_phys, n_in = _stored_symmetry_leg_order(qlabels_by_phys, q.inds)
+    stored_to_phys, n_in = _stored_symmetry_leg_order(qlabels_by_phys, inds(q))
     qlabels = ntuple(i -> qlabels_by_phys[stored_to_phys[i]], Val(QD))
     phys_to_stored = _phys_to_stored_order(stored_to_phys)
     upsp = Tuple(qlabels[i] for i in 1:n_in)
@@ -1370,9 +1444,9 @@ function _xsymbol_sector_args(q::TLArray{T, QD, N},
 end
 
 function _load_nonabelian_xarr(::Type{S},
-                               q1::TLArray,
+                               q1::AbstractTLArray,
                                i1::Int,
-                               q2::TLArray,
+                               q2::AbstractTLArray,
                                i2::Int,
                                legs1::NTuple{CN, Int},
                                legs2::NTuple{CN, Int},
@@ -1385,13 +1459,13 @@ function _load_nonabelian_xarr(::Type{S},
 end
 
 @inline function _xarr_for_symmetry(::Type{S},
-                                    q1::TLArray,
+                                    q1::AbstractTLArray,
                                     i1::Int,
-                                    q2::TLArray,
+                                    q2::AbstractTLArray,
                                     i2::Int,
-                                    contracted_qlabels::NTuple{CN, QT},
-                                    free_qlabels1::NTuple{NF1, QT},
-                                    free_qlabels2::NTuple{NF2, QT},
+                                    contracted_qlabels::NTuple{CN, Tuple{QT, Int}},
+                                    free_qlabels1::NTuple{NF1, Tuple{QT, Int}},
+                                    free_qlabels2::NTuple{NF2, Tuple{QT, Int}},
                                     xsym_cache::Dict{K, Array{Float64, 3}},
                                     impossible_sets::Tuple,
                                     legs1::NTuple{CN, Int},
@@ -1457,8 +1531,8 @@ function _qr_contract_concat(concat::Matrix{Float64},
 end
 
 function _prepare_contract_interval_for_symmetry(::Type{S},
-                                                 q1::TLArray,
-                                                 q2::TLArray,
+                                                 q1::AbstractTLArray,
+                                                 q2::AbstractTLArray,
                                                  possible_pairs::AbstractVector,
                                                  interval::UnitRange{Int},
                                                  xsym_caches::Tuple,
@@ -1476,8 +1550,8 @@ function _prepare_contract_interval_for_symmetry(::Type{S},
 end
 
 function _prepare_contract_interval_for_symmetry(::Type{S},
-                                                 q1::TLArray,
-                                                 q2::TLArray,
+                                                 q1::AbstractTLArray,
+                                                 q2::AbstractTLArray,
                                                  possible_pairs::AbstractVector,
                                                  interval::UnitRange{Int},
                                                  xsym_caches::Tuple,
@@ -1535,8 +1609,8 @@ function _prepare_contract_interval_for_symmetry(::Type{S},
 end
 
 @generated function _prepare_contract_interval(::Type{ProductSymm{Syms}},
-                                               q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
-                                               q2::TLArray{T2, QD2, N, RD2, QT, PS, M, RMT2},
+                                               q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
+                                               q2::AbstractTLArray{T2, QD2, N, RD2, QT, PS, M, RMT2},
                                                possible_pairs::AbstractVector,
                                                interval::UnitRange{Int},
                                                xsym_caches::CT,
@@ -1586,32 +1660,36 @@ end
 # ── Convenience overloads ─────────────────────────────────────────────────────
 contract(q1, l1::Int, q2, l2::Int) = contract(q1, (l1,), q2, (l2,))
 
-function contract(q1::TLArray, legs1::AbstractVector{<:Integer},
-                  q2::TLArray, legs2::AbstractVector{<:Integer}; kwargs...)
+function contract(q1::AbstractTLArray, legs1::AbstractVector{<:Integer},
+                  q2::AbstractTLArray, legs2::AbstractVector{<:Integer}; kwargs...)
     return contract(q1, Tuple(legs1), q2, Tuple(legs2); kwargs...)
 end
 
 # ── Main entry point ──────────────────────────────────────────────────────────
-function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
+function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
                   legs1::NTuple{CN, Int},
-                  q2::TLArray{T2, QD2, N, RD2, QT, PS, M, RMT2},
+                  q2::AbstractTLArray{T2, QD2, N, RD2, QT, PS, M, RMT2},
                   legs2::NTuple{CN, Int};
                   reduce_lock::Bool=true,
                   verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, M, RMT1, RMT2, CN}
 
     symmetries = product_symms(PS)
+    inds1 = inds(q1)
+    inds2 = inds(q2)
+    spaces1 = spaces(q1)
+    spaces2 = spaces(q2)
 
     if verify_legs
         for i in 1:CN
-            idx1::TLIndex = q1.inds[legs1[i]::Int]
-            idx2::TLIndex = q2.inds[legs2[i]::Int]
+            idx1::TLIndex = inds1[legs1[i]::Int]
+            idx2::TLIndex = inds2[legs2[i]::Int]
             @assert idx1.dir != idx2.dir "Contracted legs must have opposite arrow directions: " *
                 "q1 leg $(legs1[i]) has dir='$(idx1.dir)', q2 leg $(legs2[i]) has dir='$(idx2.dir)'"
             @assert idx1.itags == idx2.itags "Contracted legs must have matching itags: " *
                 "q1 leg $(legs1[i]) has itag='$(idx1.itags)', q2 leg $(legs2[i]) has itag='$(idx2.itags)'"
             @assert idx1.dual == idx2.dual "Contracted legs must have matching dual flags: " *
                 "q1 leg $(legs1[i]) has dual=$(idx1.dual), q2 leg $(legs2[i]) has dual=$(idx2.dual)"
-            @assert q1.spaces[legs1[i]] == q2.spaces[legs2[i]] "Contracted legs must have matching space info: " *
+            @assert spaces1[legs1[i]] == spaces2[legs2[i]] "Contracted legs must have matching space info: " *
                 "q1 leg $(legs1[i]) spaces != q2 leg $(legs2[i]) spaces"
         end
     end
@@ -1625,25 +1703,27 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
     QD_out = QD1 + QD2 - 2CN
     RD_out = QD_out + N
 
-    inds_out = (ntuple(i -> q1.inds[free1[i]], Val(QD1 - CN))...,
-                ntuple(i -> q2.inds[free2[i]], Val(QD2 - CN))...)
+    inds_out = (ntuple(i -> inds1[free1[i]], Val(QD1 - CN))...,
+                ntuple(i -> inds2[free2[i]], Val(QD2 - CN))...)
 
     # Fixed permutations: (free..., contracted..., om...).
     perm1 = (free1..., legs1..., ntuple(n -> QD1 + n, Val(N))...)
     perm2 = (free2..., legs2..., ntuple(n -> QD2 + n, Val(N))...)
+    #println(perm1)
+    #println(perm2)
 
     PermutedRMT1 = _permuted_rmt_type(RMT1)
     PermutedRMT2 = _permuted_rmt_type(RMT2)
-    permuted_rmts1 = Vector{PermutedRMT1}(undef, sector_count(q1))
-    permuted_rmts2 = Vector{PermutedRMT2}(undef, sector_count(q2))
+    permuted_rmts1 = Vector{Tuple{PermutedRMT1, T1}}(undef, sector_count(q1))
+    permuted_rmts2 = Vector{Tuple{PermutedRMT2, T2}}(undef, sector_count(q2))
 
     # ── 1. Build sorted sector-info vectors keyed by contracted qlabels ─────────
     sector_infos1 = _contract_sector_infos(QT, q1, free1, legs1)
     sector_infos2 = _contract_sector_infos(QT, q2, free2, legs2)
 
     # ── 2. Output-sector accumulator ────────────────────────────────────────
-    FreeKey1  = NTuple{nf1, QT}
-    FreeKey2  = NTuple{nf2, QT}
+    FreeKey1  = NTuple{nf1, Tuple{QT, Int}}
+    FreeKey2  = NTuple{nf2, Tuple{QT, Int}}
     OutKey    = Tuple{FreeKey1, FreeKey2}
 
     SectorPairVec = Vector{Tuple{Int, Int}}
@@ -1685,9 +1765,11 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
         for i in eachindex(sector_pairs)
             idx1, idx2 = sector_pairs[i]
             fdim, cdim1, o1dim =
-                _rmt_contract_dims(sector_rmt(q1, idx1), perm1, Val(nf1), Val(CN), Val(N))
+                size(_cached_prepared_sector_rmt!(permuted_rmts1, q1, idx1,
+                                                  perm1, Val(nf1), Val(CN), Val(N))[1])
             gdim, cdim2, o2dim =
-                _rmt_contract_dims(sector_rmt(q2, idx2), perm2, Val(nf2), Val(CN), Val(N))
+                size(_cached_prepared_sector_rmt!(permuted_rmts2, q2, idx2,
+                                                  perm2, Val(nf2), Val(CN), Val(N))[1])
             @assert cdim1 == cdim2
             max_temp_len = max(max_temp_len,
                                _rmt_contract_temp_len(PermutedRMT1, PermutedRMT2,
@@ -1725,18 +1807,13 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
 
         prepared = prepared_sectors[out_pos]
         sector_pairs = prepared_sector_pairs[out_pos]
-        r1_idx, r2_idx = first(sector_pairs)
-
-        sz1::NTuple{RD1, Int}, sz2::NTuple{RD2, Int} =
-        size(sector_rmt(q1, r1_idx)), size(sector_rmt(q2, r2_idx))
-
-        kept_sizes1 = ntuple(i -> sz1[perm1[i]], Val(nf1))
-        kept_sizes2 = ntuple(i -> sz2[perm2[i]], Val(nf2))
+        kept_sizes1 = ntuple(i -> out_keys[out_pos][1][i][2], Val(nf1))
+        kept_sizes2 = ntuple(i -> out_keys[out_pos][2][i][2], Val(nf2))
         for (idx1, idx2) in sector_pairs
-            _cached_permuted_rmt_data!(permuted_rmts1, q1, idx1,
-                                       perm1, Val(nf1), Val(CN), Val(N))
-            _cached_permuted_rmt_data!(permuted_rmts2, q2, idx2,
-                                       perm2, Val(nf2), Val(CN), Val(N))
+            _cached_prepared_sector_rmt!(permuted_rmts1, q1, idx1,
+                                         perm1, Val(nf1), Val(CN), Val(N))
+            _cached_prepared_sector_rmt!(permuted_rmts2, q2, idx2,
+                                         perm2, Val(nf2), Val(CN), Val(N))
         end
 
         U_mats, result_RMT = _contract_prepared_compress_sector(
@@ -1766,8 +1843,8 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
     #end
 
     # ── 6. Lock reduction ────────────────────────────────────────────────────
-    changed_inds2 = Set(change_dir(q2.inds[l]) for l in 1:QD2)
-    changed_inds1 = Set(change_dir(q1.inds[l]) for l in 1:QD1)
+    changed_inds2 = Set(change_dir(inds2[l]) for l in 1:QD2)
+    changed_inds1 = Set(change_dir(inds1[l]) for l in 1:QD1)
     final_inds = if reduce_lock
         ntuple(Val(QD_out)) do l
             idx = inds_out[l]
@@ -1779,8 +1856,8 @@ function contract(q1::TLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
         inds_out
     end
 
-    spaces_out = (ntuple(i -> q1.spaces[free1[i]], Val(QD1 - CN))...,
-                  ntuple(i -> q2.spaces[free2[i]], Val(QD2 - CN))...)
+    spaces_out = (ntuple(i -> spaces1[free1[i]], Val(QD1 - CN))...,
+                  ntuple(i -> spaces2[free2[i]], Val(QD2 - CN))...)
 
     return TLArray(symmetries, result_qlabels, result_wmats, result_RMTs,
                           final_inds, spaces_out)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS, M, Array{promote_type(T1, T2, Float64), RD_out}}

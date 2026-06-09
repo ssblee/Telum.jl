@@ -2026,6 +2026,9 @@ function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
     return svd(q, left_legs, left_tag, right_tag; cutoff=cutoff, Nkeep=Nkeep, get_lists=get_lists)
 end
 
+LinearAlgebra.svd(q::TLArrayView, args...; kwargs...) =
+    svd(materialize(q), args...; kwargs...)
+
 function _normalize_svd_left_legs(left_legs, rank::Int)
     legs = collect(Int, left_legs)
     isempty(legs) && throw(ArgumentError("svd requires at least one left leg"))

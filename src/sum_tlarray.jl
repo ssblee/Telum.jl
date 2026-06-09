@@ -45,33 +45,33 @@ function _find_leg_permutation(inds1::NTuple{QD, TLIndex}, spaces1,
     return results[1]
 end
 
-function _align_sum_input(ref::TLArray{T, QD, N, RD, QT, PS, M, RMT1},
-                          q::TLArray{TQ, QD, N, RD, QT, PS, M, RMT2}) where {T, TQ, QD, N, RD, QT, PS, M, RMT1, RMT2}
-    if ref.inds == q.inds && ref.spaces == q.spaces
+function _align_sum_input(ref::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT1},
+                          q::AbstractTLArray{TQ, QD, N, RD, QT, PS, M, RMT2}) where {T, TQ, QD, N, RD, QT, PS, M, RMT1, RMT2}
+    if inds(ref) == inds(q) && spaces(ref) == spaces(q)
         return q
     end
-    perm = _find_leg_permutation(ref.inds, ref.spaces, q.inds, q.spaces)
+    perm = _find_leg_permutation(inds(ref), spaces(ref), inds(q), spaces(q))
     return permutedims(q, perm)
 end
 
-function _needs_sum_alignment(ref::TLArray, q::TLArray)
-    return ref.inds != q.inds || ref.spaces != q.spaces
+function _needs_sum_alignment(ref::AbstractTLArray, q::AbstractTLArray)
+    return inds(ref) != inds(q) || spaces(ref) != spaces(q)
 end
 
-function _align_sum_inputs(qs::Tuple{Vararg{<:TLArray}})
+function _align_sum_inputs(qs::Tuple{Vararg{<:AbstractTLArray}})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
     ref = qs[1]
     any(q -> _needs_sum_alignment(ref, q), qs) || return qs
     return ntuple(i -> _align_sum_input(ref, qs[i]), Val(length(qs)))
 end
 
-function _align_sum_inputs(qs::AbstractVector{<:TLArray})
+function _align_sum_inputs(qs::AbstractVector{<:AbstractTLArray})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
     ref = qs[1]
     if !any(q -> _needs_sum_alignment(ref, q), qs)
         return qs
     end
-    aligned = Vector{TLArray}(undef, length(qs))
+    aligned = Vector{AbstractTLArray}(undef, length(qs))
     aligned[1] = ref
     for i in 2:length(qs)
         aligned[i] = _align_sum_input(ref, qs[i])
@@ -79,7 +79,7 @@ function _align_sum_inputs(qs::AbstractVector{<:TLArray})
     return aligned
 end
 
-@inline _sum_sector_key(q::TLArray{T, QD}, sector_index::Int) where {T, QD} =
+@inline _sum_sector_key(q::AbstractTLArray{T, QD}, sector_index::Int) where {T, QD} =
     ntuple(l -> sector_qlabel(q, sector_index, l), Val(QD))
 
 function _sum_sector_table(qs, ::Type{QT}, ::Val{QD}) where {QT, QD}
@@ -93,7 +93,7 @@ function _sum_sector_table(qs, ::Type{QT}, ::Val{QD}) where {QT, QD}
     for input_index in eachindex(qs)
         q = qs[input_index]
         for sector_index in sector_slots(q)
-            q.iszero[sector_index] && continue
+            is_sector_zero(q, sector_index) && continue
             table[pos] = (_sum_sector_key(q, sector_index), input_index, sector_index)
             pos += 1
         end
@@ -121,6 +121,12 @@ function _sum_rmt_cpu(::Type{T}, rmt::AbstractArray{S, RD}) where {T, S, RD}
     return Array{T, RD}(rmt)
 end
 
+function _sum_scaled_rmt_cpu(::Type{T}, rmt::AbstractArray{S, RD}, alpha) where {T, S, RD}
+    out = _sum_rmt_cpu(T, rmt)
+    alpha == one(typeof(alpha)) && return out
+    return out * alpha
+end
+
 @inline _sum_rmt_iszero(rmt::AbstractArray) = iszero(sum(abs2, rmt))
 @inline _sum_rmt_iszero(rmt::DiagRMT) = iszero(sum(abs2, rmt.diag))
 
@@ -132,13 +138,12 @@ function _sum_single_contribution!(result_keys::Vector{NTuple{QD, QT}},
                                    ::Val{QD}) where {T, QD, QT, M, RD}
     key, input_index, sector_index = entry
     q = qs[input_index]
-    source_rmt = sector_rmt(q, sector_index)
+    source_rmt, alpha = sector_rmt_with_scale(q, sector_index)
     rmt = QD == 0 ? Array{T, RD}(source_rmt) :
-          _sum_rmt_cpu(T, source_rmt)
+          _sum_scaled_rmt_cpu(T, source_rmt, alpha)
     _sum_rmt_iszero(rmt) && return result_keys
     push!(result_keys, key)
-    push!(result_wmats, QD == 0 ? deepcopy(q.wmats[sector_index]) :
-                                   q.wmats[sector_index])
+    push!(result_wmats, ntuple(m -> sector_wmat_slot(q, sector_index, m), Val(M)))
     push!(result_RMTs, rmt)
     return result_keys
 end
@@ -159,7 +164,8 @@ function _sum_multi_contribution!(result_keys::Vector{NTuple{QD, QT}},
     out_pos = 1
     for pos in interval
         _, input_index, sector_index = table[pos]
-        new_RMTs[out_pos] = _sum_rmt_cpu(T, sector_rmt(qs[input_index], sector_index))
+        rmt, alpha = sector_rmt_with_scale(qs[input_index], sector_index)
+        new_RMTs[out_pos] = _sum_scaled_rmt_cpu(T, rmt, alpha)
         out_pos += 1
     end
 
@@ -178,7 +184,7 @@ end
 function _sum_prepare_wmat_slot(qs, table, interval::UnitRange{Int}, m::Int,
                                 tol::Float64)
     _, first_input, first_sector = table[first(interval)]
-    first_wmat = qs[first_input].wmats[first_sector][m]
+    first_wmat = sector_wmat_slot(qs[first_input], first_sector, m)
     nrows = size(first_wmat, 1)
 
     if nrows == 1
@@ -186,7 +192,7 @@ function _sum_prepare_wmat_slot(qs, table, interval::UnitRange{Int}, m::Int,
         out_pos = 1
         for pos in interval
             _, input_index, sector_index = table[pos]
-            factors[out_pos] = qs[input_index].wmats[sector_index][m]
+            factors[out_pos] = sector_wmat_slot(qs[input_index], sector_index, m)
             out_pos += 1
         end
         return [1.0;;], factors
@@ -195,7 +201,7 @@ function _sum_prepare_wmat_slot(qs, table, interval::UnitRange{Int}, m::Int,
     ncols = 0
     for pos in interval
         _, input_index, sector_index = table[pos]
-        wmat = qs[input_index].wmats[sector_index][m]
+        wmat = sector_wmat_slot(qs[input_index], sector_index, m)
         @assert size(wmat, 1) == nrows "_sum_prepare_wmat_slot requires a common sector dimension"
         ncols += size(wmat, 2)
     end
@@ -204,7 +210,7 @@ function _sum_prepare_wmat_slot(qs, table, interval::UnitRange{Int}, m::Int,
     col = 1
     @views for pos in interval
         _, input_index, sector_index = table[pos]
-        wmat = qs[input_index].wmats[sector_index][m]
+        wmat = sector_wmat_slot(qs[input_index], sector_index, m)
         width = size(wmat, 2)
         copyto!(view(concat, :, col:(col + width - 1)), wmat)
         col += width
@@ -242,7 +248,7 @@ function _sum_prepare_wmat_slot(qs, table, interval::UnitRange{Int}, m::Int,
     out_pos = 1
     for pos in interval
         _, input_index, sector_index = table[pos]
-        width = size(qs[input_index].wmats[sector_index][m], 2)
+        width = size(sector_wmat_slot(qs[input_index], sector_index, m), 2)
         factors[out_pos] = R[:, (col + 1):(col + width)]
         col += width
         out_pos += 1
@@ -401,17 +407,17 @@ function _sum_tlarrays_aligned(qs, ::Type{T}, ::Val{QD}, ::Val{N}, ::Type{QT}, :
 
     ref = qs[begin]
     return TLArray(symm(ref), qlabels, result_wmats, result_RMTs,
-                   ref.inds, ref.spaces)
+                   inds(ref), spaces(ref))
 end
 
 function _sum_tlarrays(qs::Tuple{})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
 end
 
-function _sum_tlarrays_from_ref(ref::TLArray{TR, QD, N, RD, QT, PS, M, RMTR}, qs) where {TR, QD, N, RD, QT, PS, M, RMTR}
+function _sum_tlarrays_from_ref(ref::AbstractTLArray{TR, QD, N, RD, QT, PS, M, RMTR}, qs) where {TR, QD, N, RD, QT, PS, M, RMTR}
     for q in qs
-        q isa TLArray || throw(ArgumentError("TLArray sum entries must all be TLArray objects"))
-        q isa TLArray{<:Number} || throw(ArgumentError("TLArray sum entries must have numeric RMT element types"))
+        q isa AbstractTLArray || throw(ArgumentError("TLArray sum entries must all be AbstractTLArray objects"))
+        q isa AbstractTLArray{<:Number} || throw(ArgumentError("TLArray sum entries must have numeric RMT element types"))
         ndims(q) == QD && nsymms(q) == N && typeof(q).parameters[4] == RD &&
             qlabeltype(q) == QT && productsymm(q) === PS &&
             typeof(q).parameters[7] == M || throw(ArgumentError(
@@ -423,13 +429,15 @@ function _sum_tlarrays_from_ref(ref::TLArray{TR, QD, N, RD, QT, PS, M, RMTR}, qs
     return _sum_tlarrays_aligned(aligned, T, Val(QD), Val(N), QT, PS, Val(M), Val(RD))
 end
 
-function _sum_tlarrays(qs::Union{Tuple{Vararg{<:TLArray}}, AbstractVector{<:TLArray}})
+function _sum_tlarrays(qs::Union{Tuple{Vararg{<:AbstractTLArray}}, AbstractVector{<:AbstractTLArray}})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
     return _sum_tlarrays_from_ref(qs[begin], qs)
 end
 
-Base.sum(qs::Tuple{Vararg{<:TLArray}}) = _sum_tlarrays(qs)
-Base.sum(qs::AbstractVector{<:TLArray}) = _sum_tlarrays(qs)
+Base.sum(qs::Tuple{<:AbstractTLArray, Vararg{<:AbstractTLArray}}) =
+    _sum_tlarrays(qs)
+Base.sum(qs::AbstractVector{<:AbstractTLArray}) =
+    _sum_tlarrays(qs)
 
 function Base.:+(qs1::TLArray{T1, QD, N, RD, QT, PS}, 
     qs2::TLArray{T2, QD, N, RD, QT, PS}) where {T1, T2, QD, N, RD, QT, PS}
@@ -441,3 +449,9 @@ Base.:+(q::TLArray, x::Number) = q + x * _identity_on_qspace(q)
 Base.:+(x::Number, q::TLArray) = q + x
 Base.:-(q::TLArray, x::Number) = q + (-x) * _identity_on_qspace(q)
 Base.:-(x::Number, q::TLArray) = x * _identity_on_qspace(q) + (-q)
+Base.:+(qs1::AbstractTLArray, qs2::AbstractTLArray) = _sum_tlarrays((qs1, qs2))
+Base.:-(qs1::AbstractTLArray, qs2::AbstractTLArray) = qs1 + (-1 * qs2)
+Base.:+(q::AbstractTLArray, x::Number) = q + x * _identity_on_qspace(q)
+Base.:+(x::Number, q::AbstractTLArray) = q + x
+Base.:-(q::AbstractTLArray, x::Number) = q + (-x) * _identity_on_qspace(q)
+Base.:-(x::Number, q::AbstractTLArray) = x * _identity_on_qspace(q) + (-q)

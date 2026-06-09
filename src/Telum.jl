@@ -23,7 +23,7 @@ comm(A, B) = A * B - B * A
 include("DiagRMT.jl")
 include("TLArray.jl")
 
-export TLArray, TLIndex, Itag, DiagRMT
+export AbstractTLArray, TLArray, TLArrayView, TLIndex, Itag, DiagRMT
 export ProductSymm, productsymm, product_symms, symm, nsymms
 export LocalSpaceOptions, SpinOptions, FermionOptions, FermionSOptions
 export Z, U1, SU, SO, Sp

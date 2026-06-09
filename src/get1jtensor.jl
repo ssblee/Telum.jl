@@ -95,3 +95,22 @@ function legflip(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
                                   rev=rev, opname="legflip")
     return legflip(q, legs)
 end
+
+function legflip(q::TLArrayView, leg::Int)
+    return _view_rewrap(q, legflip(q.arr, _view_arr_leg(q, leg)))
+end
+
+function legflip(q::TLArrayView, legs::LegList)
+    q_flip = q
+    for leg in _normalize_legflip_legs(q, legs)
+        q_flip = legflip(q_flip, leg)
+    end
+    return q_flip
+end
+
+function legflip(q::TLArrayView; dir=nothing, itag=nothing, plev=nothing,
+                 lock=nothing, rev::Bool=false)
+    legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
+                                  rev=rev, opname="legflip")
+    return legflip(q, legs)
+end

@@ -10,21 +10,24 @@ macro time_block(enabled, msg, ex)
 end
 
 function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov, time_blocks=true)
+    #println("================================================")
     # solve the effective Hamiltonian eigenvalue problem by Lanczos method
     # return the ground state and energy
-    As = Vector{TLArray}(undef, nKrylov)
+    As = Vector{AbstractTLArray}(undef, nKrylov)
     As[1] = M / norm(M)
     αs = zeros(nKrylov); βs = zeros(nKrylov-1)
     cnt = 0
 
     @time_block time_blocks "Lanczos iteration:" begin
         for i in 1:nKrylov
+            #println("Lanczos iteration $i")
             Amul = Hl * As[i]
             for H in Hs Amul = Amul * H end
             Amul = Amul * Hr
             αs[i] = (As[i]' * Amul)[]
             cnt += 1
 
+            #println("Orthogonalizing the Lanczos vector...")
             if i < nKrylov
                 for _=1:2 
                     coeffs = [(As[j]' * Amul)[] for j in 1:i]
@@ -42,6 +45,7 @@ function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov, time_blocks=true)
         Hkrylov = SymTridiagonal(αs[1:cnt], βs[1:cnt-1])
         _, V = eigen(Hkrylov); vec = V[:, 1]
         Anew = sum((vec[i] * As[i] for i in 1:cnt))
+        #println("Getting final state tensor")
         Enew = Hl * Anew
         for H in Hs Enew = Enew * H end
         Enew = ((Enew * Hr) * Anew')[]
@@ -52,7 +56,7 @@ end
 
 function getHrl(MPO, MPS)
     N = length(MPS)
-    Hrl = Vector{TLArray}(undef, N + 2)
+    Hrl = Vector{AbstractTLArray}(undef, N + 2)
 
     li = findleg(MPS[1]; itag="SLeft")
     left_id = getIdentity((MPS[1]', li); itag="SLeft")

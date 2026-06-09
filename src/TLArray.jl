@@ -375,7 +375,10 @@ end
 # QD: The rank of tensor (# of legs), N: The number of symmetries
 # RD: The rank of RMT array, which is equal to QD + N
 # QT: The qlabel type for one leg sector, inferred from the symmetries
-struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}}
+abstract type AbstractTLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} <: AbstractArray{T, QD} end
+
+struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} <:
+       AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
     qlabels::Vector{NTuple{QD, QT}}
     wmats::Vector{NTuple{M, Matrix{Float64}}}
     RMTs::Vector{RMT}
@@ -438,6 +441,29 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}}
     end
 end
 
+"""
+    TLArrayView(arr, conj, scale, perm)
+
+Lazy view of `arr` with exactly one materialization rule:
+
+    materialize(view) == maybe_conj(scalar_prod(permute(arr, perm), scale), conj)
+
+`perm[new_leg] = old_leg` is applied first to TLArray physical legs and sector
+RMT physical axes. `scale::T` is applied next to each nonzero RMT. `conj`
+is applied last: it conjugates RMT values, flips TLIndex directions, and applies
+the same lazy w-matrix conjugation transform as eager `conj`.
+
+All composed operations must update `(arr, perm, scale, conj)` to preserve this
+single rule.
+"""
+struct TLArrayView{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} <:
+       AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
+    arr::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
+    conj::Bool
+    scale::T
+    perm::NTuple{QD, Int}
+end
+
 function _qlabel_vector(qlabels::AbstractMatrix{QT}, ::Val{QD}) where {QT, QD}
     size(qlabels, 1) == QD ||
         throw(ArgumentError("qlabels row count must equal number of TLArray legs"))
@@ -475,15 +501,24 @@ function _normalize_wmats!(q::TLArray{T, QD, N}) where {T, QD, N}
     return q
 end
 
-productsymm(::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, N, RD, QT, PS, M, RMT} = PS
-product_symms(q::TLArray) = product_symms(productsymm(q))
-@inline symm(::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, N, RD, QT, PS, M, RMT} =
+productsymm(::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, N, RD, QT, PS, M, RMT} = PS
+product_symms(q::AbstractTLArray) = product_symms(productsymm(q))
+@inline symm(::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, N, RD, QT, PS, M, RMT} =
     product_symms(PS)
-nsymms(q::TLArray) = nsymms(productsymm(q))
+nsymms(q::AbstractTLArray) = nsymms(productsymm(q))
 
 Base.propertynames(q::TLArray, private::Bool=false) =
     (:qlabels, :wmats, :RMTs, :isdefined, :iszero, :inds, :spaces)
 
+@inline Base.eltype(::Type{<:AbstractTLArray{T}}) where {T} = T
+@inline Base.ndims(::Type{<:AbstractTLArray{T, QD}}) where {T, QD} = QD
+@inline Base.ndims(q::AbstractTLArray{T, QD}) where {T, QD} = QD
+@inline Base.size(q::AbstractTLArray{T, QD}) where {T, QD} =
+    ntuple(l -> sum(last, spaces(q)[l]; init=0), Val(QD))
+@inline Base.size(q::AbstractTLArray, d::Integer) = d <= ndims(q) ? size(q)[d] : 1
+@inline Base.length(q::AbstractTLArray) = sector_count(q)
+@inline inds(q::TLArray) = q.inds
+@inline spaces(q::TLArray) = q.spaces
 @inline sector_count(q::TLArray) = length(q.qlabels)
 @inline sector_slots(q::TLArray) = eachindex(q.qlabels)
 @inline nsectors(q::TLArray) = count(!, q.iszero)
@@ -503,9 +538,186 @@ end
     q.isdefined[sector] || throw(ArgumentError("sector $sector is not evaluated"))
     return q.wmats[sector][nonabelian_wmat_slot(PS, Val(n))]
 end
-@inline function sector_rmt(q::TLArray, sector::Int)
+@inline function sector_wmat_slot(q::TLArray, sector::Int, slot::Int)
+    q.isdefined[sector] || throw(ArgumentError("sector $sector is not evaluated"))
+    return q.wmats[sector][slot]
+end
+@inline function sector_wmat_slot(q::AbstractTLArray, sector::Int, slot::Int)
+    n = nonabelian_symmetry_indices(productsymm(q))[slot]
+    return sector_wmat(q, sector, n)
+end
+@inline function sector_rmt_materialized(q::TLArray, sector::Int)
     q.isdefined[sector] || throw(ArgumentError("sector $sector is not evaluated"))
     return q.RMTs[sector]
+end
+@inline function sector_rmt_axis_dim(q::TLArray, sector::Int, leg::Int)
+    return size(sector_rmt_materialized(q, sector), leg)
+end
+@inline sector_rmt_with_scale(q::TLArray{T}, sector::Int) where {T} =
+    (sector_rmt_materialized(q, sector), one(T))
+@inline sector_rmt(q::TLArray, sector::Int) = sector_rmt_materialized(q, sector)
+
+@inline _identity_phys_perm(::Val{QD}) where {QD} = ntuple(identity, Val(QD))
+
+function _normalize_phys_perm(perm, ::Val{QD}) where {QD}
+    p = Tuple(Int(i) for i in perm)
+    length(p) == QD || throw(ArgumentError("permutation length $(length(p)) != TLArray rank $QD"))
+    p = p::NTuple{QD, Int}
+    _is_valid_perm(p) || throw(ArgumentError("perm must be a valid permutation of 1:$QD"))
+    return p
+end
+
+@inline function _is_valid_perm(perm::NTuple{QD, Int}) where {QD}
+    seen = ntuple(_ -> false, Val(QD))
+    for p in perm
+        1 <= p <= QD || return false
+        seen = Base.setindex(seen, true, p)
+    end
+    return all(seen)
+end
+
+@inline inds(q::TLArrayView{T, QD}) where {T, QD} =
+    ntuple(l -> q.conj ? change_dir(inds(q.arr)[q.perm[l]]) : inds(q.arr)[q.perm[l]], Val(QD))
+@inline spaces(q::TLArrayView{T, QD}) where {T, QD} =
+    ntuple(l -> spaces(q.arr)[q.perm[l]], Val(QD))
+@inline sector_count(q::TLArrayView) = sector_count(q.arr)
+@inline sector_slots(q::TLArrayView) = sector_slots(q.arr)
+@inline nsectors(q::TLArrayView) = nsectors(q.arr)
+@inline is_sector_defined(q::TLArrayView, sector::Int) = is_sector_defined(q.arr, sector)
+@inline is_sector_zero(q::TLArrayView, sector::Int) = is_sector_zero(q.arr, sector)
+@inline is_sector_active(q::TLArrayView, sector::Int) = is_sector_active(q.arr, sector)
+@inline sector_qlabel(q::TLArrayView, sector::Int, leg::Int) =
+    sector_qlabel(q.arr, sector, q.perm[leg])
+@inline sector_qlabel(::Type{QT}, q::TLArrayView, sector::Int, leg::Int) where {QT} =
+    sector_qlabel(QT, q.arr, sector, q.perm[leg])
+@inline sector_rmt_axis_dim(q::TLArrayView, sector::Int, leg::Int) =
+    sector_rmt_axis_dim(q.arr, sector, q.perm[leg])
+
+function _conj_sector_wmat(q::AbstractTLArray, sector::Int, n::Int, wmat)
+    S = symm(q)[n]
+    isabelian(S) && return wmat
+
+    ordered_qlabels, _, legdir = _sector_cgt_metadata(q, sector, n)
+    m, k = legdir
+    ins, outs = ordered_qlabels[1:m], ordered_qlabels[m+1:m+k]
+    ins_, _ = remove_zeros(S, ins)
+    outs_, _ = remove_zeros(S, outs)
+    if ins_ == outs_
+        is1j = detect_1j(S, ins_, outs_)
+        cgt_oms = get_CGTom(S, ins_, outs_, is1j)
+        perm_vec = get_conj_perm(cgt_oms)
+        return wmat[perm_vec, :]
+    end
+    return wmat
+end
+
+function _sector_wmat_after_perm(q::TLArrayView{T, QD}, sector::Int, n::Int) where {T, QD}
+    if q.perm == _identity_phys_perm(Val(QD))
+        return sector_wmat(q.arr, sector, n)
+    end
+    return _permute_sector_wmat(q.arr, sector, q.perm, n, symm(q))
+end
+
+function sector_wmat(q::TLArrayView, sector::Int, n::Int)
+    wmat = _sector_wmat_after_perm(q, sector, n)
+    q.conj || return wmat
+    pre_conj = _normalize_tlarray_view(q.arr, false, q.scale, q.perm)
+    return _conj_sector_wmat(pre_conj, sector, n, wmat)
+end
+function sector_wmat(q::TLArrayView, sector::Int, ::Val{n}) where {n}
+    return sector_wmat(q, sector, n)
+end
+
+@inline function sector_rmt_with_scale(q::TLArrayView{T}, sector::Int) where {T}
+    if q.perm == _identity_phys_perm(Val(ndims(q))) && (!q.conj || T <: Real)
+        rmt, alpha = sector_rmt_with_scale(q.arr, sector)
+        return rmt, alpha * q.scale
+    end
+    return sector_rmt_materialized(q, sector), one(T)
+end
+
+function sector_rmt_materialized(q::TLArrayView, sector::Int)
+    rmt, alpha = sector_rmt_with_scale(q.arr, sector)
+    if q.perm != _identity_phys_perm(Val(ndims(q)))
+        rmt_perm = (q.perm..., ntuple(n -> ndims(q) + n, Val(nsymms(q)))...)
+        rmt = permutedims(rmt, rmt_perm)
+    end
+    scale = alpha * q.scale
+    if scale != one(typeof(scale))
+        rmt = rmt * scale
+    end
+    q.conj && (rmt = conj(rmt))
+    return rmt
+end
+@inline sector_rmt(q::TLArrayView, sector::Int) = sector_rmt_materialized(q, sector)
+
+materialize(q::TLArray) = copy(q)
+
+function materialize(q::TLArrayView)
+    result = materialize(q.arr)
+    q.perm == _identity_phys_perm(Val(ndims(q))) || (result = _materialized_permutedims(result, q.perm))
+    q.scale == one(typeof(q.scale)) || (result = _materialized_scale(result, q.scale))
+    q.conj && (result = _materialized_conj(result))
+    return result
+end
+
+function _qlabels_from_accessors(q::AbstractTLArray{T, QD, N, RD, QT}) where {T, QD, N, RD, QT}
+    return [ntuple(leg -> sector_qlabel(q, sector, leg), Val(QD))::NTuple{QD, QT}
+            for sector in sector_slots(q)]
+end
+
+function _zero_metadata_tlarray(q::AbstractTLArray{T, QD, N, RD, QT}, ::Type{RT}) where {T, QD, N, RD, QT, RT}
+    qlabels = _qlabels_from_accessors(q)
+    M = n_nonabelian_symmetries(productsymm(q))
+    wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, sector_count(q))
+    RMTs = Vector{Array{RT, RD}}(undef, sector_count(q))
+    return TLArray(symm(q), qlabels, wmats, RMTs, inds(q), spaces(q))
+end
+
+@inline function _normalize_tlarray_view(arr::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                         conj_flag::Bool,
+                                         scale::T,
+                                         perm::NTuple{QD, Int}) where {T, QD, N, RD, QT, PS, M, RMT}
+    _is_valid_perm(perm) || throw(ArgumentError("perm must be a valid permutation of 1:$QD"))
+    if !conj_flag && scale == one(T) && perm == _identity_phys_perm(Val(QD))
+        return arr
+    end
+    return TLArrayView{T, QD, N, RD, QT, PS, M, RMT}(arr, conj_flag, scale, perm)
+end
+
+function _view_permutedims(q::AbstractTLArray{T, QD}, perm) where {T, QD}
+    p = _normalize_phys_perm(perm, Val(QD))
+    return _normalize_tlarray_view(q, false, one(T), p)
+end
+
+function _view_permutedims(q::TLArrayView{T, QD}, perm) where {T, QD}
+    p = _normalize_phys_perm(perm, Val(QD))
+    new_perm = ntuple(l -> q.perm[p[l]], Val(QD))
+    return _normalize_tlarray_view(q.arr, q.conj, q.scale, new_perm)
+end
+
+function _view_conj(q::AbstractTLArray{T, QD}) where {T, QD}
+    return _normalize_tlarray_view(q, true, one(T), _identity_phys_perm(Val(QD)))
+end
+
+function _view_conj(q::TLArrayView{T, QD}) where {T, QD}
+    return _normalize_tlarray_view(q.arr, !q.conj, q.scale, q.perm)
+end
+
+function _view_scale(q::AbstractTLArray{T}, fac::Number) where {T}
+    RT = promote_type(T, typeof(fac))
+    iszero(fac) && return _zero_metadata_tlarray(q, RT)
+    RT === T || return _materialized_scale(materialize(q), fac)
+    return _normalize_tlarray_view(q, false, convert(T, fac), _identity_phys_perm(Val(ndims(q))))
+end
+
+function _view_scale(q::TLArrayView{T}, fac::Number) where {T}
+    RT = promote_type(T, typeof(fac))
+    iszero(fac) && return _zero_metadata_tlarray(q, RT)
+    RT === T || return _materialized_scale(materialize(q), fac)
+    cfac = convert(T, fac)
+    new_scale = q.conj ? q.scale * conj(cfac) : q.scale * cfac
+    return _normalize_tlarray_view(q.arr, q.conj, new_scale, q.perm)
 end
 
 @inline function _stored_position(stored_to_phys::NTuple{QD, Int}, phys_leg::Int) where {QD}
@@ -518,9 +730,10 @@ end
 @inline _phys_to_stored_order(stored_to_phys::NTuple{QD, Int}) where {QD} =
     ntuple(phys_leg -> _stored_position(stored_to_phys, phys_leg), Val(QD))
 
-function _stored_leg_order(q::TLArray{T, QD, N}, sector::Int, n::Int) where {T, QD, N}
-    incoming = Int[l for l in 1:QD if q.inds[l].dir == '+']
-    outgoing = Int[l for l in 1:QD if q.inds[l].dir == '-']
+function _stored_leg_order(q::AbstractTLArray{T, QD, N}, sector::Int, n::Int) where {T, QD, N}
+    qinds = inds(q)
+    incoming = Int[l for l in 1:QD if qinds[l].dir == '+']
+    outgoing = Int[l for l in 1:QD if qinds[l].dir == '-']
 
     sort!(incoming; by = l -> sector_qlabel(q, sector, l)[n], alg = MergeSort)
     sort!(outgoing; by = l -> sector_qlabel(q, sector, l)[n], alg = MergeSort)
@@ -543,11 +756,12 @@ function _stored_leg_order(qlabels::AbstractVector{<:Tuple},
     return ntuple(i -> i <= n_in ? incoming[i] : outgoing[i - n_in], Val(QD))
 end
 
-function _sector_cgt_metadata(q::TLArray{T, QD, N}, sector::Int, n::Int) where {T, QD, N}
+function _sector_cgt_metadata(q::AbstractTLArray{T, QD, N}, sector::Int, n::Int) where {T, QD, N}
     stored_to_phys = _stored_leg_order(q, sector, n)
     qlabels = ntuple(i -> sector_qlabel(q, sector, stored_to_phys[i])[n], Val(QD))
 
-    n_in = count(l -> q.inds[l].dir == '+', 1:QD)
+    qinds = inds(q)
+    n_in = count(l -> qinds[l].dir == '+', 1:QD)
     return qlabels, _phys_to_stored_order(stored_to_phys), (n_in, QD - n_in)
 end
 
@@ -691,9 +905,8 @@ function TLArray(q::TLArray{T, QD, N, RD}, inds::NTuple{QD, TLIndex}) where {T, 
 end
 
 Base.getindex(q::TLArray, i::Int) = TLArray(q, i)
-Base.length(q::TLArray) = sector_count(q)
-Base.firstindex(q::TLArray) = 1
-Base.lastindex(q::TLArray) = sector_count(q)
+Base.firstindex(q::AbstractTLArray) = 1
+Base.lastindex(q::AbstractTLArray) = sector_count(q)
 
 function _normalize_qspace_sector_index(i::Int, nsectors::Int)
     i == 0 && throw(BoundsError(1:nsectors, i))
@@ -744,6 +957,7 @@ end
 Base.getindex(q::TLArray,
               selector::Union{Colon, AbstractRange{<:Integer},
                               AbstractVector{<:Integer}, AbstractVector{Bool}}) = TLArray(q, selector)
+Base.getindex(q::TLArrayView, args...) = getindex(materialize(q), args...)
 
 # For 0-dimensional TLArray (scalar), q[] returns the unique RMT element.
 function Base.getindex(q::TLArray{T, 0, N, N}) where {T, N}
@@ -769,7 +983,8 @@ findlegs(q, idx -> occursin("site", idx.itags))       # legs with "site" in tag
 findlegs(q, idx -> idx.dir == '-' && idx.plev == 0)   # outgoing, unprimed
 ```
 """
-findlegs(q::TLArray{T, QD}, pred::Function) where {T, QD} = [i for i in 1:QD if pred(q.inds[i])]
+findlegs(q::AbstractTLArray{T, QD}, pred::Function) where {T, QD} =
+    [i for i in 1:QD if pred(inds(q)[i])]
 
 """
     findleg(q::TLArray, pred::Function) -> Int
@@ -783,8 +998,9 @@ findleg(q, idx -> idx.itags == "bond")   # first leg with exact tag "bond"
 findleg(q, idx -> idx.dir == '+')        # first incoming leg
 ```
 """
-function findleg(q::TLArray{T, QD}, pred::Function) where {T, QD}
-    for i in 1:QD pred(q.inds[i]) && return i end
+function findleg(q::AbstractTLArray{T, QD}, pred::Function) where {T, QD}
+    qinds = inds(q)
+    for i in 1:QD pred(qinds[i]) && return i end
     return nothing
 end
 
@@ -821,8 +1037,9 @@ findlegs(q; lock=0)                     # non-locked legs
 findlegs(q; dir='-', rev=true)          # all legs that are NOT outgoing
 ```
 """
-function findlegs(q::TLArray{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
-    return [i for i in 1:QD if _matches_criteria(q.inds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev]
+function findlegs(q::AbstractTLArray{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+    qinds = inds(q)
+    return [i for i in 1:QD if _matches_criteria(qinds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev]
 end
 
 """
@@ -840,9 +1057,10 @@ findleg(q; lock=0)                # first non-locked leg
 findleg(q; dir='+', rev=true)     # first leg that is NOT incoming
 ```
 """
-function findleg(q::TLArray{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+function findleg(q::AbstractTLArray{T, QD}; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false) where {T, QD}
+    qinds = inds(q)
     for i in 1:QD
-        _matches_criteria(q.inds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev && return i
+        _matches_criteria(qinds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev && return i
     end
     return nothing
 end
@@ -1625,6 +1843,162 @@ function setitag(q::TLArray{T, QD}, pred::Function, tags::AbstractString) where 
     return _modify_itag(q, findlegs(q, pred), _ -> norm)
 end
 
+_view_arr_leg(q::TLArrayView, leg::Integer) = q.perm[Int(leg)]
+_view_arr_legs(q::TLArrayView, legs) = Int[_view_arr_leg(q, leg) for leg in legs]
+_view_arr_legs(q::TLArrayView, leg::Integer) = (_view_arr_leg(q, leg),)
+_view_rewrap(q::TLArrayView, arr::AbstractTLArray) =
+    _normalize_tlarray_view(arr, q.conj, q.scale, q.perm)
+
+function Base.lock(q::TLArrayView, leg::Integer; inc::Int=1)
+    return _view_rewrap(q, lock(q.arr, _view_arr_leg(q, leg); inc=inc))
+end
+function Base.lock(q::TLArrayView, legs::LegList; inc::Int=1)
+    return _view_rewrap(q, lock(q.arr, _view_arr_legs(q, legs); inc=inc))
+end
+function Base.lock(q::TLArrayView, pred::Function; inc::Int=1)
+    return _view_rewrap(q, lock(q.arr, _view_arr_legs(q, findlegs(q, pred)); inc=inc))
+end
+function Base.lock(q::TLArrayView; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, Base.lock(q.arr, _view_arr_legs(q, legs); inc=inc))
+end
+
+function lockp(q::TLArrayView, leg::Integer)
+    return _view_rewrap(q, lockp(q.arr, _view_arr_leg(q, leg)))
+end
+function lockp(q::TLArrayView, legs::LegList)
+    return _view_rewrap(q, lockp(q.arr, _view_arr_legs(q, legs)))
+end
+function lockp(q::TLArrayView, pred::Function)
+    return _view_rewrap(q, lockp(q.arr, _view_arr_legs(q, findlegs(q, pred))))
+end
+function lockp(q::TLArrayView; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, lockp(q.arr, _view_arr_legs(q, legs)))
+end
+
+function Base.unlock(q::TLArrayView, leg::Integer)
+    return _view_rewrap(q, unlock(q.arr, _view_arr_leg(q, leg)))
+end
+function Base.unlock(q::TLArrayView, legs::LegList)
+    return _view_rewrap(q, unlock(q.arr, _view_arr_legs(q, legs)))
+end
+function Base.unlock(q::TLArrayView, pred::Function)
+    return _view_rewrap(q, unlock(q.arr, _view_arr_legs(q, findlegs(q, pred))))
+end
+function Base.unlock(q::TLArrayView; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, unlock(q.arr, _view_arr_legs(q, legs)))
+end
+
+function prime(q::TLArrayView; inc::Int=1, dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, prime(q.arr, _view_arr_legs(q, legs); inc=inc))
+end
+function prime(q::TLArrayView, leg::Integer; inc::Int=1)
+    return _view_rewrap(q, prime(q.arr, _view_arr_leg(q, leg); inc=inc))
+end
+function prime(q::TLArrayView, legs::LegList; inc::Int=1)
+    return _view_rewrap(q, prime(q.arr, _view_arr_legs(q, legs); inc=inc))
+end
+function prime(q::TLArrayView, pred::Function; inc::Int=1)
+    return _view_rewrap(q, prime(q.arr, _view_arr_legs(q, findlegs(q, pred)); inc=inc))
+end
+
+function setprime(q::TLArrayView, n::Int; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, setprime(q.arr, _view_arr_legs(q, legs), n))
+end
+function setprime(q::TLArrayView, leg::Integer, n::Int)
+    return _view_rewrap(q, setprime(q.arr, _view_arr_legs(q, leg), n))
+end
+function setprime(q::TLArrayView, legs::LegList, n::Int)
+    return _view_rewrap(q, setprime(q.arr, _view_arr_legs(q, legs), n))
+end
+
+function noprime(q::TLArrayView; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, noprime(q.arr, _view_arr_legs(q, legs)))
+end
+function noprime(q::TLArrayView, leg::Integer)
+    return _view_rewrap(q, noprime(q.arr, _view_arr_leg(q, leg)))
+end
+function noprime(q::TLArrayView, legs::LegList)
+    return _view_rewrap(q, noprime(q.arr, _view_arr_legs(q, legs)))
+end
+function noprime(q::TLArrayView, pred::Function)
+    return _view_rewrap(q, noprime(q.arr, _view_arr_legs(q, findlegs(q, pred))))
+end
+
+function additag(q::TLArrayView, newtags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, additag(q.arr, _view_arr_legs(q, legs), newtags))
+end
+function additag(q::TLArrayView, leg::Integer, newtags::AbstractString)
+    return _view_rewrap(q, additag(q.arr, _view_arr_leg(q, leg), newtags))
+end
+function additag(q::TLArrayView, legs::LegList, newtags::AbstractString)
+    return _view_rewrap(q, additag(q.arr, _view_arr_legs(q, legs), newtags))
+end
+function additag(q::TLArrayView, pred::Function, newtags::AbstractString)
+    return _view_rewrap(q, additag(q.arr, _view_arr_legs(q, findlegs(q, pred)), newtags))
+end
+
+function removeitag(q::TLArrayView, tags::ITagQuerySpec; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, removeitag(q.arr, _view_arr_legs(q, legs), tags))
+end
+function removeitag(q::TLArrayView, leg::Integer, tags::ITagQuerySpec)
+    return _view_rewrap(q, removeitag(q.arr, _view_arr_leg(q, leg), tags))
+end
+function removeitag(q::TLArrayView, legs::LegList, tags::ITagQuerySpec)
+    return _view_rewrap(q, removeitag(q.arr, _view_arr_legs(q, legs), tags))
+end
+function removeitag(q::TLArrayView, pred::Function, tags::ITagQuerySpec)
+    return _view_rewrap(q, removeitag(q.arr, _view_arr_legs(q, findlegs(q, pred)), tags))
+end
+
+function replaceitag(q::TLArrayView, replacements::ITagReplacementPair...; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, replaceitag(q.arr, _view_arr_legs(q, legs), replacements...))
+end
+function replaceitag(q::TLArrayView, replacements::ITagReplacementDict; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, replaceitag(q.arr, _view_arr_legs(q, legs), replacements))
+end
+function replaceitag(q::TLArrayView, leg::Integer, replacements::ITagReplacementPair...)
+    return _view_rewrap(q, replaceitag(q.arr, _view_arr_leg(q, leg), replacements...))
+end
+function replaceitag(q::TLArrayView, leg::Integer, replacements::ITagReplacementDict)
+    return _view_rewrap(q, replaceitag(q.arr, _view_arr_leg(q, leg), replacements))
+end
+function replaceitag(q::TLArrayView, legs::LegList, replacements::ITagReplacementPair...)
+    return _view_rewrap(q, replaceitag(q.arr, _view_arr_legs(q, legs), replacements...))
+end
+function replaceitag(q::TLArrayView, legs::LegList, replacements::ITagReplacementDict)
+    return _view_rewrap(q, replaceitag(q.arr, _view_arr_legs(q, legs), replacements))
+end
+function replaceitag(q::TLArrayView, pred::Function, replacements::ITagReplacementPair...)
+    return _view_rewrap(q, replaceitag(q.arr, _view_arr_legs(q, findlegs(q, pred)), replacements...))
+end
+function replaceitag(q::TLArrayView, pred::Function, replacements::ITagReplacementDict)
+    return _view_rewrap(q, replaceitag(q.arr, _view_arr_legs(q, findlegs(q, pred)), replacements))
+end
+
+function setitag(q::TLArrayView, tags::AbstractString; dir=nothing, itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _view_rewrap(q, setitag(q.arr, _view_arr_legs(q, legs), tags))
+end
+function setitag(q::TLArrayView, leg::Integer, tags::AbstractString)
+    return _view_rewrap(q, setitag(q.arr, _view_arr_leg(q, leg), tags))
+end
+function setitag(q::TLArrayView, legs::LegList, tags::AbstractString)
+    return _view_rewrap(q, setitag(q.arr, _view_arr_legs(q, legs), tags))
+end
+function setitag(q::TLArrayView, pred::Function, tags::AbstractString)
+    return _view_rewrap(q, setitag(q.arr, _view_arr_legs(q, findlegs(q, pred)), tags))
+end
+
 # ─── Pretty-printing for TLArray ──────────────────────────────────────────────
 #
 # Format:
@@ -1764,7 +2138,7 @@ end
 
 # Scalar multiplication and division: only the RMT arrays are scaled.
 # CGT metadata (w-matrices, qlabels) are left untouched.
-function Base.:*(qs::TLArray{T, QD, N, RD}, fac::Number) where {T, QD, N, RD}
+function _materialized_scale(qs::TLArray{T, QD, N, RD}, fac::Number) where {T, QD, N, RD}
     if iszero(fac)
         RMTs = Vector{Array{promote_type(T, typeof(fac)), RD}}(undef, sector_count(qs))
         wmats = similar(qs.wmats, sector_count(qs))
@@ -1777,14 +2151,16 @@ function Base.:*(qs::TLArray{T, QD, N, RD}, fac::Number) where {T, QD, N, RD}
     end
     return result
 end
-Base.:*(fac::Number, qs::TLArray) = qs * fac
-Base.:/(qs::TLArray, fac::Number) = qs * (1 / fac)
-Base.:-(qs::TLArray) = qs * -1
+Base.:*(qs::AbstractTLArray, fac::Number) = _view_scale(qs, fac)
+Base.:*(fac::Number, qs::AbstractTLArray) = qs * fac
+Base.:/(qs::AbstractTLArray, fac::Number) = qs * (1 / fac)
+Base.:-(qs::AbstractTLArray) = qs * -1
 
 # Return a deep copy of a TLArray (CGT metadata, RMTs, indices, spaces all copied).
 Base.copy(q::TLArray) = deepcopy(q)
+Base.copy(q::TLArrayView) = materialize(q)
 
-function _identity_on_qspace(q::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
+function _identity_on_qspace(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, RD}
     @assert QD == 2 "Scalar add/subtract is only defined for rank-2 TLArray objects"
 
     in_legs  = findlegs(q; dir='+')
@@ -1793,10 +2169,12 @@ function _identity_on_qspace(q::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
 
     in_leg  = only(in_legs)
     out_leg = only(out_legs)
-    @assert q.spaces[in_leg] == q.spaces[out_leg] "Scalar add/subtract requires matching incoming and outgoing spaces"
+    qspaces = spaces(q)
+    qinds = inds(q)
+    @assert qspaces[in_leg] == qspaces[out_leg] "Scalar add/subtract requires matching incoming and outgoing spaces"
 
-    id_q = getIdentity((q, out_leg); itag=q.inds[out_leg].itags)
-    return TLArray(id_q, (q.inds[in_leg], q.inds[out_leg]))
+    id_q = getIdentity((q, out_leg); itag=qinds[out_leg].itags)
+    return TLArray(id_q, (qinds[in_leg], qinds[out_leg]))
 end
 
 # ─── TLArray norm ─────────────────────────────────────────────────────────────
@@ -1821,6 +2199,8 @@ function LinearAlgebra.norm(q::TLArray{T, QD, N}) where {T, QD, N}
     end
     return sqrt(s)
 end
+
+LinearAlgebra.norm(q::TLArrayView) = abs(q.scale) * norm(q.arr)
 
 function _normalize_oplus_dims(dimensions, QD::Int; sort_dims::Bool=true)
     dims = dimensions isa Integer ? (Int(dimensions),) : Tuple(Int(d) for d in dimensions)
@@ -1881,7 +2261,7 @@ function _sum_splists_many(splists)
 end
 
 _copy_spaces_tuple(spaces::NTuple{QD, Vector}) where {QD} = ntuple(l -> copy(spaces[l]), QD)
-_qspace_eltype(::TLArray{T}) where {T} = T
+_qspace_eltype(::AbstractTLArray{T}) where {T} = T
 
 function _oplus_pad_qspace(q::TLArray{T, QD, N, RD},
                            result_spaces,
@@ -2074,9 +2454,9 @@ function _oplus_matrix_entry(mat, i::Int, j::Int)
     if val === nothing || val === missing
         return nothing
     end
-    val isa TLArray || throw(ArgumentError(
-        "matrix oplus entry ($i, $j) is neither a TLArray nor an undefined entry"))
-    return val
+    val isa AbstractTLArray || throw(ArgumentError(
+        "matrix oplus entry ($i, $j) is neither an AbstractTLArray nor an undefined entry"))
+    return materialize(val)
 end
 
 function _infer_zero_matrix_spaces(first_axis_sources, second_axis_sources, i::Int, j::Int, QD::Int)
@@ -2235,7 +2615,7 @@ end
 #
 # adjoint(q): for TLArray tensors, defined as conj(q).
 # ─────────────────────────────────────────────────────────────────────────────
-function Base.conj(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, N, RD, QT, PS, M, RMT}
+function _materialized_conj(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, N, RD, QT, PS, M, RMT}
     new_inds = ntuple(l -> change_dir(q.inds[l]), QD)
 
     qlabels = copy(q.qlabels)
@@ -2279,7 +2659,8 @@ function Base.conj(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, N, RD
     return TLArray(symm(q), qlabels, wmats, RMTs, new_inds, _copy_spaces_tuple(q.spaces))
 end
 
-Base.adjoint(q::TLArray) = conj(q)
+Base.conj(q::AbstractTLArray) = _view_conj(q)
+Base.adjoint(q::AbstractTLArray) = conj(q)
 
 getsub(q::TLArray, selector) = TLArray(q, selector)
 
@@ -2484,16 +2865,16 @@ function empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex};
     return TLArray(symm, qlabels, wmats, RMTs, inds, spaces)
 end
 
-function empty_qspace(q::TLArray; T::Type=Float64)
-    return empty_qspace(symm(q), q.inds; T=T)
+function empty_qspace(q::AbstractTLArray; T::Type=Float64)
+    return empty_qspace(symm(q), inds(q); T=T)
 end
 
-function Base.zero(q::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
+function Base.zero(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, RD}
     QT = qlabeltype(q)
     qlabels = NTuple{QD, QT}[]
     wmats = _wmat_vector(symm(q), 0)
     RMTs = Array{T, RD}[]
-    return TLArray(symm(q), qlabels, wmats, RMTs, q.inds, _copy_spaces_tuple(q.spaces))
+    return TLArray(symm(q), qlabels, wmats, RMTs, inds(q), _copy_spaces_tuple(spaces(q)))
 end
 
 """
@@ -2511,7 +2892,7 @@ end
 qlabeltype(::Type{<:ProductSymm{Syms}}) where {Syms} =
     Tuple{(NTuple{nzops(S), Int} for S in Syms.parameters)...}
 
-qlabeltype(::TLArray{T, QD, N, RD, QT}) where {T, QD, N, RD, QT} = QT
+qlabeltype(::AbstractTLArray{T, QD, N, RD, QT}) where {T, QD, N, RD, QT} = QT
 
 """
     zero_qlabels(symm::NTuple{N, Any}) where {N}
@@ -2650,7 +3031,7 @@ function _expand_singleton_kw(values, count::Int, name::AbstractString)
     return collected
 end
 
-function _singleton_insert_spec(q::TLArray{T, QD}, legs;
+function _singleton_insert_spec(q::AbstractTLArray{T, QD}, legs;
                                 itag="", plev=0, lock=0, dir='+') where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[i for i in legs]
     isempty(positions) && throw(ArgumentError("at least one insertion leg must be specified"))
@@ -2795,6 +3176,38 @@ function addSingleton(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
     end
 
     return TLArray(product_symms(PS), qlabels, wmats, RMTs, Tuple(new_inds), Tuple(new_spaces))
+end
+
+function addSingleton(q::TLArrayView{T, QD}; nlegs::Integer=1,
+                      itag="", plev=0, lock=0, dir='+') where {T, QD}
+    count = Int(nlegs)
+    count >= 1 || throw(ArgumentError("nlegs must be at least 1, got $nlegs"))
+    positions = (QD + 1):(QD + count)
+    return addSingleton(q, positions; itag=itag, plev=plev, lock=lock, dir=dir)
+end
+
+function addSingleton(q::TLArrayView{T, QD}, legs;
+                      itag="", plev=0, lock=0, dir='+') where {T, QD}
+    positions, itag_vec, plev_vec, lock_vec, dir_vec =
+        _singleton_insert_spec(q, legs; itag=itag, plev=plev, lock=lock, dir=dir)
+    internal_dir = q.conj ? [d == '+' ? '-' : '+' for d in dir_vec] : dir_vec
+    new_arr = addSingleton(q.arr; nlegs=length(positions),
+                           itag=itag_vec, plev=plev_vec, lock=lock_vec, dir=internal_dir)
+
+    new_qd = QD + length(positions)
+    new_perm = Vector{Int}(undef, new_qd)
+    old_leg = 1
+    insert_idx = 1
+    for new_leg in 1:new_qd
+        if insert_idx <= length(positions) && positions[insert_idx] == new_leg
+            new_perm[new_leg] = QD + insert_idx
+            insert_idx += 1
+        else
+            new_perm[new_leg] = q.perm[old_leg]
+            old_leg += 1
+        end
+    end
+    return _normalize_tlarray_view(new_arr, q.conj, q.scale, Tuple(new_perm))
 end
 
 """

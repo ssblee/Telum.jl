@@ -68,7 +68,7 @@ function _permuted_sector_wmat(symm_type,
     return cgtperm_obj.perm_arr * wmat
 end
 
-function _permute_sector_wmat(q::TLArray{T, QD, N, RD}, sector_index::Int,
+function _permute_sector_wmat(q::AbstractTLArray{T, QD, N, RD}, sector_index::Int,
                               perm::NTuple{QD, Int}, n::Int, symm) where {T, QD, N, RD}
     qlabels, cgp, legdir = _sector_cgt_metadata(q, sector_index, n)
     return _permuted_sector_wmat(symm[n], qlabels, sector_wmat(q, sector_index, n),
@@ -115,7 +115,7 @@ Permute the legs of a TLArray object.
 # Returns
 New TLArray with permuted legs.
 """
-function Base.permutedims(q::TLArray{T, QD, N, RD}, perm) where {T, QD, N, RD}
+function _materialized_permutedims(q::TLArray{T, QD, N, RD}, perm) where {T, QD, N, RD}
     perm = Tuple(perm)
     @assert length(perm) == QD "permutation length $(length(perm)) != TLArray rank $QD"
     @assert sort(collect(perm)) == collect(1:QD) "perm must be a valid permutation of 1:$QD"
@@ -134,3 +134,5 @@ function Base.permutedims(q::TLArray{T, QD, N, RD}, perm) where {T, QD, N, RD}
     # 5. Assemble and return new TLArray with precomputed spaces
     return TLArray(symm(q), new_qlabels, new_wmats, new_RMTs, new_inds, new_spaces)
 end
+
+Base.permutedims(q::AbstractTLArray, perm) = _view_permutedims(q, perm)
