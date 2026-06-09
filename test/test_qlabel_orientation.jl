@@ -6,7 +6,7 @@ function _assert_qlabel_storage(q::TLArray)
               ntuple(leg -> Telum.sector_qlabel(q, sector_index, leg), ndims(q))
     end
 end
-_assert_qlabel_storage(q::TLArrayView) = _assert_qlabel_storage(Telum.materialize(q))
+_assert_qlabel_storage(q::TLArrayView) = _assert_qlabel_storage(copy(q))
 
 function _assert_wmat_storage(q::TLArray)
     nonabelian = Telum.nonabelian_symmetry_indices(Telum.productsymm(q))
@@ -144,18 +144,21 @@ end
 
         vp = Telum._view_permutedims(q, (2, 1, 3))
         @test vp isa TLArrayView
-        @test norm(Telum.materialize(vp) - permutedims(q, (2, 1, 3))) < 1e-10
+        @test Telum.materialize(vp) === q
+        @test norm(copy(vp) - permutedims(q, (2, 1, 3))) < 1e-10
 
         vc = Telum._view_conj(q)
         @test vc isa TLArrayView
-        @test norm(Telum.materialize(vc) - conj(q)) < 1e-10
+        @test Telum.materialize(vc) === q
+        @test norm(copy(vc) - conj(q)) < 1e-10
 
         vs = Telum._view_scale(q, 2.0)
         @test vs isa TLArrayView
         rmt, alpha = Telum.sector_rmt_with_scale(vs, active)
         @test rmt === Telum.sector_rmt(q, active)
         @test alpha == 2.0
-        @test norm(Telum.materialize(vs) - q * 2.0) < 1e-10
+        @test Telum.materialize(vs) === q
+        @test norm(copy(vs) - q * 2.0) < 1e-10
 
         z = Telum._view_scale(q, 0.0)
         @test z isa TLArray

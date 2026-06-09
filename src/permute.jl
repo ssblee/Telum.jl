@@ -75,6 +75,14 @@ function _permute_sector_wmat(q::AbstractTLArray{T, QD, N, RD}, sector_index::In
                                  cgp, legdir, perm)
 end
 
+function _permute_sector_wmat(q::AbstractTLArray{T, QD, N, RD, QT, PS}, sector_index::Int,
+                              perm::NTuple{QD, Int}, ::Val{n}) where {T, QD, N, RD, QT, PS, n}
+    qlabels, cgp, legdir = _sector_cgt_metadata(q, sector_index, n)
+    return _permuted_sector_wmat(product_symms(PS)[n], qlabels,
+                                 sector_wmat(q, sector_index, Val(n)),
+                                 cgp, legdir, perm)::Matrix{Float64}
+end
+
 function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
                              perm::NTuple{QD, Int}) where {T, QD, N, RD}
     rmt_perm = (perm..., ntuple(n -> QD + n, N)...)

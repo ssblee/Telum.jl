@@ -435,8 +435,6 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} 
             typed_qlabels, wmats, RMTs, sector_isdefined, sector_iszero, inds, typed_spaces)
         _check_unique_inds(q.inds)
         _check_empty_tag_lock(q.inds)
-        _normalize_wmats!(q)
-        _orient_wmats!(q)
         return q
     end
 end
@@ -444,24 +442,28 @@ end
 """
     TLArrayView(arr, conj, scale, perm)
 
-Lazy view of `arr` with exactly one materialization rule:
+Lazy view of `arr` with exactly one semantic rule:
 
-    materialize(view) == maybe_conj(scalar_prod(permute(arr, perm), scale), conj)
+    view == maybe_conj(scalar_prod(permute(arr, perm), scale), conj)
 
 `perm[new_leg] = old_leg` is applied first to TLArray physical legs and sector
 RMT physical axes. `scale::T` is applied next to each nonzero RMT. `conj`
-is applied last: it conjugates RMT values, flips TLIndex directions, and applies
-the same lazy w-matrix conjugation transform as eager `conj`.
+is applied last: it conjugates RMT values, flips TLIndex directions, and uses
+the cached w-matrices constructed for the same permutation/conjugation rule.
 
-All composed operations must update `(arr, perm, scale, conj)` to preserve this
-single rule.
+`materialize(view)` is not eager conversion. It only delegates to
+`materialize(view.arr)` so future lazy source arrays can complete undefined
+sector payloads. `arr` must not itself be a `TLArrayView`; composed views must
+be merged into one layer.
 """
-struct TLArrayView{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} <:
+struct TLArrayView{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD},
+                   A<:AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}} <:
        AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
-    arr::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
+    arr::A
     conj::Bool
     scale::T
     perm::NTuple{QD, Int}
+    wmats::Vector{NTuple{M, Matrix{Float64}}}
 end
 
 function _qlabel_vector(qlabels::AbstractMatrix{QT}, ::Val{QD}) where {QT, QD}
@@ -542,6 +544,10 @@ end
     q.isdefined[sector] || throw(ArgumentError("sector $sector is not evaluated"))
     return q.wmats[sector][slot]
 end
+@inline function sector_wmat_slot(q::TLArrayView, sector::Int, slot::Int)
+    is_sector_defined(q, sector) || throw(ArgumentError("sector $sector is not evaluated"))
+    return q.wmats[sector][slot]
+end
 @inline function sector_wmat_slot(q::AbstractTLArray, sector::Int, slot::Int)
     n = nonabelian_symmetry_indices(productsymm(q))[slot]
     return sector_wmat(q, sector, n)
@@ -598,15 +604,40 @@ function _conj_sector_wmat(q::AbstractTLArray, sector::Int, n::Int, wmat)
     isabelian(S) && return wmat
 
     ordered_qlabels, _, legdir = _sector_cgt_metadata(q, sector, n)
+    return _conj_sector_wmat_from_metadata(S, ordered_qlabels, legdir, wmat)
+end
+
+function _conj_sector_wmat_after_perm(q::AbstractTLArray{T, QD}, sector::Int, n::Int,
+                                      wmat, perm::NTuple{QD, Int}) where {T, QD}
+    S = symm(q)[n]
+    isabelian(S) && return wmat
+
+    ordered_qlabels, legdir = _sector_cgt_metadata_after_perm(q, sector, n, perm)
+    return _conj_sector_wmat_from_metadata(S, ordered_qlabels, legdir, wmat)
+end
+
+function _sector_cgt_metadata_after_perm(q::AbstractTLArray{T, QD}, sector::Int, n::Int,
+                                         perm::NTuple{QD, Int}) where {T, QD}
+    qinds = inds(q)
+    incoming = Int[l for l in 1:QD if qinds[perm[l]].dir == '+']
+    outgoing = Int[l for l in 1:QD if qinds[perm[l]].dir == '-']
+
+    sort!(incoming; by = l -> sector_qlabel(q, sector, perm[l])[n], alg = MergeSort)
+    sort!(outgoing; by = l -> sector_qlabel(q, sector, perm[l])[n], alg = MergeSort)
+
+    stored_to_view = (incoming..., outgoing...)
+    ordered_qlabels = ntuple(i -> sector_qlabel(q, sector, perm[stored_to_view[i]])[n], Val(QD))
+    return ordered_qlabels, (length(incoming), length(outgoing))
+end
+
+function _conj_sector_wmat_from_metadata(S, ordered_qlabels, legdir, wmat)
     m, k = legdir
     ins, outs = ordered_qlabels[1:m], ordered_qlabels[m+1:m+k]
     ins_, _ = remove_zeros(S, ins)
     outs_, _ = remove_zeros(S, outs)
     if ins_ == outs_
-        is1j = detect_1j(S, ins_, outs_)
-        cgt_oms = get_CGTom(S, ins_, outs_, is1j)
-        perm_vec = get_conj_perm(cgt_oms)
-        return wmat[perm_vec, :]
+        conjperm = getNsave_Conjperm(S, ins_)
+        return wmat[conjperm.perm, :]
     end
     return wmat
 end
@@ -618,11 +649,35 @@ function _sector_wmat_after_perm(q::TLArrayView{T, QD}, sector::Int, n::Int) whe
     return _permute_sector_wmat(q.arr, sector, q.perm, n, symm(q))
 end
 
-function sector_wmat(q::TLArrayView, sector::Int, n::Int)
-    wmat = _sector_wmat_after_perm(q, sector, n)
-    q.conj || return wmat
-    pre_conj = _normalize_tlarray_view(q.arr, false, q.scale, q.perm)
-    return _conj_sector_wmat(pre_conj, sector, n, wmat)
+function _view_sector_wmat_slot(arr::AbstractTLArray{T, QD, N, RD, QT, PS}, sector::Int, ::Val{slot},
+                                conj_flag::Bool, scale::T,
+                                perm::NTuple{QD, Int}) where {T, QD, N, RD, QT, PS, slot}
+    n = product_symmetry_index_from_wmat_slot(PS, Val(slot))
+    wmat = if perm == _identity_phys_perm(Val(QD))
+        sector_wmat_slot(arr, sector, slot)
+    else
+        _permute_sector_wmat(arr, sector, perm, Val(n))
+    end
+    conj_flag || return wmat
+    return _conj_sector_wmat_after_perm(arr, sector, n, wmat, perm)
+end
+
+function _view_wmat_vector(arr::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
+                           conj_flag::Bool, scale::T,
+                           perm::NTuple{QD, Int}) where {T, QD, N, RD, QT, PS, M, RMT}
+    wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, sector_count(arr))
+    M == 0 && return wmats
+    for sector in sector_slots(arr)
+        is_sector_zero(arr, sector) && continue
+        wmats[sector] = ntuple(slot -> _view_sector_wmat_slot(arr, sector, Val(slot),
+                                                              conj_flag, scale, perm), Val(M))
+    end
+    return wmats
+end
+
+function sector_wmat(q::TLArrayView{T, QD, N, RD, QT, PS}, sector::Int, n::Int) where {T, QD, N, RD, QT, PS}
+    isabelian(symm(q)[n]) && return _trivial_wmat()
+    return sector_wmat_slot(q, sector, nonabelian_wmat_slot(PS, n))
 end
 function sector_wmat(q::TLArrayView, sector::Int, ::Val{n}) where {n}
     return sector_wmat(q, sector, n)
@@ -651,13 +706,37 @@ function sector_rmt_materialized(q::TLArrayView, sector::Int)
 end
 @inline sector_rmt(q::TLArrayView, sector::Int) = sector_rmt_materialized(q, sector)
 
-materialize(q::TLArray) = copy(q)
+materialize(q::TLArray) = q
 
-function materialize(q::TLArrayView)
-    result = materialize(q.arr)
+materialize(q::TLArrayView) = materialize(q.arr)
+
+_eager_tlarray(q::TLArray) = copy(q)
+
+function _eager_tlarray(q::TLArrayView)
+    materialized_arr = materialize(q.arr)
+    result = _eager_tlarray(materialized_arr)
     q.perm == _identity_phys_perm(Val(ndims(q))) || (result = _materialized_permutedims(result, q.perm))
     q.scale == one(typeof(q.scale)) || (result = _materialized_scale(result, q.scale))
     q.conj && (result = _materialized_conj(result))
+    return result
+end
+
+"""
+    canonicalize(q::AbstractTLArray) -> TLArray
+
+Return an eager `TLArray` whose storage has the canonical w-matrix/RMT sign and
+orientation conventions. This is storage cleanup, not `q / norm(q)`.
+
+`canonicalize` never mutates `q` or arrays reachable from `q`: it first lets the
+internal `materialize` hook complete any future undefined lazy sectors, then
+copies the represented tensor data, and finally applies the current
+`_normalize_wmats!` and `_orient_wmats!` cleanup to the copy.
+"""
+function canonicalize(q::AbstractTLArray)
+    materialize(q)
+    result = _eager_tlarray(q)
+    _normalize_wmats!(result)
+    _orient_wmats!(result)
     return result
 end
 
@@ -679,10 +758,12 @@ end
                                          scale::T,
                                          perm::NTuple{QD, Int}) where {T, QD, N, RD, QT, PS, M, RMT}
     _is_valid_perm(perm) || throw(ArgumentError("perm must be a valid permutation of 1:$QD"))
+    arr isa TLArrayView && throw(ArgumentError("TLArrayView layers must be merged before construction"))
     if !conj_flag && scale == one(T) && perm == _identity_phys_perm(Val(QD))
         return arr
     end
-    return TLArrayView{T, QD, N, RD, QT, PS, M, RMT}(arr, conj_flag, scale, perm)
+    wmats = _view_wmat_vector(arr, conj_flag, scale, perm)
+    return TLArrayView{T, QD, N, RD, QT, PS, M, RMT, typeof(arr)}(arr, conj_flag, scale, perm, wmats)
 end
 
 function _view_permutedims(q::AbstractTLArray{T, QD}, perm) where {T, QD}
@@ -707,14 +788,14 @@ end
 function _view_scale(q::AbstractTLArray{T}, fac::Number) where {T}
     RT = promote_type(T, typeof(fac))
     iszero(fac) && return _zero_metadata_tlarray(q, RT)
-    RT === T || return _materialized_scale(materialize(q), fac)
+    RT === T || return _materialized_scale(_eager_tlarray(q), fac)
     return _normalize_tlarray_view(q, false, convert(T, fac), _identity_phys_perm(Val(ndims(q))))
 end
 
 function _view_scale(q::TLArrayView{T}, fac::Number) where {T}
     RT = promote_type(T, typeof(fac))
     iszero(fac) && return _zero_metadata_tlarray(q, RT)
-    RT === T || return _materialized_scale(materialize(q), fac)
+    RT === T || return _materialized_scale(_eager_tlarray(q), fac)
     cfac = convert(T, fac)
     new_scale = q.conj ? q.scale * conj(cfac) : q.scale * cfac
     return _normalize_tlarray_view(q.arr, q.conj, new_scale, q.perm)
@@ -856,11 +937,11 @@ function _orient_wmats!(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, 
 end
 
 function _display_scalar_rmt(q::TLArray, sector_index::Int)
-    return only(sector_rmt(q, sector_index))
+    return only(sector_rmt(q, sector_index)) * _scalar_wmat_product(q, sector_index)
 end
 
 function _display_scalar_rmt(q::TLArray{T, 2}, sector_index::Int) where {T}
-    return only(sector_rmt(q, sector_index)) /
+    return only(sector_rmt(q, sector_index)) * _scalar_wmat_product(q, sector_index) /
            sqrt(_sector_cgt_size_2d(q, sector_index))
 end
 
@@ -957,7 +1038,16 @@ end
 Base.getindex(q::TLArray,
               selector::Union{Colon, AbstractRange{<:Integer},
                               AbstractVector{<:Integer}, AbstractVector{Bool}}) = TLArray(q, selector)
-Base.getindex(q::TLArrayView, args...) = getindex(materialize(q), args...)
+Base.getindex(q::TLArrayView, args...) = getindex(_eager_tlarray(q), args...)
+
+function _scalar_wmat_product(q::AbstractTLArray{T, QD, N, RD, QT, PS, M}, sector_index::Int) where {T, QD, N, RD, QT, PS, M}
+    factor = 1.0
+    for slot in 1:M
+        wmat = sector_wmat_slot(q, sector_index, slot)
+        length(wmat) == 1 && (factor *= only(wmat))
+    end
+    return factor
+end
 
 # For 0-dimensional TLArray (scalar), q[] returns the unique RMT element.
 function Base.getindex(q::TLArray{T, 0, N, N}) where {T, N}
@@ -965,7 +1055,17 @@ function Base.getindex(q::TLArray{T, 0, N, N}) where {T, N}
     if nsectors(q) == 1
         sector_index = findfirst(!, q.iszero)
         @assert length(sector_rmt(q, sector_index)) == 1 "0D TLArray RMT must be a scalar"
-        return only(sector_rmt(q, sector_index))
+        return only(sector_rmt(q, sector_index)) * _scalar_wmat_product(q, sector_index)
+    else return zero(T) end
+end
+
+function Base.getindex(q::TLArrayView{T, 0, N, N}) where {T, N}
+    @assert nsectors(q) <= 1 "0D TLArrayView must have zero or one sector"
+    if nsectors(q) == 1
+        sector_index = first(sector for sector in sector_slots(q) if is_sector_active(q, sector))
+        rmt = sector_rmt_materialized(q, sector_index)
+        @assert length(rmt) == 1 "0D TLArrayView RMT must be a scalar"
+        return only(rmt) * _scalar_wmat_product(q, sector_index)
     else return zero(T) end
 end
 
@@ -2158,7 +2258,7 @@ Base.:-(qs::AbstractTLArray) = qs * -1
 
 # Return a deep copy of a TLArray (CGT metadata, RMTs, indices, spaces all copied).
 Base.copy(q::TLArray) = deepcopy(q)
-Base.copy(q::TLArrayView) = materialize(q)
+Base.copy(q::TLArrayView) = _eager_tlarray(q)
 
 function _identity_on_qspace(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, RD}
     @assert QD == 2 "Scalar add/subtract is only defined for rank-2 TLArray objects"
@@ -2456,7 +2556,7 @@ function _oplus_matrix_entry(mat, i::Int, j::Int)
     end
     val isa AbstractTLArray || throw(ArgumentError(
         "matrix oplus entry ($i, $j) is neither an AbstractTLArray nor an undefined entry"))
-    return materialize(val)
+    return _eager_tlarray(val)
 end
 
 function _infer_zero_matrix_spaces(first_axis_sources, second_axis_sources, i::Int, j::Int, QD::Int)
@@ -2642,10 +2742,8 @@ function _materialized_conj(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, 
             outs_, _ = remove_zeros(S, outs)
             new_wmat =
                 if !isabelian(S) && ins_ == outs_
-                    is1j = detect_1j(S, ins_, outs_)
-                    cgt_oms  = get_CGTom(S, ins_, outs_, is1j)
-                    perm_vec = get_conj_perm(cgt_oms)
-                    sector_wmat(q, sector_index, n)[perm_vec, :]
+                    conjperm = getNsave_Conjperm(S, ins_)
+                    sector_wmat(q, sector_index, n)[conjperm.perm, :]
                 else
                     deepcopy(sector_wmat(q, sector_index, n))
                 end

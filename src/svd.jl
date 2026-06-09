@@ -2027,7 +2027,7 @@ function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
 end
 
 LinearAlgebra.svd(q::TLArrayView, args...; kwargs...) =
-    svd(materialize(q), args...; kwargs...)
+    svd(_eager_tlarray(q), args...; kwargs...)
 
 function _normalize_svd_left_legs(left_legs, rank::Int)
     legs = collect(Int, left_legs)

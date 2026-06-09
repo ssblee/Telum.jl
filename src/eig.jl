@@ -533,7 +533,7 @@ function LinearAlgebra.eigen(q::TLArray{T, 2, N, RD},
 end
 
 LinearAlgebra.eigen(q::TLArrayView, args...; kwargs...) =
-    eigen(materialize(q), args...; kwargs...)
+    eigen(_eager_tlarray(q), args...; kwargs...)
 
 """
     discard_eigen(result::EigenResult, Nkeep, tol, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))
