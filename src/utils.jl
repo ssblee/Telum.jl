@@ -69,12 +69,3 @@ function svd_leg(arr::AbstractArray{T, N},
 	end
 	return U, SV, S
 end
-
-function svd_leg(t::LurTensor, leg::Integer;
-	cutoff::Real=1e-12,
-	maxdim::Union{Nothing, Integer}=nothing)
-
-	U, SV, S = svd_leg(t.data, leg; cutoff=cutoff, maxdim=maxdim)
-	return LurTensor(U), LurTensor(SV), S
-end
-

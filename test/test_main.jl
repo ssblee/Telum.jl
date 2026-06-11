@@ -133,7 +133,7 @@ end
 @testset "CGTSVD signature order for svd" begin
     test_svd_cgtsvd_signature_order(FermionSOptions(1, :U1, :SU2, nothing))
     test_svd_cgtsvd_signature_order(FermionSOptions(3, :U1, :SU2, :SU3))
-    test_svd_cgr_split_spaces_preserves_physical_leg_order()
+    test_svd_stored_leg_order_preserves_physical_leg_ties()
 end
 
 @testset "CGTSVD block reduction for svd" begin
@@ -145,6 +145,7 @@ end
     test_svd_cgtsvd_factorization(FermionSOptions(1, :U1, :SU2, nothing))
     test_svd_cgtsvd_factorization(FermionSOptions(3, :U1, :SU2, :SU3))
     test_svd_cgtsvd_heterogeneous_product_qlabels()
+    test_svd_cgtsvd_zero_leading_sector()
 end
 
 @testset "CGTSVD truncation" begin
@@ -414,6 +415,10 @@ end
     test_compress_sector(3, 5, 4; verbose=false)
     test_compress_sector_zero_wmat_shortcircuits()
     test_contract_compress_sector_rmt_optimizer()
+    test_diag_rmt_storage_and_prepared_cache()
+    test_contract_compress_sector_diag_rmt()
+    test_contract_diag_rmt_tlarray()
+    test_diag_rmt_producers_and_metadata_ops()
 end
 
 
@@ -1571,7 +1576,9 @@ end
     arr_rank2_added = Array(to_sparse_array(q_rank2_added))
     @test size(arr_rank2_added) == size(arr_rank2_ref)
     @test norm(arr_rank2_added - arr_rank2_ref) < 1e-10
-    @test all(all(cgr.wmat[1] == 1.0 for cgr in r.cgrs) for r in q_rank2_added.rows)
+    @test Telum.sector_wmat(q_rank2, 1, 2) === Telum.sector_wmat(q_rank2_added, 1, 2)
+    @test pointer(Telum.sector_rmt(q_rank2, 1).data) ==
+          pointer(Telum.sector_rmt(q_rank2_added, 1).data)
 end
 
 @testset "deleteSingleton" begin
@@ -1628,6 +1635,9 @@ end
     @test q_rank2_roundtrip.inds == q_rank2.inds
     @test q_rank2_roundtrip.spaces == q_rank2.spaces
     @test Array(to_sparse_array(q_rank2_roundtrip)) == Array(to_sparse_array(q_rank2))
+    @test Telum.sector_wmat(q_rank2_added, 1, 2) === Telum.sector_wmat(q_rank2_roundtrip, 1, 2)
+    @test pointer(Telum.sector_rmt(q_rank2_added, 1).data) ==
+          pointer(Telum.sector_rmt(q_rank2_roundtrip, 1).data)
 
     @test_throws ArgumentError deleteSingleton(q, 1)
     @test_throws ArgumentError deleteSingleton(q_two, (1, 2))
@@ -1737,8 +1747,10 @@ end
     end
 
     @testset "svd keyword leg selection" begin
-        U_ref, S_ref, Vd_ref = svd(q4, (1, 2, 3), "kwL", "kwR")
-        U_kw, S_kw, Vd_kw = svd(q4, "kwL", "kwR"; dir='+')
+        ref = svd(q4, (1, 2, 3), "kwL", "kwR")
+        kw = svd(q4, "kwL", "kwR"; dir='+')
+        U_ref, S_ref, Vd_ref = ref.U, ref.S, ref.Vd
+        U_kw, S_kw, Vd_kw = kw.U, kw.S, kw.Vd
 
         @test U_kw.inds == U_ref.inds
         @test S_kw.inds == S_ref.inds

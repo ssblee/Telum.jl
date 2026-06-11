@@ -16,8 +16,8 @@ leginfo{N}(symm::NTuple{N, Any}, ind::TLIndex, splist::AbstractVector) where {N}
     leginfo(symm, ind, splist)
 
 # Use precomputed spaces from TLArray
-function leginfo(q::TLArray{T, QD, N, RD, QT, PS}, i::Int) where {T, QD, N, RD, QT, PS}
-    return leginfo{N, QT, PS}(q.inds[i], q.spaces[i])
+function leginfo(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}, i::Int) where {T, QD, N, RD, QT, PS, M, RMT}
+    return leginfo{N, QT, PS}(inds(q)[i], spaces(q)[i])
 end
 
 productsymm(::leginfo{N, QT, PS}) where {N, QT, PS} = PS
@@ -36,13 +36,13 @@ Base.propertynames(::leginfo, private::Bool=false) =
 
 # Variadic entry point: accepts multiple (TLArray, Int) pairs as positional arguments
 # Keyword arguments control the fused output leg's TLIndex properties
-function getIdentity(legs::Vararg{Tuple{TLArray, Int}};
+function getIdentity(legs::Vararg{Tuple{<:AbstractTLArray, Int}};
                      itag::AbstractString="", plev::Int=0, lock::Int=0)
     leginfos = Tuple(leginfo(q, i) for (q, i) in legs)
     return getIdentity(leginfos; itag=itag, plev=plev, lock=lock)
 end
 
-function _normalize_getIdentity_legs(q::TLArray{T, QD}, legs) where {T, QD}
+function _normalize_getIdentity_legs(q::AbstractTLArray{T, QD}, legs) where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
     isempty(positions) && throw(ArgumentError("getIdentity requires at least one leg"))
     all(1 <= leg <= QD for leg in positions) || throw(ArgumentError(
@@ -52,13 +52,13 @@ function _normalize_getIdentity_legs(q::TLArray{T, QD}, legs) where {T, QD}
     return Tuple(positions)
 end
 
-function getIdentity(q::TLArray{T, QD}, legs::LegList;
+function getIdentity(q::AbstractTLArray{T, QD}, legs::LegList;
                      itag::AbstractString="", plev::Int=0, lock::Int=0) where {T, QD}
     positions = _normalize_getIdentity_legs(q, legs)
     return getIdentity(((q, leg) for leg in positions)...; itag=itag, plev=plev, lock=lock)
 end
 
-function getIdentity(q::TLArray{T, QD}, leg::Integer, morelegs::Vararg{Integer};
+function getIdentity(q::AbstractTLArray{T, QD}, leg::Integer, morelegs::Vararg{Integer};
                      itag::AbstractString="", plev::Int=0, lock::Int=0) where {T, QD}
     return getIdentity(q, (Int(leg), (Int(l) for l in morelegs)...); itag=itag, plev=plev, lock=lock)
 end
@@ -157,7 +157,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     # per symmetry.
     sector_qlabels = NTuple{D + 1, QT}[]
     wmat_buffers = _wmat_buffers(PS)
-    RMTs = LurTensor{Float64, D + 1 + N, Array{Float64, D + 1 + N}}[]
+    RMTs = Array{Float64, D + 1 + N}[]
 
     for (fused_qlabels, entries) in merged_info
         #println(fused_qlabels)
@@ -187,7 +187,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
                 RMT_data[ntuple(_ -> (:), D)..., cs:cs+RMT_dim-1, m] = id_block
             end
             RMT_data .*= sqrt(cgt_dim_out)
-            RMT_t = LurTensor(reshape(RMT_data, rmts_dims..., space_cnt, oms...))
+            RMT_t = reshape(RMT_data, rmts_dims..., space_cnt, oms...)
 
             phys_qlabels = ntuple(d -> d <= D ?
                 leginfos_adj[d].splist[orig_ind[d]][1] :
@@ -197,7 +197,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
 
             for n in 1:N
                 om_n         = oms[n]
-                wmat         = LurTensor(Matrix{Float64}(I, om_n, om_n))
+                wmat         = Matrix{Float64}(I, om_n, om_n)
                 _push_wmat!(wmat_buffers, PS, n, wmat)
             end
         end
@@ -243,6 +243,3 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
 
     return q
 end
-
-
-

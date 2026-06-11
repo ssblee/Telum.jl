@@ -15,6 +15,8 @@ function benchmark_smallRMT()
     return qf, a
 end
 
+do_Lanczos(Hl, Hr, M, H1, H2) = eigs_GS(Hl, [H1, H2], Hr, M; tol=1e-8, nKrylov=5, time_blocks=true)
+
 function benchmark_DMRGres(MPS, MPO, Hrl)
     Hl = Hrl[21]
     Hr = Hrl[23]'
@@ -25,7 +27,7 @@ function benchmark_DMRGres(MPS, MPO, Hrl)
 end
 
 function get_DMRGres(Nkeep=50)
-    MPO = HubbardMPO(8.0, 1.5, 1.0, 40)
+    MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
     MPS, E, sp = init_MPS(MPO, Nkeep; tol=0.0)
     DMRG_GS_2site!(MPS, MPO, Nkeep, 1)
     Hrl = getHrl(MPO, MPS)
@@ -35,4 +37,10 @@ end
 
 function benchmark_sum(vec)
     @time for _=1:100 sum(vec) end
+end
+
+function svd_testtensor(Nkeep=50)
+    MPS, MPO, Hrl = get_DMRGres(Nkeep)
+    Hl, Hr, M, H1, H2 = benchmark_DMRGres(MPS, MPO, Hrl)
+    return do_Lanczos(Hl, Hr, M, H1, H2)
 end

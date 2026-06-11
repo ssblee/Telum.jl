@@ -1,17 +1,19 @@
 function _assert_qlabel_storage(q::TLArray)
-    @test size(q.qlabels, 1) == ndims(q)
-    @test size(q.qlabels, 2) >= Telum.nsectors(q)
-    for sector_index in 1:Telum.nsectors(q)
-        @test Tuple(q.qlabels[:, sector_index]) ==
+    @test eltype(q.qlabels) <: NTuple{ndims(q), Telum.qlabeltype(q)}
+    @test length(q.qlabels) == Telum.sector_count(q)
+    for sector_index in Telum.sector_slots(q)
+        @test q.qlabels[sector_index] ==
               ntuple(leg -> Telum.sector_qlabel(q, sector_index, leg), ndims(q))
     end
 end
+_assert_qlabel_storage(q::TLArrayView) = _assert_qlabel_storage(copy(q))
 
 function _assert_wmat_storage(q::TLArray)
     nonabelian = Telum.nonabelian_symmetry_indices(Telum.productsymm(q))
-    @test length(q.wmats) == Telum.nsectors(q)
+    @test length(q.wmats) == Telum.sector_count(q)
     @test eltype(q.wmats) <: NTuple{length(nonabelian), Matrix{Float64}}
-    for sector_index in 1:Telum.nsectors(q), n in 1:length(symm(q))
+    for sector_index in Telum.sector_slots(q), n in 1:length(symm(q))
+        q.iszero[sector_index] && continue
         wmat = Telum.sector_wmat(q, sector_index, n)
         if n in nonabelian
             slot = Telum.nonabelian_wmat_slot(Telum.productsymm(q), n)
@@ -30,26 +32,34 @@ function _assert_metadata_inferred(q::TLArray)
     @inferred Telum._sector_cgt_metadata(q, 1, 1)
 end
 
-function _assert_zero_sector_constructor_filter(q::TLArray)
+function _assert_zero_sector_constructor_state(q::TLArray)
     Telum.nsectors(q) == 0 && return
 
     old_n = Telum.nsectors(q)
-    qlabels = Matrix{eltype(q.qlabels)}(undef, ndims(q), old_n + 1)
-    qlabels[:, 1:old_n] = q.qlabels[:, 1:old_n]
-    qlabels[:, old_n + 1] = q.qlabels[:, 1]
+    qlabels = copy(q.qlabels)
+    push!(qlabels, q.qlabels[1])
 
-    wmats = deepcopy(q.wmats)
-    push!(wmats, deepcopy(q.wmats[1]))
-    RMTs = deepcopy(q.RMTs)
+    wmats = Vector{eltype(q.wmats)}(undef, Telum.sector_count(q) + 1)
+    RMTs = Vector{eltype(q.RMTs)}(undef, Telum.sector_count(q) + 1)
+    for sector_index in Telum.sector_slots(q)
+        q.iszero[sector_index] && continue
+        wmats[sector_index] = deepcopy(q.wmats[sector_index])
+        RMTs[sector_index] = deepcopy(Telum.sector_rmt(q, sector_index))
+    end
+
+    with_zero = TLArray(symm(q), qlabels, wmats, RMTs, q.inds, q.spaces)
+    @test Telum.nsectors(with_zero) == old_n
+    @test Telum.sector_count(with_zero) == Telum.sector_count(q) + 1
+    @test with_zero.isdefined[end] == false
+    @test with_zero.iszero[end] == true
+
+    wmats_bad = copy(wmats)
+    RMTs_bad = copy(RMTs)
+    wmats_bad[end] = deepcopy(q.wmats[1])
     zero_rmt = deepcopy(Telum.sector_rmt(q, 1))
-    fill!(zero_rmt.data, zero(eltype(zero_rmt.data)))
-    push!(RMTs, zero_rmt)
-
-    filtered = TLArray(symm(q), qlabels, wmats, RMTs, q.inds, q.spaces)
-    @test Telum.nsectors(filtered) == old_n
-    @test length(filtered.wmats) == old_n
-    @test length(filtered.RMTs) == old_n
-    @test size(filtered.qlabels, 2) == old_n + 1
+    fill!(zero_rmt, zero(eltype(zero_rmt)))
+    RMTs_bad[end] = zero_rmt
+    @test_throws ArgumentError TLArray(symm(q), qlabels, wmats_bad, RMTs_bad, q.inds, q.spaces)
 end
 
 @testset "wmat slot mappings infer" begin
@@ -82,16 +92,17 @@ end
         end
     end
 
-    @testset "constructor drops zero sectors without compacting qlabels" begin
+    @testset "constructor marks undefined zero sectors" begin
         for q in samples
-            _assert_zero_sector_constructor_filter(q)
+            _assert_zero_sector_constructor_state(q)
         end
     end
 
     @testset "metadata helpers infer and preserve ordering" begin
         for q in samples
             _assert_metadata_inferred(q)
-            for sector_index in 1:Telum.nsectors(q), n in 1:length(symm(q))
+            for sector_index in Telum.sector_slots(q), n in 1:length(symm(q))
+                q.iszero[sector_index] && continue
                 qlabels, cgp, legdir = Telum._sector_cgt_metadata(q, sector_index, n)
                 stored_to_phys = Telum._stored_leg_order(q, sector_index, n)
                 @test qlabels == ntuple(i -> Telum.sector_qlabel(q, sector_index, stored_to_phys[i])[n], ndims(q))
@@ -114,17 +125,57 @@ end
         @test norm(sum((q, q, q))) ≈ 3norm(q)
 
         q_perm = permutedims(q, (2, 1, 3))
+        @test q_perm isa TLArrayView
+        @test conj(q) isa TLArrayView
+        @test q * 2.0 isa TLArrayView
         from_permuted_only = sum((zero(q), q_perm))
         _assert_qlabel_storage(from_permuted_only)
         @test norm(from_permuted_only - q) < 1e-10
 
-        sorted = copy(q)
-        Telum.sort_sectors!(sorted)
+        sorted = Telum.sort_sectors(q)
         _assert_qlabel_storage(sorted)
+        @test sorted !== q
+        @test Telum.sector_rmt(sorted, 1) !== Telum.sector_rmt(q, 1)
+    end
+
+    @testset "internal TLArrayView materialization" begin
+        q = fermion_su2.F
+        active = first(i for i in Telum.sector_slots(q) if !Telum.is_sector_zero(q, i))
+
+        vp = Telum._view_permutedims(q, (2, 1, 3))
+        @test vp isa TLArrayView
+        @test Telum.materialize(vp) === q
+        @test norm(copy(vp) - permutedims(q, (2, 1, 3))) < 1e-10
+
+        vc = Telum._view_conj(q)
+        @test vc isa TLArrayView
+        @test Telum.materialize(vc) === q
+        @test norm(copy(vc) - conj(q)) < 1e-10
+
+        vs = Telum._view_scale(q, 2.0)
+        @test vs isa TLArrayView
+        rmt, alpha = Telum.sector_rmt_with_scale(vs, active)
+        @test rmt === Telum.sector_rmt(q, active)
+        @test alpha == 2.0
+        @test Telum.materialize(vs) === q
+        @test norm(copy(vs) - q * 2.0) < 1e-10
+
+        z = Telum._view_scale(q, 0.0)
+        @test z isa TLArray
+        @test Telum.sector_count(z) == Telum.sector_count(q)
+        @test Telum.nsectors(z) == 0
+        @test all(!Telum.is_sector_defined(z, i) && Telum.is_sector_zero(z, i)
+                  for i in Telum.sector_slots(z))
+
+        @test Telum._view_conj(Telum._view_conj(q)) === q
+        @test Telum._view_scale(Telum._view_scale(q, 2.0), 0.5) === q
+        @test Telum._view_permutedims(Telum._view_permutedims(q, (2, 1, 3)),
+                                      (2, 1, 3)) === q
     end
 
     @testset "decomposition assembly keeps orientation" begin
-        U, S, Vd = svd(fermion_su2.F, (1,))
+        result = svd(fermion_su2.F, (1,))
+        U, S, Vd = result.U, result.S, result.Vd
         _assert_qlabel_storage(U)
         _assert_qlabel_storage(S)
         _assert_qlabel_storage(Vd)

@@ -46,27 +46,27 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
     nr = length(info.splist)
     qlabels1 = Matrix{QT}(undef, 2, nr)
     wmats1 = _wmat_vector(PS, nr)
-    RMTs1 = Vector{LurTensor{Float64, 2 + N, Array{Float64, 2 + N}}}(undef, nr)
+
+    # leg 1 = original space, leg 2 = dual space
+    ET = eltype(info.splist)
+    dual_splist = sort!(ET[(Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N), RMTd)
+                           for (qlabels, RMTd) in info.splist], by=x->x[1])
+    spaces1 = (info.splist, dual_splist)
+    RMTs1 = Vector{DiagRMT{Float64, 2 + N}}(undef, nr)
 
     for (sector_index, (qlabels, RMTd)) in enumerate(info.splist)
-        RMT1 = LurTensor(reshape(Matrix{Float64}(I, RMTd, RMTd), RMTd, RMTd, (1 for _=1:N)...))
         dual_qlabels = Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N)
         qlabels1[1, sector_index] = qlabels
         qlabels1[2, sector_index] = dual_qlabels
 
+        cgt_dim = 1.0
         for n in 1:N
-            spdim = dimension(symm[n], qlabels[n])
-            _set_sector_wmat!(wmats1, PS, sector_index, n, LurTensor([sqrt(spdim);;]))
+            cgt_dim *= dimension(symm[n], qlabels[n])
+            _set_sector_wmat!(wmats1, PS, sector_index, n, [1.0;;])
         end
-
-        RMTs1[sector_index] = RMT1
+        scale = sqrt(cgt_dim)
+        RMTs1[sector_index] = _diag_rmt_from_values(ones(Float64, RMTd), Val(2 + N), (1, 2), scale)
     end
-
-    # leg 1 = original space, leg 2 = dual space
-    ET = eltype(info.splist)
-    dual_splist = sort!(ET[(Tuple(get_dualq(symm[n], qlabels[n]) for n in 1:N), RMTd) 
-                           for (qlabels, RMTd) in info.splist], by=x->x[1])
-    spaces1 = (info.splist, dual_splist)
 
     q1 = TLArray(symm, qlabels1, wmats1, RMTs1, inds1, spaces1)
     return q1
@@ -90,6 +90,25 @@ function legflip(q::TLArray{T, QD, N, RD}, legs::LegList) where {T, QD, N, RD}
 end
 
 function legflip(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
+                 lock=nothing, rev::Bool=false)
+    legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
+                                  rev=rev, opname="legflip")
+    return legflip(q, legs)
+end
+
+function legflip(q::TLArrayView, leg::Int)
+    return _view_rewrap(q, legflip(q.arr, _view_arr_leg(q, leg)))
+end
+
+function legflip(q::TLArrayView, legs::LegList)
+    q_flip = q
+    for leg in _normalize_legflip_legs(q, legs)
+        q_flip = legflip(q_flip, leg)
+    end
+    return q_flip
+end
+
+function legflip(q::TLArrayView; dir=nothing, itag=nothing, plev=nothing,
                  lock=nothing, rev::Bool=false)
     legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
                                   rev=rev, opname="legflip")

@@ -43,12 +43,12 @@ function do_dmrg(MPO, Nkeep_init=50, Nkeep_DMRG=50, Nsweep=4; time_blocks=true)
     return MPS
 end
 
-function run(; time_blocks=true)
+function run(; time_blocks=true, nkeeps=[20, 50], U = 4.0)
     #MPO = MajumdarGhoshMPO(1.0, 40)
-    MPO = HubbardMPO(4.0, 1.5, 1.0, 40)
+    MPO = HubbardMPO(U, 1.5, 1.0, 40)
     #MPO = XYMPO(1.0, 40)
     #MPO = XXZMPO(0.3, 0.5, 40)
-    for Nkeep_DMRG = [20, 50]
+    for Nkeep_DMRG in nkeeps
         println("Nkeep_DMRG = $Nkeep_DMRG")
         @time do_dmrg(MPO, 50, Nkeep_DMRG, 4; time_blocks)
         GC.gc()
