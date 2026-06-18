@@ -1,4 +1,5 @@
 macro time_block(enabled, msg, ex)
+    @info "$msg started"
     quote
         if $(esc(enabled))
             println($(esc(msg)))

@@ -156,7 +156,24 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     # Each sector has a D+1-leg qlabel tuple and one OM×OM identity w-matrix
     # per symmetry.
     sector_qlabels = NTuple{D + 1, QT}[]
-    wmat_buffers = _wmat_buffers(PS)
+    nonabelian_indices = nonabelian_symmetry_indices(PS)
+    M = length(nonabelian_indices)
+    total_wmat_len = 0
+    total_wmat_slots = 0
+    for entries in values(merged_info)
+        total_wmat_slots += length(entries)
+        for entry in entries
+            oms = entry[D+2:D+N+1]
+            for slot in 1:M
+                om = oms[nonabelian_indices[slot]]
+                total_wmat_len += om * om
+            end
+        end
+    end
+    wmatdata = zeros(Float64, total_wmat_len)
+    wmatinfo = Vector{WMatInfo{M}}(undef, total_wmat_slots)
+    next_wmat_offset = 1
+    next_wmat_sector = 1
     RMTs = Array{Float64, D + 1 + N}[]
 
     for (fused_qlabels, entries) in merged_info
@@ -188,18 +205,22 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
             end
             RMT_data .*= sqrt(cgt_dim_out)
             RMT_t = reshape(RMT_data, rmts_dims..., space_cnt, oms...)
+            wmatinfo[next_wmat_sector] = ntuple(Val(M)) do slot
+                om = oms[nonabelian_indices[slot]]
+                offset = next_wmat_offset
+                next_wmat_offset += om * om
+                for j in 1:om
+                    wmatdata[offset + (j - 1) * (om + 1)] = 1.0
+                end
+                (offset, om, om)
+            end
+            next_wmat_sector += 1
 
             phys_qlabels = ntuple(d -> d <= D ?
                 leginfos_adj[d].splist[orig_ind[d]][1] :
                 fused_qlabels, Val(D + 1))
             push!(sector_qlabels, phys_qlabels)
             push!(RMTs, RMT_t)
-
-            for n in 1:N
-                om_n         = oms[n]
-                wmat         = Matrix{Float64}(I, om_n, om_n)
-                _push_wmat!(wmat_buffers, PS, n, wmat)
-            end
         end
     end
 
@@ -228,8 +249,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
         qlabels[leg, sector_index] = sector[leg]
     end
 
-    wmats = _wmat_vector_from_buffers(PS, wmat_buffers, length(RMTs))
-    q = TLArray(symm, qlabels, wmats, RMTs, inds, spaces)
+    q = TLArray(symm, qlabels, wmatdata, wmatinfo, RMTs, inds, spaces)
 
     # For an originally-incoming selected leg, attach a 1j tensor so the returned
     # leg is directly contractable with the original tensor leg.

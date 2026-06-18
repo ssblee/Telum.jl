@@ -227,6 +227,9 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
     return result
 end
 
+to_sparse_array(q::TLArrayView, ::Type{FT} = Float64) where {FT} =
+    to_sparse_array(Telum._eager_tlarray(q), FT)
+
 # ─── test_compress_sector ────────────────────────────────────────────────────
 # Invariant: the effective tensor is preserved by the SVD compression (tol=0).
 #   Direct:        D[..., om3_1,...,om3_N] = Σ_p Σ_{om12} (⊗_n W[n][p]) * RMT[p][..., om12]
@@ -606,14 +609,15 @@ function test_diag_rmt_storage_and_prepared_cache()
 
     symm = (U1,)
     qlabels = [(((0,),), ((0,),))]
-    wmats = Vector{NTuple{0, Matrix{Float64}}}(undef, 1)
+    wmatdata = Float64[]
+    wmatinfo = [Telum._empty_wmat_info(Val(0))]
     RMTs = [DiagRMT([1.0, 2.0], Val(3), (1, 2))]
     spaces = ([(((0,),), 2)], [(((0,),), 2)])
-    @test TLArray(symm, qlabels, wmats, RMTs,
+    @test TLArray(symm, qlabels, wmatdata, wmatinfo, RMTs,
                   (TLIndex('+'), TLIndex('-')), spaces) isa TLArray
 
     bad_RMTs = [DiagRMT([1.0, 2.0], Val(3), (1, 0))]
-    @test_throws ArgumentError TLArray(symm, qlabels, wmats, bad_RMTs,
+    @test_throws ArgumentError TLArray(symm, qlabels, wmatdata, wmatinfo, bad_RMTs,
                                        (TLIndex('+'), TLIndex('-')), spaces)
 
     println("test_diag_rmt_storage_and_prepared_cache passed.")
@@ -688,13 +692,14 @@ end
 function test_contract_diag_rmt_tlarray()
     symm = (U1,)
     qlabels = [(((0,),), ((0,),))]
-    wmats = Vector{NTuple{0, Matrix{Float64}}}(undef, 1)
+    wmatdata = Float64[]
+    wmatinfo = [Telum._empty_wmat_info(Val(0))]
     spaces = ([(((0,),), 2)], [(((0,),), 2)])
 
-    q1 = TLArray(symm, qlabels, wmats,
+    q1 = TLArray(symm, qlabels, wmatdata, wmatinfo,
                  [DiagRMT([1.0, 2.0], Val(3), (1, 2))],
                  (TLIndex("x", '+'), TLIndex("c", '-')), spaces)
-    q2 = TLArray(symm, qlabels, wmats,
+    q2 = TLArray(symm, qlabels, wmatdata, wmatinfo,
                  [reshape([1.0, 2.0, 3.0, 4.0], 2, 2, 1)],
                  (TLIndex("c", '+'), TLIndex("y", '-')), spaces)
 
@@ -704,11 +709,11 @@ function test_contract_diag_rmt_tlarray()
 
     qlabels3 = [(((0,),), ((0,),), ((0,),))]
     spaces3 = ([(((0,),), 2)], [(((0,),), 2)], [(((0,),), 1)])
-    q3 = TLArray(symm, qlabels3, wmats,
+    q3 = TLArray(symm, qlabels3, wmatdata, wmatinfo,
                  [DiagRMT([1.0, 2.0], Val(4), (1, 2))],
                  (TLIndex("x2", '+'), TLIndex("y2", '+'), TLIndex("c2", '-')),
                  spaces3)
-    q4 = TLArray(symm, [(((0,),),)], wmats,
+    q4 = TLArray(symm, [(((0,),),)], wmatdata, wmatinfo,
                  [reshape([1.0], 1, 1)],
                  (TLIndex("c2", '+'),), ([(((0,),), 1)],))
 
@@ -952,19 +957,20 @@ function test_conj(option::LocalSpaceOptions)
 
     zero_qlabels = copy(q.F.qlabels)
     push!(zero_qlabels, first(q.F.qlabels))
-    zero_wmats = similar(q.F.wmats, length(q.F.wmats) + 1)
+    zero_wmatdata = copy(q.F.wmatdata)
+    zero_wmatinfo = copy(q.F.wmatinfo)
+    push!(zero_wmatinfo, Telum._empty_wmat_info(Val(length(q.F.wmatinfo[1]))))
     zero_RMTs = similar(q.F.RMTs, length(q.F.RMTs) + 1)
     for sector_index in Telum.sector_slots(q.F)
         q.F.iszero[sector_index] && continue
-        zero_wmats[sector_index] = q.F.wmats[sector_index]
         zero_RMTs[sector_index] = q.F.RMTs[sector_index]
     end
-    q_with_zero_sector = TLArray(symm(q.F), zero_qlabels, zero_wmats, zero_RMTs,
+    q_with_zero_sector = TLArray(symm(q.F), zero_qlabels, zero_wmatdata, zero_wmatinfo, zero_RMTs,
                                  q.F.inds, q.F.spaces)
     qzc = conj(q_with_zero_sector)
     @test qzc.iszero[end]
     @test !isassigned(qzc.RMTs, length(qzc.RMTs))
-    @test !isassigned(qzc.wmats, length(qzc.wmats))
+    @test qzc.wmatinfo[end] == Telum._empty_wmat_info(Val(length(qzc.wmatinfo[end])))
 
     for (label, qs) in cases
         qc   = conj(qs)
@@ -2120,10 +2126,11 @@ function test_svd_stored_leg_order_preserves_physical_leg_ties()
     symm = (U1,)
     inds = (TLIndex("a", '+'), TLIndex("b", '+'), TLIndex("c", '-'), TLIndex("d", '-'))
     qlabels = [(((10,),), ((10,),), ((20,),), ((20,),))]
-    wmats = Telum._wmat_vector(Telum.productsymm(symm), 1)
+    wmatdata = Float64[]
+    wmatinfo = [Telum._empty_wmat_info(Val(0))]
     RMTs = [ones(Float64, 1, 1, 1, 1, 1)]
     spaces = ntuple(leg -> [(qlabels[1][leg], 1)], 4)
-    q = TLArray(symm, qlabels, wmats, RMTs, inds, spaces)
+    q = TLArray(symm, qlabels, wmatdata, wmatinfo, RMTs, inds, spaces)
 
     qlabels_stored, cgp, stored_to_phys, legdir =
         Telum._svd_symmetry_stored_leg_order(qlabeltype(q), q, 1, Val(1))
@@ -2218,14 +2225,14 @@ function test_svd_cgtsvd_zero_leading_sector()
     ct, left_legs = _svd_cgtsvd_fixture(FermionSOptions(1, :U1, :SU2, nothing))
     @test length(ct.RMTs) > 1
 
-    zero_wmats = similar(ct.wmats, length(ct.wmats))
+    zero_wmatdata = copy(ct.wmatdata)
+    zero_wmatinfo = copy(ct.wmatinfo)
     zero_RMTs = similar(ct.RMTs, length(ct.RMTs))
     for sector_index in Telum.sector_slots(ct)
         (sector_index == 1 || ct.iszero[sector_index]) && continue
-        zero_wmats[sector_index] = ct.wmats[sector_index]
         zero_RMTs[sector_index] = ct.RMTs[sector_index]
     end
-    A = TLArray(symm(ct), copy(ct.qlabels), zero_wmats, zero_RMTs, ct.inds, ct.spaces)
+    A = TLArray(symm(ct), copy(ct.qlabels), zero_wmatdata, zero_wmatinfo, zero_RMTs, ct.inds, ct.spaces)
     @test A.iszero[1]
     @test any(!A.iszero[i] for i in Telum.sector_slots(A))
 
@@ -2439,7 +2446,7 @@ function test_contract_requires_matching_spaces_in_star(option::LocalSpaceOption
 
     first_sector, first_dim = first(B.spaces[1])
     bad_leg1 = vcat([(first_sector, first_dim + 1)], B.spaces[1][2:end])
-    B_bad = Telum.TLArray(symm(B), copy(B.qlabels), deepcopy(B.wmats),
+    B_bad = Telum.TLArray(symm(B), copy(B.qlabels), copy(B.wmatdata), copy(B.wmatinfo),
                                  deepcopy(B.RMTs), B.inds, (bad_leg1, B.spaces[2]))
 
     @test_throws AssertionError A * B_bad

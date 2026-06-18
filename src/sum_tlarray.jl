@@ -98,6 +98,7 @@ function _sum_sector_table(qs, ::Type{QT}, ::Val{QD}) where {QT, QD}
             pos += 1
         end
     end
+    resize!(table, pos - 1)
     sort!(table; by = first)
 
     unique_count = 0
@@ -163,6 +164,70 @@ function _sum_prepare_rmt_buffers(qs, ::Type{T}, ::Val{RD}) where {T, RD}
     return buffers, needs_buffer
 end
 
+function _sum_wmat_reserve_for_entry(qs, entry, ::Val{M}) where {M}
+    _, input_index, sector_index = entry
+    q = qs[input_index]
+    return ntuple(m -> length(sector_wmat_slot(q, sector_index, m)), Val(M))
+end
+
+function _sum_wmat_reserve_for_interval(qs, table, interval::UnitRange{Int},
+                                        ::Val{M}) where {M}
+    return ntuple(Val(M)) do m
+        _, first_input, first_sector = table[first(interval)]
+        first_wmat = sector_wmat_slot(qs[first_input], first_sector, m)
+        nrows = size(first_wmat, 1)
+        nrows == 1 && return 1
+
+        ncols = 0
+        for pos in interval
+            _, input_index, sector_index = table[pos]
+            wmat = sector_wmat_slot(qs[input_index], sector_index, m)
+            @assert size(wmat, 1) == nrows "_sum_wmat_reserve_for_interval requires a common sector dimension"
+            ncols += size(wmat, 2)
+        end
+        nrows * min(ncols, nrows)
+    end
+end
+
+function _sum_wmat_arena_size_upper_bound(qs, table, ::Val{M}) where {M}
+    total = 0
+    pos = 1
+    while pos <= length(table)
+        last = pos
+        while last < length(table) && table[last + 1][1] == table[pos][1]
+            last += 1
+        end
+        reserve = pos == last ?
+            _sum_wmat_reserve_for_entry(qs, table[pos], Val(M)) :
+            _sum_wmat_reserve_for_interval(qs, table, pos:last, Val(M))
+        total += sum(reserve; init=0)
+        pos = last + 1
+    end
+    return total
+end
+
+function _sum_store_wmats!(result_wmatdata::Vector{Float64},
+                           result_wmatinfo::Vector{WMatInfo{M}},
+                           next_offset::Int,
+                           sector_wmats::NTuple{M, <:AbstractMatrix},
+                           reserve::NTuple{M, Int},
+                           ::Val{M}) where {M}
+    info = ntuple(Val(M)) do m
+        wmat = sector_wmats[m]
+        len = length(wmat)
+        len == 0 && return (0, 0, 0)
+        reserved_len = reserve[m]
+        len <= reserved_len ||
+            throw(ArgumentError("sum w-matrix slot $m needs $len arena entries but only $reserved_len were reserved"))
+        offset = next_offset
+        copyto!(view(result_wmatdata, offset:offset + len - 1), vec(wmat))
+        next_offset += reserved_len
+        (offset, size(wmat, 1), size(wmat, 2))
+    end
+    push!(result_wmatinfo, info)
+    return next_offset
+end
+
 function _sum_copy_scaled!(dest::Array{T, RD}, source::AbstractArray, scale) where {T, RD}
     cscale = _sum_scale(T, scale)
     copyto!(dest, source)
@@ -223,7 +288,9 @@ function _sum_prepare_sector_rmt!(buffers::Vector{Vector{T}},
 end
 
 function _sum_single_contribution!(result_keys::Vector{NTuple{QD, QT}},
-                                   result_wmats::Vector{NTuple{M, Matrix{Float64}}},
+                                   result_wmatdata::Vector{Float64},
+                                   result_wmatinfo::Vector{WMatInfo{M}},
+                                   next_wmat_offset::Int,
                                    result_RMTs::Vector{Array{T, RD}},
                                    qs,
                                    buffers::Vector{Vector{T}},
@@ -240,15 +307,21 @@ function _sum_single_contribution!(result_keys::Vector{NTuple{QD, QT}},
         rmt = Array{T, RD}(undef, size(source_rmt))
         _sum_copy_scaled!(rmt, source_rmt, alpha)
     end
-    _sum_rmt_iszero(rmt) && return result_keys
+    _sum_rmt_iszero(rmt) && return next_wmat_offset
     push!(result_keys, key)
-    push!(result_wmats, ntuple(m -> sector_wmat_slot(q, sector_index, m), Val(M)))
+    next_wmat_offset = _sum_store_wmats!(
+        result_wmatdata, result_wmatinfo, next_wmat_offset,
+        ntuple(m -> sector_wmat_slot(q, sector_index, m), Val(M)),
+        _sum_wmat_reserve_for_entry(qs, entry, Val(M)),
+        Val(M))
     push!(result_RMTs, rmt)
-    return result_keys
+    return next_wmat_offset
 end
 
 function _sum_multi_contribution!(result_keys::Vector{NTuple{QD, QT}},
-                                  result_wmats::Vector{NTuple{M, Matrix{Float64}}},
+                                  result_wmatdata::Vector{Float64},
+                                  result_wmatinfo::Vector{WMatInfo{M}},
+                                  next_wmat_offset::Int,
                                   result_RMTs::Vector{Array{T, RD}},
                                   qs,
                                   buffers::Vector{Vector{T}},
@@ -262,15 +335,18 @@ function _sum_multi_contribution!(result_keys::Vector{NTuple{QD, QT}},
                                   ::Val{M}) where {T, QD, QT, M, RD, N, PS}
     compressed = _compress_sum_sector(qs, table, interval, buffers, needs_buffer, T,
                                       PS, Val(QD), Val(N), Val(M), Val(RD))
-    isnothing(compressed) && return result_keys
+    isnothing(compressed) && return next_wmat_offset
 
     sector_wmats, result_RMT = compressed
-    _sum_rmt_iszero(result_RMT) && return result_keys
+    _sum_rmt_iszero(result_RMT) && return next_wmat_offset
 
     push!(result_keys, key)
-    push!(result_wmats, sector_wmats)
+    next_wmat_offset = _sum_store_wmats!(
+        result_wmatdata, result_wmatinfo, next_wmat_offset, sector_wmats,
+        _sum_wmat_reserve_for_interval(qs, table, interval, Val(M)),
+        Val(M))
     push!(result_RMTs, result_RMT)
-    return result_keys
+    return next_wmat_offset
 end
 
 function _sum_prepare_wmat_slot(qs, table, interval::UnitRange{Int}, m::Int,
@@ -532,13 +608,15 @@ function _sum_tlarrays_aligned(qs, ::Type{T}, ::Val{QD}, ::Val{N}, ::Type{QT}, :
                                ::Val{M}, ::Val{RD}) where {T, QD, N, RD, QT, PS, M}
     table, unique_count = _sum_sector_table(qs, QT, Val(QD))
     result_keys = Vector{NTuple{QD, QT}}()
-    result_wmats = Vector{NTuple{M, Matrix{Float64}}}()
+    result_wmatdata = Vector{Float64}(undef, _sum_wmat_arena_size_upper_bound(qs, table, Val(M)))
+    result_wmatinfo = Vector{WMatInfo{M}}()
     result_RMTs = Vector{Array{T, RD}}()
     sizehint!(result_keys, unique_count)
-    sizehint!(result_wmats, unique_count)
+    sizehint!(result_wmatinfo, unique_count)
     sizehint!(result_RMTs, unique_count)
     buffers, needs_buffer = _sum_prepare_rmt_buffers(qs, T, Val(RD))
 
+    next_wmat_offset = 1
     pos = 1
     while pos <= length(table)
         key = table[pos][1]
@@ -548,12 +626,14 @@ function _sum_tlarrays_aligned(qs, ::Type{T}, ::Val{QD}, ::Val{N}, ::Type{QT}, :
         end
         interval = pos:last
         if pos == last
-            _sum_single_contribution!(result_keys, result_wmats, result_RMTs,
-                                      qs, buffers, needs_buffer, table[pos], Val(QD))
+            next_wmat_offset = _sum_single_contribution!(
+                result_keys, result_wmatdata, result_wmatinfo, next_wmat_offset,
+                result_RMTs, qs, buffers, needs_buffer, table[pos], Val(QD))
         else
-            _sum_multi_contribution!(result_keys, result_wmats, result_RMTs,
-                                     qs, buffers, needs_buffer, table, interval, key, PS,
-                                     Val(QD), Val(N), Val(M))
+            next_wmat_offset = _sum_multi_contribution!(
+                result_keys, result_wmatdata, result_wmatinfo, next_wmat_offset,
+                result_RMTs, qs, buffers, needs_buffer, table, interval, key, PS,
+                Val(QD), Val(N), Val(M))
         end
         pos = last + 1
     end
@@ -564,7 +644,7 @@ function _sum_tlarrays_aligned(qs, ::Type{T}, ::Val{QD}, ::Val{N}, ::Type{QT}, :
     end
 
     ref = qs[begin]
-    return TLArray(symm(ref), qlabels, result_wmats, result_RMTs,
+    return TLArray(symm(ref), qlabels, result_wmatdata, result_wmatinfo, result_RMTs,
                    inds(ref), spaces(ref))
 end
 
@@ -592,7 +672,11 @@ function _sum_tlarrays(qs::Union{Tuple{Vararg{<:AbstractTLArray}}, AbstractVecto
     return _sum_tlarrays_from_ref(qs[begin], qs)
 end
 
-Base.sum(qs::Tuple{<:AbstractTLArray, Vararg{<:AbstractTLArray}}) =
+# Keep tuple overloads anchored on concrete tensor containers. A broad
+# Tuple{<:AbstractTLArray,...} sum method invalidates Julia's REPL hint path.
+Base.sum(qs::Tuple{TLArray, Vararg{<:AbstractTLArray}}) =
+    _sum_tlarrays(qs)
+Base.sum(qs::Tuple{TLArrayView, Vararg{<:AbstractTLArray}}) =
     _sum_tlarrays(qs)
 Base.sum(qs::AbstractVector{<:AbstractTLArray}) =
     _sum_tlarrays(qs)

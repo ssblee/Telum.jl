@@ -1788,7 +1788,7 @@ function _build_svd_cgtsvd_S(::Type{PS},
                              irrepdim_caches) where {PS<:ProductSymm, N}
     QT = fieldtype(eltype(bond_splist), 1)
     qlabels = Vector{NTuple{2, QT}}(undef, length(bond_splist))
-    wmats = _wmat_vector(PS, length(bond_splist))
+    wmatdata, wmatinfo = _unit_wmat_storage(PS, length(bond_splist))
     inds_S = (TLIndex(left_tag, '+'), TLIndex(right_tag, '+'))
     ET = eltype(bond_splist)
     dual_splist = ET[
@@ -1802,16 +1802,13 @@ function _build_svd_cgtsvd_S(::Type{PS},
     for (sector_index, (sector, _)) in enumerate(bond_splist)
         dual_sector = _svd_dual_sector(PS, sector, Val(N))
         qlabels[sector_index] = (sector, dual_sector)
-        for n in 1:N
-            _set_sector_wmat!(wmats, PS, sector_index, n, [1.0;;])
-        end
         svals = sector_values[sector]
         cgt_dim = Float64(_svd_sector_degeneracy(PS, sector, irrepdim_caches, Val(N)))
         scale = sqrt(cgt_dim)
         RMTs[sector_index] = _diag_rmt_from_values(svals, Val(2 + N), (1, 2), scale)
     end
 
-    return TLArray(symmetries, qlabels, wmats, RMTs, inds_S, spaces_S)
+    return TLArray(symmetries, qlabels, wmatdata, wmatinfo, RMTs, inds_S, spaces_S)
 end
 
 function _svd_right_legs(::Val{QD}, left_legs::NTuple{L, Int}) where {QD, L}
@@ -1870,10 +1867,39 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     Tout = promote_type(T, Float64)
     qlabels_U = NTuple{L + 1, QT}[]
     qlabels_Vd = NTuple{R + 1, QT}[]
-    wmat_buffers_U = _wmat_buffers(PS)
-    wmat_buffers_Vd = _wmat_buffers(PS)
     RMTs_U = Array{Tout, L + 1 + N}[]
     RMTs_Vd = Array{Tout, R + 1 + N}[]
+    nonabelian_indices = nonabelian_symmetry_indices(PS)
+
+    n_wmat_U = 0
+    n_wmat_Vd = 0
+    total_wmat_U = 0
+    total_wmat_Vd = 0
+    for (ci, result) in enumerate(class_results)
+        isempty(keep_per_class[ci]) && continue
+        for info in result.left_infos
+            n_wmat_U += 1
+            payload = left_payloads[info.row_index]
+            for slot in 1:M
+                total_wmat_U += length(payload[slot])
+            end
+        end
+        for info in result.right_infos
+            n_wmat_Vd += 1
+            payload = right_payloads[info.row_index]
+            for slot in 1:M
+                total_wmat_Vd += length(payload[slot])
+            end
+        end
+    end
+    wmatdata_U = Vector{Float64}(undef, total_wmat_U)
+    wmatinfo_U = Vector{WMatInfo{M}}(undef, n_wmat_U)
+    wmatdata_Vd = Vector{Float64}(undef, total_wmat_Vd)
+    wmatinfo_Vd = Vector{WMatInfo{M}}(undef, n_wmat_Vd)
+    next_wmat_offset_U = 1
+    next_wmat_sector_U = 1
+    next_wmat_offset_Vd = 1
+    next_wmat_sector_Vd = 1
 
     Sector = NTuple{N, Tuple{Vararg{Int}}}
     sector_values = Dict{Sector, Vector{Float64}}()
@@ -1909,7 +1935,7 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
                 source_qlabels, source_cgp, _, source_legdir =
                     _svd_symmetry_stored_leg_order(QT, q, info.sector_index, Val(n))
                 wmat = isabelian(nth_symm(PS, Val(n))) ? _svd_trivial_iso() :
-                    copy(_svd_left_iso(left_payload, PS, Val(n)))
+                    _svd_left_iso(left_payload, PS, Val(n))
                 _svd_build_side_cgt_metadata(
                     source_qlabels, source_cgp, source_legdir, left_legs,
                     sector[n], false, wmat)
@@ -1919,9 +1945,10 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
                                          ntuple(n -> cgts_U[n].qlabels, Val(N)),
                                          ntuple(n -> cgts_U[n].cgp, Val(N)),
                                          Val(L + 1)))
-            for n in 1:N
-                _push_wmat!(wmat_buffers_U, PS, n, cgts_U[n].wmat)
-            end
+            next_wmat_offset_U = _store_wmat_tuple!(
+                wmatdata_U, wmatinfo_U, next_wmat_sector_U, next_wmat_offset_U,
+                ntuple(slot -> cgts_U[nonabelian_indices[slot]].wmat, Val(M)))
+            next_wmat_sector_U += 1
             push!(RMTs_U, rmt_U)
         end
 
@@ -1936,7 +1963,7 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
                 source_qlabels, source_cgp, _, source_legdir =
                     _svd_symmetry_stored_leg_order(QT, q, info.sector_index, Val(n))
                 wmat = isabelian(nth_symm(PS, Val(n))) ? _svd_trivial_iso() :
-                    copy(_svd_right_iso(right_payload, PS, Val(n)))
+                    _svd_right_iso(right_payload, PS, Val(n))
                 _svd_build_side_cgt_metadata(
                     source_qlabels, source_cgp, source_legdir, right_legs,
                     dual_sector[n], true, wmat)
@@ -1946,9 +1973,10 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
                                          ntuple(n -> cgts_Vd[n].qlabels, Val(N)),
                                          ntuple(n -> cgts_Vd[n].cgp, Val(N)),
                                          Val(R + 1)))
-            for n in 1:N
-                _push_wmat!(wmat_buffers_Vd, PS, n, cgts_Vd[n].wmat)
-            end
+            next_wmat_offset_Vd = _store_wmat_tuple!(
+                wmatdata_Vd, wmatinfo_Vd, next_wmat_sector_Vd, next_wmat_offset_Vd,
+                ntuple(slot -> cgts_Vd[nonabelian_indices[slot]].wmat, Val(M)))
+            next_wmat_sector_Vd += 1
             push!(RMTs_Vd, rmt_Vd)
         end
     end
@@ -1976,12 +2004,10 @@ function svd_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
         Vd_qlabels[leg, sector_index] = qlabels_Vd[sector_index][leg]
     end
 
-    wmats_U = _wmat_vector_from_buffers(PS, wmat_buffers_U, length(RMTs_U))
-    wmats_Vd = _wmat_vector_from_buffers(PS, wmat_buffers_Vd, length(RMTs_Vd))
-    U = TLArray(symmetries, U_qlabels, wmats_U, RMTs_U, inds_U, spaces_U)
+    U = TLArray(symmetries, U_qlabels, wmatdata_U, wmatinfo_U, RMTs_U, inds_U, spaces_U)
     S = _build_svd_cgtsvd_S(PS, symmetries, bond_splist, left_tag, right_tag,
                             sector_values, irrepdim_caches)
-    Vd = TLArray(symmetries, Vd_qlabels, wmats_Vd, RMTs_Vd, inds_Vd, spaces_Vd)
+    Vd = TLArray(symmetries, Vd_qlabels, wmatdata_Vd, wmatinfo_Vd, RMTs_Vd, inds_Vd, spaces_Vd)
     return SVDResult(U, S, Vd, kept_list, trunc_list)
 end
 

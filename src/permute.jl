@@ -80,7 +80,7 @@ function _permute_sector_wmat(q::AbstractTLArray{T, QD, N, RD, QT, PS}, sector_i
     qlabels, cgp, legdir = _sector_cgt_metadata(q, sector_index, n)
     return _permuted_sector_wmat(product_symms(PS)[n], qlabels,
                                  sector_wmat(q, sector_index, Val(n)),
-                                 cgp, legdir, perm)::Matrix{Float64}
+                                 cgp, legdir, perm)
 end
 
 function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
@@ -89,16 +89,21 @@ function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
     return permutedims(sector_rmt(q, sector_index), rmt_perm)
 end
 
-function _permute_sector_wmats(q::TLArray{T, QD, N}, perm::NTuple{QD, Int}, symm) where {T, QD, N}
-    out = _wmat_vector(productsymm(q), sector_count(q))
-    for n in 1:N
+function _permute_wmat_storage(q::TLArray{T, QD, N, RD, QT, PS, M},
+                               perm::NTuple{QD, Int},
+                               symm) where {T, QD, N, RD, QT, PS, M}
+    out_data = copy(q.wmatdata)
+    out_info = copy(q.wmatinfo)
+    nonabelian_indices = nonabelian_symmetry_indices(PS)
+    for slot in 1:M
+        n = nonabelian_indices[slot]
         for sector_index in sector_slots(q)
-            q.iszero[sector_index] && continue
-            _set_sector_wmat!(out, productsymm(q), sector_index, n,
-                              _permute_sector_wmat(q, sector_index, perm, n, symm))
+            _wmat_info_present(q.wmatinfo[sector_index][slot]) || continue
+            _copy_wmat_to_storage!(out_data, out_info, sector_index, slot,
+                                   _permute_sector_wmat(q, sector_index, perm, n, symm))
         end
     end
-    return out
+    return out_data, out_info
 end
 
 function _permute_sector_rmts(q::TLArray{T, QD, N, RD}, perm::NTuple{QD, Int}) where {T, QD, N, RD}
@@ -136,11 +141,11 @@ function _materialized_permutedims(q::TLArray{T, QD, N, RD}, perm) where {T, QD,
     
     # 3 & 4. Permute each sector (CGT metadata and RMT)
     new_qlabels = [ntuple(l -> sector[perm[l]], Val(QD)) for sector in q.qlabels]
-    new_wmats = _permute_sector_wmats(q, perm, symm(q))
+    new_wmatdata, new_wmatinfo = _permute_wmat_storage(q, perm, symm(q))
     new_RMTs = _permute_sector_rmts(q, perm)
     
     # 5. Assemble and return new TLArray with precomputed spaces
-    return TLArray(symm(q), new_qlabels, new_wmats, new_RMTs, new_inds, new_spaces)
+    return TLArray(symm(q), new_qlabels, new_wmatdata, new_wmatinfo, new_RMTs, new_inds, new_spaces)
 end
 
 Base.permutedims(q::AbstractTLArray, perm) = _view_permutedims(q, perm)

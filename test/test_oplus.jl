@@ -13,17 +13,20 @@ end
     q0 = getLocalSpace(option)
     q = TLArray(q0.F, ("site1", "site2", "op"))
 
-    wmats_neg = deepcopy(q.wmats)
-    for sector_index in eachindex(wmats_neg)
-        wmats_neg[sector_index][1][:] .*= -1
+    wmatdata_neg = copy(q.wmatdata)
+    wmatinfo_neg = copy(q.wmatinfo)
+    for sector_index in Telum.sector_slots(q)
+        offset, nrow, ncol = wmatinfo_neg[sector_index][1]
+        offset == 0 && continue
+        wmatdata_neg[offset:offset + nrow * ncol - 1] .*= -1
     end
 
-    q_oriented = Telum.TLArray(symm(q), copy(q.qlabels), wmats_neg,
+    q_oriented = Telum.TLArray(symm(q), copy(q.qlabels), wmatdata_neg, wmatinfo_neg,
                                       deepcopy(q.RMTs), q.inds, q.spaces)
     arr_ref = -Array(to_sparse_array(q))
     arr_oriented = Array(to_sparse_array(q_oriented))
 
-    @test all(q_oriented.wmats[sector_index][1][1] >= 0
+    @test all(Telum.sector_wmat_slot(q_oriented, sector_index, 1)[1] >= 0
               for sector_index in 1:Telum.nsectors(q_oriented))
     @test norm(arr_oriented - arr_ref) < 1e-10
 end

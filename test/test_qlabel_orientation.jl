@@ -10,14 +10,14 @@ _assert_qlabel_storage(q::TLArrayView) = _assert_qlabel_storage(copy(q))
 
 function _assert_wmat_storage(q::TLArray)
     nonabelian = Telum.nonabelian_symmetry_indices(Telum.productsymm(q))
-    @test length(q.wmats) == Telum.sector_count(q)
-    @test eltype(q.wmats) <: NTuple{length(nonabelian), Matrix{Float64}}
+    @test length(q.wmatinfo) == Telum.sector_count(q)
+    @test eltype(q.wmatinfo) <: NTuple{length(nonabelian), NTuple{3, Int}}
     for sector_index in Telum.sector_slots(q), n in 1:length(symm(q))
         q.iszero[sector_index] && continue
         wmat = Telum.sector_wmat(q, sector_index, n)
         if n in nonabelian
             slot = Telum.nonabelian_wmat_slot(Telum.productsymm(q), n)
-            @test wmat === q.wmats[sector_index][slot]
+            @test wmat == Telum.sector_wmat_slot(q, sector_index, slot)
         else
             @test size(wmat) == (1, 1)
             @test wmat[1] == 1.0
@@ -25,10 +25,24 @@ function _assert_wmat_storage(q::TLArray)
     end
 end
 
+function _append_sector_wmat_info!(wmatdata, wmatinfo, q::TLArray, sector_index::Int)
+    M = length(q.wmatinfo[sector_index])
+    info = ntuple(Val(M)) do slot
+        offset0, nrow, ncol = q.wmatinfo[sector_index][slot]
+        offset0 == 0 && return (0, 0, 0)
+        wmat = Telum.sector_wmat_slot(q, sector_index, slot)
+        offset = length(wmatdata) + 1
+        append!(wmatdata, vec(wmat))
+        (offset, nrow, ncol)
+    end
+    push!(wmatinfo, info)
+    return wmatdata, wmatinfo
+end
+
 function _assert_metadata_inferred(q::TLArray)
     Telum.nsectors(q) == 0 && return
     @inferred Telum.sector_qlabel(q, 1, 1)
-    @inferred Telum.sector_wmat(q, 1, 1)
+    @test Telum.sector_wmat(q, 1, 1) isa AbstractMatrix{Float64}
     @inferred Telum._sector_cgt_metadata(q, 1, 1)
 end
 
@@ -39,27 +53,32 @@ function _assert_zero_sector_constructor_state(q::TLArray)
     qlabels = copy(q.qlabels)
     push!(qlabels, q.qlabels[1])
 
-    wmats = Vector{eltype(q.wmats)}(undef, Telum.sector_count(q) + 1)
+    wmatdata = copy(q.wmatdata)
+    wmatinfo = copy(q.wmatinfo)
+    push!(wmatinfo, Telum._empty_wmat_info(Val(length(q.wmatinfo[1]))))
     RMTs = Vector{eltype(q.RMTs)}(undef, Telum.sector_count(q) + 1)
     for sector_index in Telum.sector_slots(q)
         q.iszero[sector_index] && continue
-        wmats[sector_index] = deepcopy(q.wmats[sector_index])
         RMTs[sector_index] = deepcopy(Telum.sector_rmt(q, sector_index))
     end
 
-    with_zero = TLArray(symm(q), qlabels, wmats, RMTs, q.inds, q.spaces)
+    with_zero = TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, q.spaces)
     @test Telum.nsectors(with_zero) == old_n
     @test Telum.sector_count(with_zero) == Telum.sector_count(q) + 1
     @test with_zero.isdefined[end] == false
     @test with_zero.iszero[end] == true
 
-    wmats_bad = copy(wmats)
+    wmatdata_with_extra = copy(q.wmatdata)
+    wmatinfo_with_extra = copy(q.wmatinfo)
+    _append_sector_wmat_info!(wmatdata_with_extra, wmatinfo_with_extra, q, 1)
     RMTs_bad = copy(RMTs)
-    wmats_bad[end] = deepcopy(q.wmats[1])
     zero_rmt = deepcopy(Telum.sector_rmt(q, 1))
     fill!(zero_rmt, zero(eltype(zero_rmt)))
     RMTs_bad[end] = zero_rmt
-    @test_throws ArgumentError TLArray(symm(q), qlabels, wmats_bad, RMTs_bad, q.inds, q.spaces)
+    with_zero_rmt = TLArray(symm(q), qlabels, wmatdata_with_extra, wmatinfo_with_extra,
+                            RMTs_bad, q.inds, q.spaces)
+    @test with_zero_rmt.isdefined[end] == true
+    @test with_zero_rmt.iszero[end] == true
 end
 
 @testset "wmat slot mappings infer" begin

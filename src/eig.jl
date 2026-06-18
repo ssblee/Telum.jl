@@ -44,24 +44,14 @@ function EigenResult(V::TLArray, D::TLArray, V_inv, eig_list)
         V, D, V_inv, eig_list)
 end
 
-function _eig_identity_wmats(symm::NTuple{N, Any},
-                             sector_qlabels::NTuple{N, Tuple{Vararg{Int}}}) where {N}
-    return ntuple(N) do n
-        [1.0;;]
-    end
-end
-
 function _append_missing_eig_sectors!(symm::NTuple{N, Any},
                                       spaces,
                                       covered,
                                       qlabels_D,
-                                      wmats_D,
                                       RMTs_D,
                                       qlabels_V,
-                                      wmats_V,
                                       RMTs_V,
                                       qlabels_Vinv,
-                                      wmats_Vinv,
                                       RMTs_Vinv,
                                       eig_list,
                                       cgp::NTuple{2, Int},
@@ -76,20 +66,13 @@ function _append_missing_eig_sectors!(symm::NTuple{N, Any},
 
         rmt_eye = reshape(Matrix{T_out}(I, dim, dim), dim, dim, ones(Int, N)...)
         rmt_eye[:] .*= sqrt(Float64(cgt_dim))
-        identity_wmats = _eig_identity_wmats(symm, sector_qlabels)
 
         push!(qlabels_V, sector_qlabels)
         push!(RMTs_V, rmt_eye)
-        for n in 1:N
-            _push_wmat!(wmats_V, symm, n, identity_wmats[n])
-        end
 
         if !isnothing(RMTs_Vinv)
             push!(qlabels_Vinv, sector_qlabels)
             push!(RMTs_Vinv, rmt_eye)
-            for n in 1:N
-                _push_wmat!(wmats_Vinv, symm, n, identity_wmats[n])
-            end
         end
     end
 end
@@ -187,7 +170,7 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT, PS, M, RMT},
                           picks::Dict{NTuple{N, Tuple{Vararg{Int}}}, Vector{Int}};
                           mode::Symbol) where {T, N, RD, QT, PS, M, RMT}
     qlabels_out = QT[]
-    wmat_buffers = _wmat_buffers(productsymm(template))
+    source_wmat_sectors = Int[]
     RMTs_out = mode == :diag && RMT <: DiagRMT ? DiagRMT{T, RD}[] : Array{T, RD}[]
     sector_counts = Dict{NTuple{N, Tuple{Vararg{Int}}}, Int}()
 
@@ -225,9 +208,7 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT, PS, M, RMT},
 
         push!(qlabels_out, sector)
         push!(RMTs_out, rmt_new)
-        for n in 1:N
-            _push_wmat!(wmat_buffers, productsymm(template), n, sector_wmat(template, sector_index, n))
-        end
+        push!(source_wmat_sectors, sector_index)
     end
 
     function build_selected_space(base_space, dim_fn)
@@ -263,8 +244,8 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT, PS, M, RMT},
         qlabels_mat[1, sector_index] = sector
         qlabels_mat[2, sector_index] = sector
     end
-    wmats_out = _wmat_vector_from_buffers(productsymm(template), wmat_buffers, length(RMTs_out))
-    return TLArray(symm(template), qlabels_mat, wmats_out, RMTs_out, template.inds, spaces_out)
+    wmatdata_out, wmatinfo_out = _copy_wmat_storage(template, source_wmat_sectors; deep=true)
+    return TLArray(symm(template), qlabels_mat, wmatdata_out, wmatinfo_out, RMTs_out, template.inds, spaces_out)
 end
 
 function _effective_eigen_keep_count(eig_entries,
@@ -338,8 +319,6 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     T_out    = promote_type(T, Float64)
     qlabels_D = QT[]
     qlabels_V = QT[]
-    wmats_D = _wmat_buffers(productsymm(q))
-    wmats_V = _wmat_buffers(productsymm(q))
     RMTs_D = DiagRMT{T_out, 2 + N}[]
     RMTs_V = Array{T_out, 2 + N}[]
     # Eigenvalue, degeneracy, sector qlabels, in-sector index
@@ -378,18 +357,13 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
         push!(qlabels_V, sector_qlabels)
         push!(RMTs_D, rmt_D)
         push!(RMTs_V, rmt_V)
-        for n in 1:N
-            wmat_n = [1.0;;]
-            _push_wmat!(wmats_D, productsymm(q), n, wmat_n)
-            _push_wmat!(wmats_V, productsymm(q), n, wmat_n)
-        end
     end
 
     covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in sector_slots(q) if !q.iszero[sector_index])
     _append_missing_eig_sectors!(symmetries, q.spaces[1], covered,
-        qlabels_D, wmats_D, RMTs_D,
-        qlabels_V, wmats_V, RMTs_V,
-        nothing, nothing, nothing,
+        qlabels_D, RMTs_D,
+        qlabels_V, RMTs_V,
+        nothing, nothing,
         eig_list, cgp, T_out)
 
     # Sort eig_list ascending by eigenvalue.
@@ -406,12 +380,12 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     inds_V = (TLIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
               TLIndex(eig_tag, dirs[2]))
 
+    wmatdata_D, wmatinfo_D = _unit_wmat_storage(productsymm(q), length(RMTs_D))
+    wmatdata_V, wmatinfo_V = _unit_wmat_storage(productsymm(q), length(RMTs_V))
     D = TLArray(symmetries, _eig_qlabel_matrix(qlabels_D),
-                       _wmat_vector_from_buffers(productsymm(q), wmats_D, length(RMTs_D)),
-                       RMTs_D, inds_D, spaces_D)
+                wmatdata_D, wmatinfo_D, RMTs_D, inds_D, spaces_D)
     V = TLArray(symmetries, _eig_qlabel_matrix(qlabels_V),
-                       _wmat_vector_from_buffers(productsymm(q), wmats_V, length(RMTs_V)),
-                       RMTs_V, inds_V, spaces_V)
+                wmatdata_V, wmatinfo_V, RMTs_V, inds_V, spaces_V)
 
     return EigenResult(V, D, nothing, eig_list)
 end
@@ -430,9 +404,6 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     qlabels_D = QT[]
     qlabels_V = QT[]
     qlabels_Vinv = QT[]
-    wmats_D = _wmat_buffers(productsymm(q))
-    wmats_V = _wmat_buffers(productsymm(q))
-    wmats_Vinv = _wmat_buffers(productsymm(q))
     RMTs_D = DiagRMT{T_out, 2 + N}[]
     RMTs_V = Array{T_out, 2 + N}[]
     RMTs_Vinv = Array{T_out, 2 + N}[]
@@ -475,19 +446,13 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
         push!(RMTs_D, rmt_D)
         push!(RMTs_V, rmt_V)
         push!(RMTs_Vinv, rmt_Vinv)
-        for n in 1:N
-            wmat_n = [1.0;;]
-            _push_wmat!(wmats_D, productsymm(q), n, wmat_n)
-            _push_wmat!(wmats_V, productsymm(q), n, wmat_n)
-            _push_wmat!(wmats_Vinv, productsymm(q), n, wmat_n)
-        end
     end
 
     covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in sector_slots(q) if !q.iszero[sector_index])
     _append_missing_eig_sectors!(symmetries, q.spaces[1], covered,
-        qlabels_D, wmats_D, RMTs_D,
-        qlabels_V, wmats_V, RMTs_V,
-        qlabels_Vinv, wmats_Vinv, RMTs_Vinv,
+        qlabels_D, RMTs_D,
+        qlabels_V, RMTs_V,
+        qlabels_Vinv, RMTs_Vinv,
         eig_list, cgp, T_out)
 
     sort!(eig_list; by = x -> _eig_sort_value(x[1], false))
@@ -506,15 +471,15 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     inds_Vinv = (TLIndex(eig_tag, dirs[1]),
                  TLIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.dual))
 
+    wmatdata_D, wmatinfo_D = _unit_wmat_storage(productsymm(q), length(RMTs_D))
+    wmatdata_V, wmatinfo_V = _unit_wmat_storage(productsymm(q), length(RMTs_V))
+    wmatdata_Vinv, wmatinfo_Vinv = _unit_wmat_storage(productsymm(q), length(RMTs_Vinv))
     D    = TLArray(symmetries, _eig_qlabel_matrix(qlabels_D),
-                          _wmat_vector_from_buffers(productsymm(q), wmats_D, length(RMTs_D)),
-                          RMTs_D, inds_D, spaces_D)
+                   wmatdata_D, wmatinfo_D, RMTs_D, inds_D, spaces_D)
     V    = TLArray(symmetries, _eig_qlabel_matrix(qlabels_V),
-                          _wmat_vector_from_buffers(productsymm(q), wmats_V, length(RMTs_V)),
-                          RMTs_V, inds_V, spaces_V)
+                   wmatdata_V, wmatinfo_V, RMTs_V, inds_V, spaces_V)
     Vinv = TLArray(symmetries, _eig_qlabel_matrix(qlabels_Vinv),
-                          _wmat_vector_from_buffers(productsymm(q), wmats_Vinv, length(RMTs_Vinv)),
-                          RMTs_Vinv, inds_Vinv, spaces_Vinv)
+                   wmatdata_Vinv, wmatinfo_Vinv, RMTs_Vinv, inds_Vinv, spaces_Vinv)
 
     return EigenResult(V, D, Vinv, eig_list)
 end

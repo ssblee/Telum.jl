@@ -63,7 +63,7 @@ function HubbardMPO(U, μ, t, N)
 end
 
 function XYMPO(J, N)
-    option = SpinOptions(U1, 1//2)
+    option = SpinOptions(:U1, 1)
     q = getLocalSpace(option, ("site", "site", "op"))
 
     i4d = addSingleton(q.I, (3, 4); itag=("left", "right"), dir=('+', '-'))
@@ -89,7 +89,7 @@ function XYMPO(J, N)
 end
 
 function XXZMPO(δ, h, N)
-    option = SpinOptions(U1, 1//2)
+    option = SpinOptions(:U1, 1)
     q = getLocalSpace(option, ("site", "site", "op"))
 
     i4d = addSingleton(q.I, (3, 4); itag=("left", "right"), dir=('+', '-'))

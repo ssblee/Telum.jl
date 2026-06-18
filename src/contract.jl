@@ -1794,9 +1794,24 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
         result_pos += 1
     end
     result_qlabels = Matrix{QT}(undef, QD_out, res_nsectors)
-    result_wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, res_nsectors)
     result_RMTs = Vector{Array{RT, RD_out}}(undef, res_nsectors)
     nonabelian_indices = nonabelian_symmetry_indices(PS)
+    result_wmatinfo = Vector{WMatInfo{M}}(undef, res_nsectors)
+    total_wmat_len = 0
+    for out_pos in eachindex(out_keys)
+        valid_output[out_pos] || continue
+        result_pos = out_to_result[out_pos]
+        U_mats = prepared_sectors[out_pos][1]
+        result_wmatinfo[result_pos] = ntuple(Val(M)) do m
+            n = nonabelian_indices[m]
+            U = U_mats[n]
+            len = length(U)
+            offset = total_wmat_len + 1
+            total_wmat_len += len
+            (offset, size(U, 1), size(U, 2))
+        end
+    end
+    result_wmatdata = Vector{Float64}(undef, total_wmat_len)
     for out_pos in eachindex(out_keys)
         valid_output[out_pos] || continue
         result_pos = out_to_result[out_pos]
@@ -1819,12 +1834,14 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
         U_mats, result_RMT = _contract_prepared_compress_sector(
             prepared, sector_pairs, permuted_rmts1, permuted_rmts2,
             kept_sizes1, kept_sizes2, contract_temp, Val(RD_out))
+        for m in 1:M
+            n = nonabelian_indices[m]
+            U = U_mats[n]
+            offset, nrow, ncol = result_wmatinfo[result_pos][m]
+            copyto!(view(result_wmatdata, offset:offset + nrow * ncol - 1), vec(U))
+        end
         if iszero(sum(abs2, result_RMT))
             continue
-        end
-        result_wmats[result_pos] = ntuple(Val(M)) do m
-            n = nonabelian_indices[m]
-            U_mats[n]
         end
         result_RMTs[result_pos] = result_RMT
     end
@@ -1859,6 +1876,6 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
     spaces_out = (ntuple(i -> spaces1[free1[i]], Val(QD1 - CN))...,
                   ntuple(i -> spaces2[free2[i]], Val(QD2 - CN))...)
 
-    return TLArray(symmetries, result_qlabels, result_wmats, result_RMTs,
+    return TLArray(symmetries, result_qlabels, result_wmatdata, result_wmatinfo, result_RMTs,
                           final_inds, spaces_out)::TLArray{promote_type(T1, T2, Float64), QD_out, N, RD_out, QT, PS, M, Array{promote_type(T1, T2, Float64), RD_out}}
 end

@@ -239,7 +239,7 @@ function getLocalSpace(opts::LocalSpaceOptions,
         end
         
         fields = _localspace_cgt_fields(reduced, symm, spaces)
-        q = TLArray(symm, fields.qlabels, fields.wmats, fields.RMTs, inds[1:qd], spaces)
+        q = TLArray(symm, fields.qlabels, fields.wmatdata, fields.wmatinfo, fields.RMTs, inds[1:qd], spaces)
         Telum[name] = q
     end
     return NamedTuple(Telum)

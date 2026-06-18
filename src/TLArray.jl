@@ -81,62 +81,133 @@ end
 
 @inline _trivial_wmat() = ones(1, 1)
 
-const DenseWMat = Matrix{Float64}
+const WMatInfo{M} = NTuple{M, NTuple{3, Int}}
 
 @inline _wmat_tuple_width(::Type{PS}) where {PS<:ProductSymm} =
     n_nonabelian_symmetries(PS)
 
-@inline _empty_wmat_tuple(::Val{M}) where {M} =
-    ntuple(_ -> Matrix{Float64}(undef, 0, 0), Val(M))
+@inline _empty_wmat_info(::Val{M}) where {M} =
+    ntuple(_ -> (0, 0, 0), Val(M))
 
-@inline _wmat_vector(::Type{PS}, ::Val{M}, nsectors::Int) where {PS<:ProductSymm, M} =
-    [_empty_wmat_tuple(Val(M)) for _ in 1:nsectors]
-@inline _wmat_vector(::Type{PS}, nsectors::Int) where {PS<:ProductSymm} =
-    _wmat_vector(PS, Val(_wmat_tuple_width(PS)), nsectors)
-@inline _wmat_vector(symm::NTuple, nsectors::Int) =
-    _wmat_vector(productsymm(symm), nsectors)
-
-@generated function _wmat_buffers(::Type{PS}) where {PS<:ProductSymm}
-    M = length(Tuple(i for (i, S) in pairs(product_symms(PS)) if !isabelian(S)))
-    return Expr(:tuple, (:(DenseWMat[]) for _ in 1:M)...)
-end
-@inline _wmat_buffers(symm::NTuple) = _wmat_buffers(productsymm(symm))
-
-@inline _stored_wmat(wmat::AbstractMatrix{<:Real}) = Matrix{Float64}(wmat)
-
-@inline function _push_wmat!(buffers, ::Type{PS}, n::Int, wmat) where {PS<:ProductSymm}
-    isabelian(product_symms(PS)[n]) && return buffers
-    push!(buffers[nonabelian_wmat_slot(PS, n)], _stored_wmat(wmat))
-    return buffers
+@inline function _wmat_info_present(info::NTuple{3, Int})
+    offset, nrow, ncol = info
+    return offset != 0 || nrow != 0 || ncol != 0
 end
 
-@inline _push_wmat!(buffers, symm::NTuple, n::Int, wmat) =
-    _push_wmat!(buffers, productsymm(symm), n, wmat)
+function _validate_wmat_storage(wmatdata::Vector{Float64},
+                                wmatinfo::Vector{WMatInfo{M}},
+                                nslots::Int) where {M}
+    length(wmatinfo) == nslots ||
+        throw(ArgumentError("w-matrix info length must equal number of sector slots"))
+    ranges = Tuple{Int, Int}[]
+    for sector in eachindex(wmatinfo)
+        infos = wmatinfo[sector]
+        for slot in 1:M
+            offset, nrow, ncol = infos[slot]
+            if offset == 0 && nrow == 0 && ncol == 0
+                continue
+            end
+            offset >= 1 || throw(ArgumentError("w-matrix sector $sector slot $slot has invalid offset $offset"))
+            nrow > 0 && ncol > 0 ||
+                throw(ArgumentError("w-matrix sector $sector slot $slot has invalid size ($nrow, $ncol)"))
+            last = offset + nrow * ncol - 1
+            last <= length(wmatdata) ||
+                throw(ArgumentError("w-matrix sector $sector slot $slot range exceeds wmatdata length"))
+            push!(ranges, (offset, last))
+        end
+    end
+    sort!(ranges; by=first)
+    for i in 2:length(ranges)
+        ranges[i][1] <= ranges[i - 1][2] &&
+            throw(ArgumentError("w-matrix arena ranges must not overlap"))
+    end
+    return nothing
+end
 
-function _wmat_vector_from_buffers(::Type{PS}, buffers, nsectors::Int) where {PS<:ProductSymm}
+function _empty_wmat_storage(::Type{PS}) where {PS<:ProductSymm}
     M = _wmat_tuple_width(PS)
-    out = _wmat_vector(PS, Val(M), nsectors)
-    for slot in 1:M
-        length(buffers[slot]) == nsectors ||
-            throw(ArgumentError("w-matrix buffer $slot has length $(length(buffers[slot])) but expected $nsectors"))
-    end
-    for sector_index in 1:nsectors
-        out[sector_index] = ntuple(slot -> buffers[slot][sector_index], Val(M))
-    end
-    return out
+    return Float64[], WMatInfo{M}[]
 end
-@inline _wmat_vector_from_buffers(symm::NTuple, buffers, nsectors::Int) =
-    _wmat_vector_from_buffers(productsymm(symm), buffers, nsectors)
 
-@inline function _set_sector_wmat!(wmats::Vector{NTuple{M, Matrix{Float64}}},
-                                   ::Type{PS}, sector_index::Int, n::Int, wmat) where {M, PS<:ProductSymm}
-    isabelian(product_symms(PS)[n]) && return wmats
-    slot = nonabelian_wmat_slot(PS, n)
-    wmats[sector_index] = Base.setindex(wmats[sector_index], _stored_wmat(wmat), slot)
-    return wmats
+@inline _empty_wmat_storage(symm::NTuple) =
+    _empty_wmat_storage(productsymm(symm))
+
+function _append_wmat_tuple!(wmatdata::Vector{Float64},
+                             wmatinfo::Vector{WMatInfo{M}},
+                             wmats::NTuple{M, <:AbstractMatrix}) where {M}
+    info = ntuple(Val(M)) do slot
+        wmat = wmats[slot]
+        len = length(wmat)
+        len == 0 && return (0, 0, 0)
+        offset = length(wmatdata) + 1
+        append!(wmatdata, vec(wmat))
+        (offset, size(wmat, 1), size(wmat, 2))
+    end
+    push!(wmatinfo, info)
+    return wmatdata, wmatinfo
 end
-@inline _set_sector_wmat!(wmats::Vector, symm::NTuple, sector_index::Int, n::Int, wmat) =
-    _set_sector_wmat!(wmats, productsymm(symm), sector_index, n, wmat)
+
+function _store_wmat_tuple!(wmatdata::Vector{Float64},
+                            wmatinfo::Vector{WMatInfo{M}},
+                            sector::Int,
+                            next_offset::Int,
+                            wmats::NTuple{M, <:AbstractMatrix}) where {M}
+    wmatinfo[sector] = ntuple(Val(M)) do slot
+        wmat = wmats[slot]
+        len = length(wmat)
+        len == 0 && return (0, 0, 0)
+        offset = next_offset
+        copyto!(view(wmatdata, offset:offset + len - 1), vec(wmat))
+        next_offset += len
+        (offset, size(wmat, 1), size(wmat, 2))
+    end
+    return next_offset
+end
+
+function _unit_wmat_storage(::Type{PS}, nslots::Int) where {PS<:ProductSymm}
+    M = _wmat_tuple_width(PS)
+    total = M * nslots
+    data = ones(Float64, total)
+    info = Vector{WMatInfo{M}}(undef, nslots)
+    offset = 1
+    for sector in 1:nslots
+        info[sector] = ntuple(Val(M)) do _
+            current = offset
+            offset += 1
+            (current, 1, 1)
+        end
+    end
+    return data, info
+end
+
+@inline _unit_wmat_storage(symm::NTuple, nslots::Int) =
+    _unit_wmat_storage(productsymm(symm), nslots)
+
+@inline function _wmat_from_storage(wmatdata::Vector{Float64},
+                                    wmatinfo::Vector{WMatInfo{M}},
+                                    sector::Int,
+                                    slot::Int) where {M}
+    offset, nrow, ncol = wmatinfo[sector][slot]
+    if offset == 0 && nrow == 0 && ncol == 0
+        throw(ArgumentError("w-matrix sector $sector slot $slot is not assigned"))
+    end
+    return reshape(@view(wmatdata[offset:offset + nrow * ncol - 1]), nrow, ncol)
+end
+
+@inline function _copy_wmat_to_storage!(wmatdata::Vector{Float64},
+                                        wmatinfo::Vector{WMatInfo{M}},
+                                        sector::Int,
+                                        slot::Int,
+                                        wmat::AbstractMatrix) where {M}
+    offset, nrow, ncol = wmatinfo[sector][slot]
+    if offset == 0 && nrow == 0 && ncol == 0
+        throw(ArgumentError("w-matrix sector $sector slot $slot is not assigned"))
+    end
+    size(wmat) == (nrow, ncol) ||
+        throw(DimensionMismatch("w-matrix sector $sector slot $slot expected size ($nrow, $ncol), got $(size(wmat))"))
+    copyto!(view(wmatdata, offset:offset + nrow * ncol - 1), vec(wmat))
+    return wmatdata
+end
 
 # ─── Tag helpers ──────────────────────────────────────────────────────────────
 #
@@ -292,7 +363,9 @@ function _localspace_cgt_fields(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Va
     @assert RD == QD + N; @assert QD == 2 || QD == 3
     QT = qlabeltype(symm)
     qlabels = Vector{NTuple{QD, QT}}(undef, length(data))
-    wmats = _wmat_vector(symm, length(data))
+    PS = productsymm(symm)
+    wmatdata, wmatinfo = _empty_wmat_storage(PS)
+    nonabelian_indices = nonabelian_symmetry_indices(PS)
     RMTs = Array{T, RD}[]
 
     for (sector_index, (sector_qlabels, block0)) in pairs(data)
@@ -325,15 +398,13 @@ function _localspace_cgt_fields(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Va
             end
         end
 
-        for i in 1:N
-            _set_sector_wmat!(wmats, symm, sector_index, i, sector_wmats[i])
-        end
+        _append_wmat_tuple!(wmatdata, wmatinfo,
+                            ntuple(slot -> sector_wmats[nonabelian_indices[slot]],
+                                   Val(length(nonabelian_indices))))
         push!(RMTs, RMT)
     end
 
-    q = TLArray(symm, qlabels, wmats, RMTs,
-                       ntuple(_ -> TLIndex('+'), Val(QD)), spaces)
-    return _tlarray_fields(q)
+    return (qlabels = qlabels, wmatdata = wmatdata, wmatinfo = wmatinfo, RMTs = RMTs)
 end
 
 # ─── TLArray invariant checkers ─────────────────────────────────────────────
@@ -380,7 +451,8 @@ abstract type AbstractTLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:Abstrac
 struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} <:
        AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
     qlabels::Vector{NTuple{QD, QT}}
-    wmats::Vector{NTuple{M, Matrix{Float64}}}
+    wmatdata::Vector{Float64}
+    wmatinfo::Vector{WMatInfo{M}}
     RMTs::Vector{RMT}
     isdefined::BitVector
     iszero::BitVector
@@ -391,7 +463,8 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} 
 
     function TLArray(symm::NTuple{N, Any},
         qlabels::Vector{QL},
-        wmats::Vector{NTuple{M, Matrix{Float64}}},
+        wmatdata::Vector{Float64},
+        wmatinfo::Vector{WMatInfo{M}},
         RMTs::Vector{RMT},
         inds::NTuple{QD, TLIndex},
         spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {
@@ -405,25 +478,18 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} 
         typed_qlabels = Vector{NTuple{QD, QT}}(qlabels)
         M == n_nonabelian_symmetries(PS) ||
             throw(ArgumentError("w-matrix tuple width must equal the number of non-Abelian symmetries"))
-        length(wmats) == length(RMTs) ||
-            throw(ArgumentError("w-matrix vector length must equal number of sectors"))
         length(typed_qlabels) == length(RMTs) ||
             throw(ArgumentError("qlabels length must equal number of sector slots"))
+        _validate_wmat_storage(wmatdata, wmatinfo, length(RMTs))
 
         sector_isdefined = falses(length(RMTs))
         sector_iszero = falses(length(RMTs))
         for sector_index in eachindex(RMTs)
             rmt_defined = isassigned(RMTs, sector_index)
-            wmat_defined = M == 0 ? rmt_defined : isassigned(wmats, sector_index)
-            rmt_defined == wmat_defined ||
-                throw(ArgumentError("sector $sector_index must define both RMT and w-matrices or neither"))
             if rmt_defined
                 _check_tlarray_rmt_storage(RMTs[sector_index], Val(QD))
-                if _rmt_iszero(RMTs[sector_index])
-                    throw(ArgumentError("sector $sector_index defines a zero RMT; zero sectors must be left undefined"))
-                end
                 sector_isdefined[sector_index] = true
-                sector_iszero[sector_index] = false
+                sector_iszero[sector_index] = _rmt_iszero(RMTs[sector_index])
             else
                 sector_isdefined[sector_index] = false
                 sector_iszero[sector_index] = true
@@ -432,9 +498,11 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} 
 
         typed_spaces = ntuple(l -> convert(Vector{Tuple{QT, Int}}, spaces[l]), QD)
         q = new{T, QD, N, RD, QT, PS, M, RMT}(
-            typed_qlabels, wmats, RMTs, sector_isdefined, sector_iszero, inds, typed_spaces)
+            typed_qlabels, wmatdata, wmatinfo, RMTs, sector_isdefined, sector_iszero, inds, typed_spaces)
         _check_unique_inds(q.inds)
         _check_empty_tag_lock(q.inds)
+        _normalize_wmats!(q)
+        _orient_wmats!(q)
         return q
     end
 end
@@ -463,7 +531,8 @@ struct TLArrayView{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, R
     conj::Bool
     scale::T
     perm::NTuple{QD, Int}
-    wmats::Vector{NTuple{M, Matrix{Float64}}}
+    wmatdata::Vector{Float64}
+    wmatinfo::Vector{WMatInfo{M}}
 end
 
 function _qlabel_vector(qlabels::AbstractMatrix{QT}, ::Val{QD}) where {QT, QD}
@@ -474,12 +543,13 @@ end
 
 function TLArray(symm::NTuple{N, Any},
                  qlabels::AbstractMatrix{QT},
-                 wmats::Vector{NTuple{M, Matrix{Float64}}},
+                 wmatdata::Vector{Float64},
+                 wmatinfo::Vector{WMatInfo{M}},
                  RMTs::Vector{RMT},
                  inds::NTuple{QD, TLIndex},
                  spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {
         N, QD, QT, M, T, RD, RMT<:AbstractArray{T, RD}}
-    return TLArray(symm, _qlabel_vector(qlabels, Val(QD)), wmats, RMTs, inds, spaces)
+    return TLArray(symm, _qlabel_vector(qlabels, Val(QD)), wmatdata, wmatinfo, RMTs, inds, spaces)
 end
 
 _compute_spaces(q::TLArray) = q.spaces
@@ -510,7 +580,15 @@ product_symms(q::AbstractTLArray) = product_symms(productsymm(q))
 nsymms(q::AbstractTLArray) = nsymms(productsymm(q))
 
 Base.propertynames(q::TLArray, private::Bool=false) =
-    (:qlabels, :wmats, :RMTs, :isdefined, :iszero, :inds, :spaces)
+    (:qlabels, :wmatdata, :wmatinfo, :RMTs, :isdefined, :iszero, :inds, :spaces)
+Base.propertynames(q::TLArrayView, private::Bool=false) =
+    (:arr, :conj, :scale, :perm, :wmatdata, :wmatinfo, :inds, :spaces)
+
+function Base.getproperty(q::TLArrayView, name::Symbol)
+    name === :inds && return inds(q)
+    name === :spaces && return spaces(q)
+    return getfield(q, name)
+end
 
 @inline Base.eltype(::Type{<:AbstractTLArray{T}}) where {T} = T
 @inline Base.ndims(::Type{<:AbstractTLArray{T, QD}}) where {T, QD} = QD
@@ -532,21 +610,17 @@ Base.propertynames(q::TLArray, private::Bool=false) =
     q.qlabels[sector][leg]::QT
 @inline function sector_wmat(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, sector::Int, n::Int) where {T, QD, N, RD, QT, PS, M, RMT}
     isabelian(symm(q)[n]) && return _trivial_wmat()
-    q.isdefined[sector] || throw(ArgumentError("sector $sector is not evaluated"))
-    return q.wmats[sector][nonabelian_wmat_slot(PS, n)]
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, nonabelian_wmat_slot(PS, n))
 end
 @inline function sector_wmat(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, sector::Int, ::Val{n}) where {T, QD, N, RD, QT, PS, M, RMT, n}
     is_stored_wmat_symmetry(PS, Val(n)) || return _trivial_wmat()
-    q.isdefined[sector] || throw(ArgumentError("sector $sector is not evaluated"))
-    return q.wmats[sector][nonabelian_wmat_slot(PS, Val(n))]
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, nonabelian_wmat_slot(PS, Val(n)))
 end
 @inline function sector_wmat_slot(q::TLArray, sector::Int, slot::Int)
-    q.isdefined[sector] || throw(ArgumentError("sector $sector is not evaluated"))
-    return q.wmats[sector][slot]
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, slot)
 end
 @inline function sector_wmat_slot(q::TLArrayView, sector::Int, slot::Int)
-    is_sector_defined(q, sector) || throw(ArgumentError("sector $sector is not evaluated"))
-    return q.wmats[sector][slot]
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, slot)
 end
 @inline function sector_wmat_slot(q::AbstractTLArray, sector::Int, slot::Int)
     n = nonabelian_symmetry_indices(productsymm(q))[slot]
@@ -598,6 +672,20 @@ end
     sector_qlabel(QT, q.arr, sector, q.perm[leg])
 @inline sector_rmt_axis_dim(q::TLArrayView, sector::Int, leg::Int) =
     sector_rmt_axis_dim(q.arr, sector, q.perm[leg])
+
+function Base.hvcat(rows::Tuple{Vararg{Int}}, qs::AbstractTLArray...)
+    nrows = length(rows)
+    ncols = rows[1]
+    all(==(ncols), rows) || throw(ArgumentError("TLArray matrix literal requires rectangular rows"))
+    length(qs) == nrows * ncols || throw(ArgumentError("TLArray matrix literal has inconsistent dimensions"))
+    out = Matrix{AbstractTLArray}(undef, nrows, ncols)
+    pos = 1
+    for i in 1:nrows, j in 1:ncols
+        out[i, j] = qs[pos]
+        pos += 1
+    end
+    return out
+end
 
 function _conj_sector_wmat(q::AbstractTLArray, sector::Int, n::Int, wmat)
     S = symm(q)[n]
@@ -662,17 +750,22 @@ function _view_sector_wmat_slot(arr::AbstractTLArray{T, QD, N, RD, QT, PS}, sect
     return _conj_sector_wmat_after_perm(arr, sector, n, wmat, perm)
 end
 
-function _view_wmat_vector(arr::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
-                           conj_flag::Bool, scale::T,
-                           perm::NTuple{QD, Int}) where {T, QD, N, RD, QT, PS, M, RMT}
-    wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, sector_count(arr))
-    M == 0 && return wmats
-    for sector in sector_slots(arr)
-        is_sector_zero(arr, sector) && continue
-        wmats[sector] = ntuple(slot -> _view_sector_wmat_slot(arr, sector, Val(slot),
-                                                              conj_flag, scale, perm), Val(M))
+function _view_wmat_storage(arr::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
+                            conj_flag::Bool, scale::T,
+                            perm::NTuple{QD, Int}) where {T, QD, N, RD, QT, PS, M, RMT}
+    if !conj_flag && perm == _identity_phys_perm(Val(QD))
+        return arr.wmatdata, arr.wmatinfo
     end
-    return wmats
+
+    wmatdata = copy(arr.wmatdata)
+    wmatinfo = copy(arr.wmatinfo)
+    for sector in sector_slots(arr), slot in 1:M
+        _wmat_info_present(arr.wmatinfo[sector][slot]) || continue
+        _copy_wmat_to_storage!(wmatdata, wmatinfo, sector, slot,
+                               _view_sector_wmat_slot(arr, sector, Val(slot),
+                                                      conj_flag, scale, perm))
+    end
+    return wmatdata, wmatinfo
 end
 
 function sector_wmat(q::TLArrayView{T, QD, N, RD, QT, PS}, sector::Int, n::Int) where {T, QD, N, RD, QT, PS}
@@ -748,9 +841,10 @@ end
 function _zero_metadata_tlarray(q::AbstractTLArray{T, QD, N, RD, QT}, ::Type{RT}) where {T, QD, N, RD, QT, RT}
     qlabels = _qlabels_from_accessors(q)
     M = n_nonabelian_symmetries(productsymm(q))
-    wmats = Vector{NTuple{M, Matrix{Float64}}}(undef, sector_count(q))
+    wmatdata = Float64[]
+    wmatinfo = [_empty_wmat_info(Val(M)) for _ in 1:sector_count(q)]
     RMTs = Vector{Array{RT, RD}}(undef, sector_count(q))
-    return TLArray(symm(q), qlabels, wmats, RMTs, inds(q), spaces(q))
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, inds(q), spaces(q))
 end
 
 @inline function _normalize_tlarray_view(arr::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
@@ -762,8 +856,8 @@ end
     if !conj_flag && scale == one(T) && perm == _identity_phys_perm(Val(QD))
         return arr
     end
-    wmats = _view_wmat_vector(arr, conj_flag, scale, perm)
-    return TLArrayView{T, QD, N, RD, QT, PS, M, RMT, typeof(arr)}(arr, conj_flag, scale, perm, wmats)
+    wmatdata, wmatinfo = _view_wmat_storage(arr, conj_flag, scale, perm)
+    return TLArrayView{T, QD, N, RD, QT, PS, M, RMT, typeof(arr)}(arr, conj_flag, scale, perm, wmatdata, wmatinfo)
 end
 
 function _view_permutedims(q::AbstractTLArray{T, QD}, perm) where {T, QD}
@@ -902,7 +996,7 @@ function _sector_cgt_size_2d(q::TLArray{T, 2, N}, sector_index::Int) where {T, N
     return total
 end
 
-_tlarray_fields(q::TLArray) = (qlabels = q.qlabels, wmats = q.wmats, RMTs = q.RMTs)
+_tlarray_fields(q::TLArray) = (qlabels = q.qlabels, wmatdata = q.wmatdata, wmatinfo = q.wmatinfo, RMTs = q.RMTs)
 
 Base.ndims(q::TLArray{T, QD}) where {T, QD} = QD
 
@@ -922,7 +1016,7 @@ function _orient_wmats!(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, 
     for sector_index in sector_slots(q)
         q.iszero[sector_index] && continue
         for m in 1:M
-            wmat = q.wmats[sector_index][m]
+            wmat = sector_wmat_slot(q, sector_index, m)
             if length(wmat) == 1 && wmat[1] < 0
                 wmat[:] .*= -1
                 if sector_rmt(q, sector_index) isa DiagRMT
@@ -955,12 +1049,42 @@ function _copy_assigned_vector(v::Vector, inds; deep::Bool=false)
     return out
 end
 
-_copy_sector_wmats(q::TLArray; deep::Bool=false) =
-    _copy_assigned_vector(q.wmats, eachindex(q.wmats); deep=deep)
+@inline _sector_has_wmat_info(q::AbstractTLArray{T, QD, N, RD, QT, PS, M}, sector::Int) where {T, QD, N, RD, QT, PS, M} =
+    any(slot -> _wmat_info_present(q.wmatinfo[sector][slot]), 1:M)
+
+_copy_wmat_storage(q::AbstractTLArray; deep::Bool=false) =
+    (deep ? copy(q.wmatdata) : q.wmatdata, deep ? copy(q.wmatinfo) : q.wmatinfo)
+
+function _copy_wmat_storage(q::AbstractTLArray{T, QD, N, RD, QT, PS, M},
+                            inds; deep::Bool=false) where {T, QD, N, RD, QT, PS, M}
+    collected = collect(inds)
+    total = 0
+    for sector in collected, slot in 1:M
+        offset, nrow, ncol = q.wmatinfo[sector][slot]
+        offset == 0 && continue
+        total += nrow * ncol
+    end
+
+    wmatdata = Vector{Float64}(undef, total)
+    wmatinfo = Vector{WMatInfo{M}}(undef, length(collected))
+    next_offset = 1
+    for (out_index, sector) in pairs(collected)
+        wmatinfo[out_index] = ntuple(Val(M)) do slot
+            offset, nrow, ncol = q.wmatinfo[sector][slot]
+            offset == 0 && return (0, 0, 0)
+            len = nrow * ncol
+            copyto!(view(wmatdata, next_offset:next_offset + len - 1),
+                    view(q.wmatdata, offset:offset + len - 1))
+            new_offset = next_offset
+            next_offset += len
+            (new_offset, nrow, ncol)
+        end
+    end
+    return wmatdata, wmatinfo
+end
+
 _copy_sector_RMTs(q::TLArray; deep::Bool=false) =
     _copy_assigned_vector(q.RMTs, eachindex(q.RMTs); deep=deep)
-_copy_sector_wmats(q::TLArray, inds; deep::Bool=false) =
-    _copy_assigned_vector(q.wmats, inds; deep=deep)
 _copy_sector_RMTs(q::TLArray, inds; deep::Bool=false) =
     _copy_assigned_vector(q.RMTs, inds; deep=deep)
 
@@ -970,7 +1094,7 @@ _copy_sector_RMTs(q::TLArray, inds; deep::Bool=false) =
 function TLArray(q::TLArray{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) where {T, QD, N, RD}
     new_inds = ntuple(l -> TLIndex(itags[l], q.inds[l].dir, q.inds[l].plev,
                                   q.inds[l].lock, q.inds[l].dual), QD)
-    return TLArray(symm(q), copy(q.qlabels), _copy_sector_wmats(q; deep=true),
+    return TLArray(symm(q), copy(q.qlabels), _copy_wmat_storage(q; deep=true)...,
                           _copy_sector_RMTs(q; deep=true),
                           new_inds, _copy_spaces_tuple(q.spaces))
 end
@@ -980,10 +1104,18 @@ end
 # Arrow directions must match the original TLArray (only itags/lock/plev/dual may differ).
 function TLArray(q::TLArray{T, QD, N, RD}, inds::NTuple{QD, TLIndex}) where {T, QD, N, RD}
     @assert ntuple(l -> inds[l].dir, QD) == ntuple(l -> q.inds[l].dir, QD) "TLArray(q, inds): arrow directions must match the original TLArray on all legs"
-    return TLArray(symm(q), copy(q.qlabels), _copy_sector_wmats(q; deep=true),
+    return TLArray(symm(q), copy(q.qlabels), _copy_wmat_storage(q; deep=true)...,
                           _copy_sector_RMTs(q; deep=true),
                           inds, _copy_spaces_tuple(q.spaces))
 end
+
+TLArray(q::TLArrayView{T, QD, N, RD}, inds::NTuple{QD, TLIndex}) where {T, QD, N, RD} =
+    TLArray(_eager_tlarray(q), inds)
+
+TLArray(q::TLArrayView{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) where {T, QD, N, RD} =
+    TLArray(_eager_tlarray(q), itags)
+
+Base.convert(::Type{TLArray}, q::TLArrayView) = _eager_tlarray(q)
 
 Base.getindex(q::TLArray, i::Int) = TLArray(q, i)
 Base.firstindex(q::AbstractTLArray) = 1
@@ -1030,9 +1162,9 @@ boolean mask. Negative integer indices count from the end.
 function TLArray(q::TLArray{T, QD, N, RD}, selector) where {T, QD, N, RD}
     inds = _normalize_qspace_sector_selector(selector, sector_count(q))
     qlabels = copy(q.qlabels[inds])
-    wmats = _copy_sector_wmats(q, inds; deep=true)
+    wmatdata, wmatinfo = _copy_wmat_storage(q, inds; deep=true)
     RMTs = _copy_sector_RMTs(q, inds; deep=true)
-    return TLArray(symm(q), qlabels, wmats, RMTs, q.inds, _copy_spaces_tuple(q.spaces))
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, _copy_spaces_tuple(q.spaces))
 end
 
 Base.getindex(q::TLArray,
@@ -1348,7 +1480,7 @@ function _modify_lock(q::TLArray{T, QD, N, RD}, legs, modify_fn::Function) where
         new_lock = modify_fn(idx.lock)
         new_inds[i] = TLIndex(idx.itags, idx.dir, idx.plev, new_lock, idx.dual)
     end
-    return TLArray(symm(q), copy(q.qlabels), _copy_sector_wmats(q; deep=true),
+    return TLArray(symm(q), copy(q.qlabels), _copy_wmat_storage(q; deep=true)...,
                           _copy_sector_RMTs(q; deep=true),
                           Tuple(new_inds), _copy_spaces_tuple(q.spaces))
 end
@@ -1526,7 +1658,7 @@ function _modify_plev(q::TLArray{T, QD, N, RD}, legs, modify_fn::Function) where
         idx = new_inds[i]
         new_inds[i] = TLIndex(idx.itags, idx.dir, modify_fn(idx.plev), idx.lock, idx.dual)
     end
-    return TLArray(symm(q), copy(q.qlabels), _copy_sector_wmats(q; deep=true),
+    return TLArray(symm(q), copy(q.qlabels), _copy_wmat_storage(q; deep=true)...,
                           _copy_sector_RMTs(q; deep=true),
                           Tuple(new_inds), _copy_spaces_tuple(q.spaces))
 end
@@ -1716,7 +1848,7 @@ function _modify_itag(q::TLArray{T, QD, N, RD}, legs, modify_fn::Function) where
         idx = new_inds[i]
         new_inds[i] = TLIndex(modify_fn(idx.itags), idx.dir, idx.plev, idx.lock, idx.dual)
     end
-    return TLArray(symm(q), copy(q.qlabels), _copy_sector_wmats(q; deep=true),
+    return TLArray(symm(q), copy(q.qlabels), _copy_wmat_storage(q; deep=true)...,
                           _copy_sector_RMTs(q; deep=true),
                           Tuple(new_inds), _copy_spaces_tuple(q.spaces))
 end
@@ -2234,9 +2366,9 @@ function sort_sectors(q::TLArray{T, QD, N}) where {T, QD, N}
     )
     sorted_indices = sector_indices[perm]
     qlabels = copy(q.qlabels[sorted_indices])
-    wmats = _copy_sector_wmats(q, sorted_indices; deep=true)
+    wmatdata, wmatinfo = _copy_wmat_storage(q, sorted_indices; deep=true)
     RMTs = _copy_sector_RMTs(q, sorted_indices; deep=true)
-    return TLArray(symm(q), qlabels, wmats, RMTs, q.inds, _copy_spaces_tuple(q.spaces))
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, _copy_spaces_tuple(q.spaces))
 end
 
 # Scalar multiplication and division: only the RMT arrays are scaled.
@@ -2244,8 +2376,7 @@ end
 function _materialized_scale(qs::TLArray{T, QD, N, RD}, fac::Number) where {T, QD, N, RD}
     if iszero(fac)
         RMTs = Vector{Array{promote_type(T, typeof(fac)), RD}}(undef, sector_count(qs))
-        wmats = similar(qs.wmats, sector_count(qs))
-        return TLArray(symm(qs), copy(qs.qlabels), wmats, RMTs, qs.inds, qs.spaces)
+        return TLArray(symm(qs), copy(qs.qlabels), qs.wmatdata, qs.wmatinfo, RMTs, qs.inds, qs.spaces)
     end
     result = deepcopy(qs)
     for sector_index in sector_slots(result)
@@ -2373,7 +2504,7 @@ function _oplus_pad_qspace(q::TLArray{T, QD, N, RD},
                            result_dim_maps) where {T, QD, N, RD}
     dims_set = Set(dims_tuple)
     qlabels = copy(q.qlabels)
-    wmats = _copy_sector_wmats(q; deep=true)
+    wmatdata, wmatinfo = _copy_wmat_storage(q; deep=true)
     RMTs = similar(q.RMTs, sector_count(q))
     for sector_index in sector_slots(q)
         q.iszero[sector_index] && continue
@@ -2402,7 +2533,7 @@ function _oplus_pad_qspace(q::TLArray{T, QD, N, RD},
         new_data[fill_inds...] = sector_rmt(q, sector_index)
         RMTs[sector_index] = new_data
     end
-    return TLArray(symm(q), qlabels, wmats, RMTs, q.inds, _copy_spaces_tuple(result_spaces))
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, _copy_spaces_tuple(result_spaces))
 end
 
 function _zero_qspace_with_spaces(symm::NTuple{N, Any},
@@ -2411,9 +2542,11 @@ function _zero_qspace_with_spaces(symm::NTuple{N, Any},
                                   T::Type=Float64) where {N, QD}
     QT = qlabeltype(symm)
     qlabels = Matrix{QT}(undef, QD, 0)
-    wmats = _wmat_vector(symm, 0)
+    M = n_nonabelian_symmetries(productsymm(symm))
+    wmatdata = Float64[]
+    wmatinfo = WMatInfo{M}[]
     RMTs = Array{T, QD + N}[]
-    return TLArray(symm, qlabels, wmats, RMTs, inds, _copy_spaces_tuple(spaces))
+    return TLArray(symm, qlabels, wmatdata, wmatinfo, RMTs, inds, _copy_spaces_tuple(spaces))
 end
 
 function _accumulate_oplus_starts(qs, dims_tuple, QD::Int)
@@ -2468,18 +2601,20 @@ end
 
 function _align_oplus_inputs(qs)
     isempty(qs) && throw(ArgumentError("oplus requires at least one TLArray"))
-    first(qs) isa TLArray || throw(ArgumentError("oplus entry 1 is not a TLArray"))
+    first(qs) isa AbstractTLArray || throw(ArgumentError("oplus entry 1 is not a TLArray"))
 
-    ref = first(qs)
+    ref = _eager_tlarray(first(qs))
     aligned = Vector{TLArray}(undef, length(qs))
     aligned[1] = ref
     for i in 2:length(qs)
         q = qs[i]
-        q isa TLArray || throw(ArgumentError("oplus entry $i is not a TLArray"))
+        q isa AbstractTLArray || throw(ArgumentError("oplus entry $i is not a TLArray"))
         symm(q) == symm(ref) || throw(ArgumentError(
             "TLArray entry $i has a different symmetry tuple"))
-        perm = _find_oplus_leg_permutation(ref.inds, q.inds, i)
-        aligned[i] = perm == ntuple(identity, length(ref.inds)) ? q : permutedims(q, perm)
+        qinds = inds(q)
+        perm = _find_oplus_leg_permutation(ref.inds, qinds, i)
+        aligned[i] = _eager_tlarray(
+            perm == ntuple(identity, length(ref.inds)) ? q : permutedims(q, perm))
     end
     return aligned
 end
@@ -2610,13 +2745,13 @@ function oplus(qs::AbstractVector; dir=nothing, itag=nothing, plev=nothing,
     return _materialize_vector_oplus(aligned, dims_tuple)
 end
 
-function oplus(q1::TLArray, q2::TLArray, dimensions)
-    return oplus(TLArray[q1, q2], dimensions)
+function oplus(q1::AbstractTLArray, q2::AbstractTLArray, dimensions)
+    return oplus(AbstractTLArray[q1, q2], dimensions)
 end
 
-function oplus(q1::TLArray, q2::TLArray; dir=nothing, itag=nothing,
+function oplus(q1::AbstractTLArray, q2::AbstractTLArray; dir=nothing, itag=nothing,
                plev=nothing, lock=nothing, rev::Bool=false)
-    return oplus(TLArray[q1, q2]; dir=dir, itag=itag, plev=plev,
+    return oplus(AbstractTLArray[q1, q2]; dir=dir, itag=itag, plev=plev,
                  lock=lock, rev=rev)
 end
 
@@ -2722,14 +2857,18 @@ function _materialized_conj(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, 
     new_inds = ntuple(l -> change_dir(q.inds[l]), QD)
 
     qlabels = copy(q.qlabels)
-    wmats = similar(q.wmats, sector_count(q))
+    wmatdata = copy(q.wmatdata)
+    wmatinfo = copy(q.wmatinfo)
     RMTs = similar(q.RMTs, sector_count(q))
     for sector_index in sector_slots(q)
-        q.iszero[sector_index] && continue
-        RMTs[sector_index] = conj(sector_rmt(q, sector_index))
-        M == 0 || (wmats[sector_index] = _empty_wmat_tuple(Val(M)))
+        if !q.iszero[sector_index]
+            RMTs[sector_index] = conj(sector_rmt(q, sector_index))
+        end
 
         for n in 1:N
+            isabelian(symm(q)[n]) && continue
+            slot = nonabelian_wmat_slot(PS, n)
+            _wmat_info_present(q.wmatinfo[sector_index][slot]) || continue
             ordered_qlabels, _, legdir = _sector_cgt_metadata(q, sector_index, n)
             m, k  = legdir
 
@@ -2751,13 +2890,13 @@ function _materialized_conj(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, 
                     deepcopy(sector_wmat(q, sector_index, n))
                 end
 
-            _set_sector_wmat!(wmats, productsymm(q), sector_index, n, new_wmat)
+            _copy_wmat_to_storage!(wmatdata, wmatinfo, sector_index, slot, new_wmat)
         end
     end
 
     # spaces remain the same: physical qlabels at each leg don't change in conj,
     # only the CGT internal structure (incoming/outgoing) changes
-    return TLArray(symm(q), qlabels, wmats, RMTs, new_inds, _copy_spaces_tuple(q.spaces))
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, new_inds, _copy_spaces_tuple(q.spaces))
 end
 
 Base.conj(q::AbstractTLArray) = _view_conj(q)
@@ -2831,7 +2970,7 @@ function _apply_getsub_picks(q::TLArray{T, QD, N, RD, QT},
 
     selected_leg_set = Set(positions)
     qlabels_out = NTuple{QD, QT}[]
-    wmats_out = _wmat_buffers(productsymm(q))
+    source_wmat_sectors = Int[]
     RMTs_out = Array{T, RD}[]
     for sector_index in sector_slots(q)
         q.iszero[sector_index] && continue
@@ -2848,9 +2987,7 @@ function _apply_getsub_picks(q::TLArray{T, QD, N, RD, QT},
         selected_rmt = sector_rmt(q, sector_index)[selectors...]
         iszero(sum(abs2, selected_rmt)) && continue
         push!(qlabels_out, ntuple(l -> sector_qlabel(q, sector_index, l), Val(QD)))
-        for n in 1:N
-            _push_wmat!(wmats_out, productsymm(q), n, sector_wmat(q, sector_index, n))
-        end
+        push!(source_wmat_sectors, sector_index)
         push!(RMTs_out, selected_rmt)
     end
 
@@ -2873,8 +3010,8 @@ function _apply_getsub_picks(q::TLArray{T, QD, N, RD, QT},
         end, QD)
     end
 
-    wmats = _wmat_vector_from_buffers(productsymm(q), wmats_out, length(RMTs_out))
-    return TLArray(symm(q), qlabels_out, wmats, RMTs_out, q.inds, spaces_out)
+    wmatdata, wmatinfo = _copy_wmat_storage(q, source_wmat_sectors; deep=true)
+    return TLArray(symm(q), qlabels_out, wmatdata, wmatinfo, RMTs_out, q.inds, spaces_out)
 end
 
 function _normalize_getsub_predicate_legs(q::TLArray{T, QD}, legs) where {T, QD}
@@ -2961,9 +3098,11 @@ function empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex};
     QT = qlabeltype(symm)
     spaces = ntuple(_ -> Vector{Tuple{QT, Int}}(), QD)
     qlabels = NTuple{QD, QT}[]
-    wmats = _wmat_vector(symm, 0)
+    M = n_nonabelian_symmetries(productsymm(symm))
+    wmatdata = Float64[]
+    wmatinfo = WMatInfo{M}[]
     RMTs = Array{T, RD}[]
-    return TLArray(symm, qlabels, wmats, RMTs, inds, spaces)
+    return TLArray(symm, qlabels, wmatdata, wmatinfo, RMTs, inds, spaces)
 end
 
 function empty_qspace(q::AbstractTLArray; T::Type=Float64)
@@ -2973,9 +3112,11 @@ end
 function Base.zero(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, RD}
     QT = qlabeltype(q)
     qlabels = NTuple{QD, QT}[]
-    wmats = _wmat_vector(symm(q), 0)
+    M = n_nonabelian_symmetries(productsymm(q))
+    wmatdata = Float64[]
+    wmatinfo = WMatInfo{M}[]
     RMTs = Array{T, RD}[]
-    return TLArray(symm(q), qlabels, wmats, RMTs, inds(q), _copy_spaces_tuple(spaces(q)))
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, inds(q), _copy_spaces_tuple(spaces(q)))
 end
 
 """
@@ -3058,7 +3199,7 @@ function _delete_singleton_impl(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, positi
     keep_spaces = Vector{Tuple{QT, Int}}[q.spaces[leg] for leg in 1:QD if leg ∉ positions]
 
     qlabels = Matrix{QT}(undef, new_qd, sector_count(q))
-    wmats = similar(q.wmats, sector_count(q))
+    wmatdata, wmatinfo = _copy_wmat_storage(q; deep=true)
     RMTs = RMT <: DiagRMT ? Vector{DiagRMT{T, new_rd}}(undef, sector_count(q)) :
                              Vector{Array{T, new_rd}}(undef, sector_count(q))
     keep_legs = [leg for leg in 1:QD if leg ∉ positions]
@@ -3067,11 +3208,10 @@ function _delete_singleton_impl(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, positi
             qlabels[new_leg, sector_index] = sector_qlabel(q, sector_index, old_leg)
         end
         q.iszero[sector_index] && continue
-        wmats[sector_index] = q.wmats[sector_index]
         RMTs[sector_index] = _delete_singleton_rmt(sector_rmt(q, sector_index), positions, QD, N)
     end
 
-    return TLArray(product_symms(PS), qlabels, wmats, RMTs, Tuple(keep_inds), Tuple(keep_spaces))
+    return TLArray(product_symms(PS), qlabels, wmatdata, wmatinfo, RMTs, Tuple(keep_inds), Tuple(keep_spaces))
 end
 
 """
@@ -3256,7 +3396,7 @@ function addSingleton(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
     end
 
     qlabels = Matrix{QT}(undef, new_qd, sector_count(q))
-    wmats = similar(q.wmats, sector_count(q))
+    wmatdata, wmatinfo = _copy_wmat_storage(q; deep=true)
     RMTs = RMT <: DiagRMT ? Vector{DiagRMT{T, new_rd}}(undef, sector_count(q)) :
                              Vector{Array{T, new_rd}}(undef, sector_count(q))
     for sector_index in sector_slots(q)
@@ -3272,11 +3412,10 @@ function addSingleton(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
             end
         end
         q.iszero[sector_index] && continue
-        wmats[sector_index] = q.wmats[sector_index]
         RMTs[sector_index] = _insert_singleton_rmt(sector_rmt(q, sector_index), positions, QD, N)
     end
 
-    return TLArray(product_symms(PS), qlabels, wmats, RMTs, Tuple(new_inds), Tuple(new_spaces))
+    return TLArray(product_symms(PS), qlabels, wmatdata, wmatinfo, RMTs, Tuple(new_inds), Tuple(new_spaces))
 end
 
 function addSingleton(q::TLArrayView{T, QD}; nlegs::Integer=1,
@@ -3328,10 +3467,7 @@ function getvac(q::TLArray{T, QD, N, RD},
     qlabels = Matrix{qlabeltype(q)}(undef, 2, 1)
     qlabels[1, 1] = trivial_qlabels
     qlabels[2, 1] = trivial_qlabels
-    wmats = _wmat_vector(symm(q), 1)
-    for n in 1:N
-        _set_sector_wmat!(wmats, productsymm(q), 1, n, [1.0;;])
-    end
+    wmatdata, wmatinfo = _unit_wmat_storage(productsymm(q), 1)
     rmt_data = fill(one(T), ntuple(_ -> 1, N + 2))
     RMTs = Array{T, N + 2}[rmt_data]
     inds = (TLIndex(itags[1], '+'), TLIndex(itags[2], '-'))
@@ -3339,7 +3475,7 @@ function getvac(q::TLArray{T, QD, N, RD},
     space_template = Vector{Tuple{QT, Int}}([space_entry])
     spaces = (copy(space_template), copy(space_template))
 
-    return TLArray(symm(q), qlabels, wmats, RMTs, inds, spaces)
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, inds, spaces)
 end
 
 function ⊗(q1::TLArray{T1, QD1, N, RD1},

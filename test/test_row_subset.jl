@@ -1,6 +1,7 @@
 function _field_subset_equal(q1::TLArray, q2::TLArray)
     q1.qlabels == q2.qlabels || return false
-    q1.wmats == q2.wmats || return false
+    q1.wmatdata == q2.wmatdata || return false
+    q1.wmatinfo == q2.wmatinfo || return false
     length(q1.RMTs) == length(q2.RMTs) || return false
     all(Telum.sector_rmt(q1, i) == Telum.sector_rmt(q2, i) for i in 1:Telum.nsectors(q1))
 end

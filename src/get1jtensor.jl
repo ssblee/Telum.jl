@@ -45,7 +45,7 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
 
     nr = length(info.splist)
     qlabels1 = Matrix{QT}(undef, 2, nr)
-    wmats1 = _wmat_vector(PS, nr)
+    wmatdata1, wmatinfo1 = _unit_wmat_storage(PS, nr)
 
     # leg 1 = original space, leg 2 = dual space
     ET = eltype(info.splist)
@@ -62,13 +62,12 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
         cgt_dim = 1.0
         for n in 1:N
             cgt_dim *= dimension(symm[n], qlabels[n])
-            _set_sector_wmat!(wmats1, PS, sector_index, n, [1.0;;])
         end
         scale = sqrt(cgt_dim)
         RMTs1[sector_index] = _diag_rmt_from_values(ones(Float64, RMTd), Val(2 + N), (1, 2), scale)
     end
 
-    q1 = TLArray(symm, qlabels1, wmats1, RMTs1, inds1, spaces1)
+    q1 = TLArray(symm, qlabels1, wmatdata1, wmatinfo1, RMTs1, inds1, spaces1)
     return q1
 end
 
