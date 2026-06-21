@@ -815,7 +815,7 @@ function test_getIdentity_direct_contract(option::LocalSpaceOptions)
 end
 
 function test_spin_local_space()
-    q = getLocalSpace(SpinOptions(SU{2}, 1//2))
+    q = getLocalSpace(SpinOptions(:SU2, 1))
 
     @test hasproperty(q, :S)
     @test hasproperty(q, :I)

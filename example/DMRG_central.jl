@@ -43,14 +43,36 @@ function do_dmrg(MPO, Nkeep_init=50, Nkeep_DMRG=50, Nsweep=4; time_blocks=true)
     return MPS
 end
 
+function central_bond_rmt_dimensions(MPS::AbstractVector{<:TLArray}; bond::Int=length(MPS) ÷ 2)
+    1 <= bond < length(MPS) || throw(ArgumentError(
+        "central bond index must satisfy 1 <= bond < $(length(MPS)), got $bond"))
+    leg = findleg(MPS[bond]; itag="SB,$bond")
+    isnothing(leg) && throw(ArgumentError("MPS[$bond] has no leg tagged SB,$bond"))
+    bond_space = MPS[bond].spaces[leg]
+    qlabels = first.(bond_space)
+    dimensions = last.(bond_space)
+    perm = sortperm(dimensions; rev=true)
+    return dimensions[perm], qlabels[perm]
+end
+
 function run(MPO; time_blocks=true, nkeeps=[20, 50])
     #MPO = MajumdarGhoshMPO(1.0, 40)
     #MPO = HubbardMPO(4, 1.5, 1.0, 40)
     #MPO = XYMPO(1.0, 40)
     #MPO = XXZMPO(0.3, 0.5, 40)
-    for Nkeep_DMRG in nkeeps
+    read_reset_costs!()
+    results = map(nkeeps) do Nkeep_DMRG
         println("Nkeep_DMRG = $Nkeep_DMRG")
-        @time do_dmrg(MPO, Nkeep_DMRG, Nkeep_DMRG, 4; time_blocks)
+        set_accumul_costs!(true)
+        MPS = try
+            @time do_dmrg(MPO, Nkeep_DMRG, Nkeep_DMRG, 4; time_blocks)
+        finally
+            set_accumul_costs!(false)
+        end
+        dimensions, qlabels = central_bond_rmt_dimensions(MPS)
+        contraction_cost, svd_cost = read_reset_costs!()
         GC.gc()
+        return dimensions, qlabels, contraction_cost, svd_cost
     end
+    return first.(results), getindex.(results, 2), getindex.(results, 3), getindex.(results, 4)
 end

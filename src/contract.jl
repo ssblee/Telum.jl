@@ -729,6 +729,19 @@ function _contract_RMT_pair_into_generic!(out::AbstractArray{T, 3},
     gdim, cdim2, o2dim = size(B)
     rdim = size(K, 1)
     @assert cdim == cdim2
+    _add_contraction_cost!(fdim * gdim * rdim * o1dim * o2dim * cdim)
+    return _contract_RMT_pair_into_generic_no_count!(out, A, B, K, beta)
+end
+
+function _contract_RMT_pair_into_generic_no_count!(out::AbstractArray{T, 3},
+                                                   A::AbstractArray{T1, 3},
+                                                   B::AbstractArray{T2, 3},
+                                                   K::AbstractArray,
+                                                   beta::T = one(T)) where {T, T1, T2}
+    fdim, cdim, o1dim = size(A)
+    gdim, cdim2, o2dim = size(B)
+    rdim = size(K, 1)
+    @assert cdim == cdim2
 
     @inbounds for r in 1:rdim
         for g in 1:gdim
@@ -762,12 +775,16 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
     rank_dim, om1_dim, om2_dim = size(K)
 
     if rank_dim == 1 && om1_dim == 1 && om2_dim == 1
+        fdim, cdim, _ = size(A)
+        gdim = size(B, 1)
+        _add_contraction_cost!(fdim * gdim * cdim)
         return _accumulate_scalar_om!(out, A, B, K[1, 1, 1], beta)
     end
 
     fdim, cdim, o1dim = size(A)
     gdim, _, o2dim = size(B)
     order, cost = _rmt_contract_order(fdim, gdim, cdim, o1dim, o2dim, rank_dim)
+    _add_contraction_cost!(cost)
 
     if cost < threshold
         _accumulate_small!(out, A, B, K, order, temp, beta)
@@ -785,7 +802,7 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
                                   temp::Vector{T},
                                   threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
                                   beta::T = one(T)) where {T, T1, T2}
-    return _contract_RMT_pair_into_generic!(out, A, B, K, beta)
+    return _contract_RMT_pair_into_generic_no_count!(out, A, B, K, beta)
 end
 
 function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
@@ -795,6 +812,7 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
                                   temp::Vector{T},
                                   threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
                                   beta::T = one(T)) where {T, T1, T2}
+                                  
     if A.axis == (1, 2) && size(A, 3) == 1 && size(K, 2) == 1 && iszero(beta)
         fdim, cdim, o1dim = size(A)
         gdim, cdim2, o2dim = size(B)
@@ -805,6 +823,7 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
 
         # Diagonal-left common path: first contract the dense right RMT with K
         # into tmp[g, c, r], then transpose c into the output free-left axis.
+        _add_contraction_cost!(gdim * cdim * rdim * o2dim)
         tmp = _rmt_temp_view(temp, (gdim, cdim, rdim))
         B_mat = reshape(B, gdim * cdim, o2dim)
         K_mat = reshape(K, rdim, o2dim)
@@ -821,7 +840,12 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
         return out
     end
 
-    return _contract_RMT_pair_into_generic!(out, A, B, K, beta)
+    fdim, cdim, o1dim = size(A)
+    gdim, cdim2, o2dim = size(B)
+    rdim = size(K, 1)
+    @assert cdim == cdim2
+    _add_contraction_cost!(gdim * cdim * rdim * o1dim * o2dim)
+    return _contract_RMT_pair_into_generic_no_count!(out, A, B, K, beta)
 end
 
 function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
@@ -842,6 +866,7 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
         A_mat = reshape(A, fdim * cdim, o1dim)
         K_mat = reshape(K, rdim, o1dim)
         out_mat = reshape(out, fdim * gdim, rdim)
+        _add_contraction_cost!(fdim * cdim * rdim * o1dim)
         mul!(out_mat, A_mat, transpose(K_mat), one(T), zero(T))
 
         @inbounds for r in 1:rdim
@@ -855,7 +880,12 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
         return out
     end
 
-    return _contract_RMT_pair_into_generic!(out, A, B, K, beta)
+    fdim, cdim, o1dim = size(A)
+    gdim, cdim2, o2dim = size(B)
+    rdim = size(K, 1)
+    @assert cdim == cdim2
+    _add_contraction_cost!(fdim * cdim * rdim * o1dim * o2dim)
+    return _contract_RMT_pair_into_generic_no_count!(out, A, B, K, beta)
 end
 
 # ─── _compress_sector ────────────────────────────────────────────────────────

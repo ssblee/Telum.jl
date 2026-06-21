@@ -6,6 +6,7 @@ using LinearAlgebra
 using SparseArrays
 using LoopVectorization
 using Tullio
+using HDF5
 
 import Base: lock, unlock
 import LurCGT
@@ -21,7 +22,37 @@ import LurCGT: nzops, remove_zeros, totxt, transf_basis!
 comm(A, B) = A * B - B * A
 
 include("DiagRMT.jl")
+
+const contraction_cost = Ref{Int}(0)
+const svd_cost = Ref{Int}(0)
+const accumul_costs = Ref(false)
+
+@inline function _add_contraction_cost!(cost::Integer)
+    accumul_costs[] || return nothing
+    contraction_cost[] += Int(cost)
+    return nothing
+end
+
+@inline function _add_svd_cost!(cost::Integer)
+    accumul_costs[] || return nothing
+    svd_cost[] += Int(cost)
+    return nothing
+end
+
+function set_accumul_costs!(enabled::Bool)
+    accumul_costs[] = enabled
+    return enabled
+end
+
+function read_reset_costs!()
+    costs = (contraction_cost[], svd_cost[])
+    contraction_cost[] = 0
+    svd_cost[] = 0
+    return costs
+end
+
 include("TLArray.jl")
+include("io_hdf5.jl")
 
 export AbstractTLArray, TLArray, TLArrayView, TLIndex, Itag, DiagRMT
 export ProductSymm, productsymm, product_symms, symm, nsymms
@@ -40,5 +71,7 @@ export contractables, contractable, uncontractables, uncontractable
 export prime, setprime, noprime
 export lock, lockp, unlock
 export additag, removeitag, replaceitag, setitag
+export accumul_costs, read_reset_costs!, set_accumul_costs!
+export save_tlarray, load_tlarray
 
 end
