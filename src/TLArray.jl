@@ -1297,35 +1297,37 @@ function findleg(q::AbstractTLArray{T, QD}; dir=nothing, itag=nothing, plev=noth
     return nothing
 end
 
-function _matching_targets(q::TLArray; require_unlocked::Bool=false)
-    return Set(change_dir(idx) for idx in q.inds
+function _matching_targets(q::AbstractTLArray; require_unlocked::Bool=false)
+    return Set(change_dir(idx) for idx in inds(q)
                if !require_unlocked || idx.lock == 0)
 end
 
 _has_target_match(idx::TLIndex, targets; require_unlocked::Bool=false) =
     (!require_unlocked || idx.lock == 0) && (idx in targets)
 
-function _find_matching_legs(a::TLArray{T, QD}, b::TLArray;
+function _find_matching_legs(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                              dir=nothing, itag=nothing, plev=nothing,
                              lock=nothing, rev::Bool=false,
                              matched::Bool=true,
                              require_unlocked::Bool=false) where {T, QD}
     targets = _matching_targets(b; require_unlocked=require_unlocked)
+    ainds = inds(a)
     return [i for i in 1:QD
-            if (_has_target_match(a.inds[i], targets; require_unlocked=require_unlocked) == matched) &&
-               (_matches_criteria(a.inds[i]; dir=dir, itag=itag,
+            if (_has_target_match(ainds[i], targets; require_unlocked=require_unlocked) == matched) &&
+               (_matches_criteria(ainds[i]; dir=dir, itag=itag,
                                   plev=plev, lock=lock) ⊻ rev)]
 end
 
-function _find_matching_leg(a::TLArray{T, QD}, b::TLArray;
+function _find_matching_leg(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                             dir=nothing, itag=nothing, plev=nothing,
                             lock=nothing, rev::Bool=false,
                             matched::Bool=true,
                             require_unlocked::Bool=false) where {T, QD}
     targets = _matching_targets(b; require_unlocked=require_unlocked)
+    ainds = inds(a)
     for i in 1:QD
-        (_has_target_match(a.inds[i], targets; require_unlocked=require_unlocked) == matched) || continue
-        _matches_criteria(a.inds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev && return i
+        (_has_target_match(ainds[i], targets; require_unlocked=require_unlocked) == matched) || continue
+        _matches_criteria(ainds[i]; dir=dir, itag=itag, plev=plev, lock=lock) ⊻ rev && return i
     end
     return nothing
 end
@@ -1340,7 +1342,7 @@ of `b`, but with opposite direction. Lock is ignored for the cross-tensor
 match test. Keyword arguments filter the returned legs of `a` using the same
 rules as `findlegs`.
 """
-function matchings(a::TLArray{T, QD}, b::TLArray;
+function matchings(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                    dir=nothing, itag=nothing, plev=nothing,
                    lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -1356,7 +1358,7 @@ if no such leg exists.
 Matching ignores lock between tensors; keyword arguments filter the returned
 leg of `a` using the same rules as `findleg`.
 """
-function matching(a::TLArray{T, QD}, b::TLArray;
+function matching(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                   dir=nothing, itag=nothing, plev=nothing,
                   lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -1372,7 +1374,7 @@ The match test uses the same rule as `matchings`: same `itags`, `plev`, and
 `dual`, opposite direction, and lock ignored between tensors. Keyword
 arguments filter the returned legs of `a` using the same rules as `findlegs`.
 """
-function unmatchings(a::TLArray{T, QD}, b::TLArray;
+function unmatchings(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                      dir=nothing, itag=nothing, plev=nothing,
                      lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -1389,7 +1391,7 @@ The match test uses the same rule as `matchings`: same `itags`, `plev`, and
 `dual`, opposite direction, and lock ignored between tensors. Keyword
 arguments filter the returned leg of `a` using the same rules as `findleg`.
 """
-function unmatching(a::TLArray{T, QD}, b::TLArray;
+function unmatching(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                     dir=nothing, itag=nothing, plev=nothing,
                     lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -1405,7 +1407,7 @@ Two legs are contractable when they satisfy the same cross-tensor match rule as
 `matchings` and both legs have `lock == 0`. Keyword arguments filter the
 returned legs of `a` using the same rules as `findlegs`.
 """
-function contractables(a::TLArray{T, QD}, b::TLArray;
+function contractables(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                        dir=nothing, itag=nothing, plev=nothing,
                        lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -1421,7 +1423,7 @@ Return the first leg index of `a` that has a contractable leg in `b`, or
 Contractable legs satisfy the same cross-tensor match rule as `matchings`, but
 both tensors must have `lock == 0` on the matched legs.
 """
-function contractable(a::TLArray{T, QD}, b::TLArray;
+function contractable(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                       dir=nothing, itag=nothing, plev=nothing,
                       lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -1437,7 +1439,7 @@ Contractability requires the same cross-tensor match rule as `matchings`, plus
 `lock == 0` on both matched legs. Keyword arguments filter the returned legs of
 `a` using the same rules as `findlegs`.
 """
-function uncontractables(a::TLArray{T, QD}, b::TLArray;
+function uncontractables(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                          dir=nothing, itag=nothing, plev=nothing,
                          lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_legs(a, b; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -1453,7 +1455,7 @@ Return the first leg index of `a` that does not have any contractable leg in
 Contractability requires the same cross-tensor match rule as `matchings`, plus
 `lock == 0` on both matched legs.
 """
-function uncontractable(a::TLArray{T, QD}, b::TLArray;
+function uncontractable(a::AbstractTLArray{T, QD}, b::AbstractTLArray;
                         dir=nothing, itag=nothing, plev=nothing,
                         lock=nothing, rev::Bool=false) where {T, QD}
     return _find_matching_leg(a, b; dir=dir, itag=itag, plev=plev, lock=lock,

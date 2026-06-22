@@ -139,7 +139,7 @@ function _prepare_eigen_input(q::TLArray{T, 2, N, RD},
     dirs = (q.inds[1].dir, q.inds[2].dir)
     @assert (dirs == ('+', '-') || dirs == ('-', '+')) "$opname requires one incoming ('+') and one outgoing ('-') leg"
 
-    q_work = dirs == ('+', '-') ? q : permutedims(q, (2, 1))
+    q_work = dirs == ('+', '-') ? q : copy(permutedims(q, (2, 1)))
     @assert q_work.spaces[1] == q_work.spaces[2] "$opname: both legs of input TLArray must have the same space list (same sectors and dimensions)"
     return q_work
 end

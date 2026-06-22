@@ -198,6 +198,8 @@ function getLocalSpace(opts::LocalSpaceOptions,
     symm, weights, lowering_ops, mwirops = getSymmetryInfo(opts)
     _validate_cross_symmetry_commutation(symm, weights, lowering_ops)
 
+    isempty(symm) && return _getLocalSpace_no_symmetry(mwirops, tags)
+
     # Step 2 – decompose local space into symmetry sectors
     ortho_vecs, space_list = decompose_space(symm, weights, lowering_ops)
     
@@ -243,4 +245,30 @@ function getLocalSpace(opts::LocalSpaceOptions,
         Telum[name] = q
     end
     return NamedTuple(Telum)
+end
+
+function _getLocalSpace_no_symmetry(mwirops::Dict{Symbol, <:AbstractMatrix},
+                                    tags::Tuple{Vararg{AbstractString, 3}})
+    isempty(mwirops) && throw(ArgumentError("no-symmetry local space has no operators"))
+
+    first_op = first(values(mwirops))
+    spdim = size(first_op, 1)
+    size(first_op, 2) == spdim ||
+        throw(ArgumentError("local-space operators must be square"))
+
+    symm = ()
+    qlabels = [((), ())]
+    spaces = ([(() , spdim)], [(() , spdim)])
+    inds = (TLIndex(tags[1], '+'), TLIndex(tags[2], '-'))
+    wmatdata = Float64[]
+    wmatinfo = [_empty_wmat_info(Val(0))]
+
+    tensors = Dict{Symbol, TLArray}()
+    for (name, op) in mwirops
+        size(op) == (spdim, spdim) ||
+            throw(ArgumentError("operator $name has size $(size(op)), expected ($spdim, $spdim)"))
+        RMTs = [Matrix{Float64}(op)]
+        tensors[name] = TLArray(symm, qlabels, copy(wmatdata), copy(wmatinfo), RMTs, inds, spaces)
+    end
+    return NamedTuple(tensors)
 end

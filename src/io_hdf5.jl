@@ -78,7 +78,7 @@ function _read_symmetries(parent)
     end
 end
 
-@inline _qlabel_width(symm) = sum(n -> nzops(symm[n]), eachindex(symm))
+@inline _qlabel_width(symm) = sum(n -> nzops(symm[n]), eachindex(symm); init=0)
 
 function _encode_oneleg_qlabels(qlabels::AbstractVector, symm)
     width = _qlabel_width(symm)

@@ -61,6 +61,23 @@ function _with_zero_sector(q::TLArray)
 end
 
 @testset "HDF5 TLArray round trip" begin
+    q_nosym = TLArray((),
+                      [((), ())],
+                      Float64[],
+                      [Telum._empty_wmat_info(Val(0))],
+                      [reshape([2.0], 1, 1)],
+                      (TLIndex("in", '+'), TLIndex("out", '-')),
+                      ([(() , 1)], [(() , 1)]))
+    @test symm(q_nosym) == ()
+    @test typeof(q_nosym).parameters[6] === ProductSymm{Tuple{}}
+    @test q_nosym.qlabels == [((), ())]
+    _with_saved_tlarray(q_nosym) do loaded
+        _assert_tlarray_roundtrip(q_nosym, loaded)
+        @test symm(loaded) == ()
+        @test typeof(loaded).parameters[6] === ProductSymm{Tuple{}}
+        @test loaded.qlabels == [((), ())]
+    end
+
     q0 = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing), ("left", "right", "op"))
     q = q0.F
 

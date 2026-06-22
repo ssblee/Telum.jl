@@ -83,7 +83,7 @@ function legflip(q::TLArray{T, QD, N, RD}, legs::LegList) where {T, QD, N, RD}
     positions = _normalize_legflip_legs(q, legs)
     q_flip = q
     for leg in positions
-        q_flip = legflip(q_flip, leg)
+        q_flip = copy(legflip(q_flip, leg))
     end
     return q_flip
 end
@@ -102,7 +102,7 @@ end
 function legflip(q::TLArrayView, legs::LegList)
     q_flip = q
     for leg in _normalize_legflip_legs(q, legs)
-        q_flip = legflip(q_flip, leg)
+        q_flip = copy(legflip(q_flip, leg))
     end
     return q_flip
 end

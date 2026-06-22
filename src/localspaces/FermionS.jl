@@ -112,9 +112,9 @@ function charge_symmops(opts::FermionSOptions, basic_ops)
         charge = Int.(diag(sum(basic_ops.NN[1, i] + basic_ops.NN[2, i] for i in channs)) .- nchan)
 
         lop = if sym == SU{2}
-            [sum(basic_ops.CC[i] for i in channs)]
+            [Float64.(sum(basic_ops.CC[i] for i in channs))]
         elseif sym == U1
-            Matrix{Int}[]
+            Matrix{Float64}[]
         else error("Unsupported charge symmetry") end
 
         push!(weights, [(Int(i),) for i in charge])
@@ -147,9 +147,9 @@ function spin_symmops(opts::FermionSOptions, basic_ops)
         spin_z = Int.(diag(sum(basic_ops.SZ[i] for i in channs)))
 
         lop = if sym == SU{2}
-            [-sum(basic_ops.SS[i] for i in channs)]
+            [Float64.(-sum(basic_ops.SS[i] for i in channs))]
         elseif sym == U1
-            Matrix{Int}[]
+            Matrix{Float64}[]
         else error("Unsupported spin symmetry") end
 
         push!(weights, [(Int(i),) for i in spin_z])
@@ -186,11 +186,11 @@ function chan_symmops(opts::FermionSOptions, basic_ops)
             push!(symms, SU{N})
         end
 
-        lop = Vector{SparseMatrixCSC{Int}}(undef, N-1)
+        lop = Vector{SparseMatrixCSC{Float64, Int}}(undef, N-1)
         zvals = Vector{Vector{Int}}(undef, N-1)
         for i in 1:(N-1)
-            lop[i] = FF[1, channs[i+1]]' * FF[1, channs[i]] +
-                     FF[2, channs[i+1]]' * FF[2, channs[i]]
+            lop[i] = Float64.(FF[1, channs[i+1]]' * FF[1, channs[i]] +
+                              FF[2, channs[i+1]]' * FF[2, channs[i]])
 
             zvals[i] = Int.(diag(sum([basic_ops.NN[1, channs[j]] + 
                                       basic_ops.NN[2, channs[j]] for j=1:i])
@@ -505,7 +505,7 @@ function getSymmetryInfo(opts::FermionSOptions)
     basic_ops = FermionS_basicops(N)
     symms = Vector{Type{<:Symmetry}}()
     weights = Vector{<:Tuple{Vararg{Int}}}[]
-    lowering_ops = Vector{<:AbstractMatrix{Int}}[]
+    lowering_ops = Vector{<:AbstractMatrix{<:Real}}[]
 
     # If charge symmetry is present, add it 
     if opts.charge_symm !== nothing

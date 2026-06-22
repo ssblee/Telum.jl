@@ -3,7 +3,7 @@ using LurCGT
 using Telum
 using LinearAlgebra
 
-include("DMRG_central.jl")
+include("../test/support/dmrg.jl")
 
 function benchmark_smallRMT()
     option = FermionSOptions(3, :U1, :SU2, :SU3)

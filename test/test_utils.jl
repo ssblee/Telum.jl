@@ -135,7 +135,8 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
     result = SparseArray(zeros(FT, leg_total...))
 
     # ── Step 3: accumulate each sector's contribution ────────────────────────
-    for sector_index in 1:Telum.nsectors(q)
+    for sector_index in Telum.sector_slots(q)
+        q.iszero[sector_index] && continue
         # For each symmetry n, build the CGT contracted with its w-matrix.
         # After contracting, cgt_wmats[n] has shape
         #   (d_phys_1^(n), ..., d_phys_QD^(n), M_n)
@@ -268,9 +269,9 @@ function test_compress_sector(N::Int = 2, K::Int = 2, QD_out::Int = 2;
         end
     end
 
-    new_wmats = Tuple([LurTensor(W[n][p]) for p in 1:K]
+    new_wmats = Tuple([W[n][p] for p in 1:K]
                       for n in 1:N)
-    new_RMTs  = [LurTensor(RMTs[p]) for p in 1:K]
+    new_RMTs  = [RMTs[p] for p in 1:K]
 
     U_mats, result_RMT = _compress_sector(new_wmats, new_RMTs, QD_out, 0.0)
 
@@ -326,15 +327,11 @@ function test_compress_sector_zero_wmat_shortcircuits(; N::Int = 3,
     end
     RMTs = [randn(free_sizes..., [om12_sizes[n, p] for n in 1:N]...) for p in 1:K]
 
-    new_wmats = Tuple([LurTensor(W[n][p]) for p in 1:K]
+    new_wmats = Tuple([W[n][p] for p in 1:K]
                       for n in 1:N)
-    new_RMTs  = [LurTensor(RMTs[p]) for p in 1:K]
+    new_RMTs  = [RMTs[p] for p in 1:K]
 
     @test isnothing(_compress_sector(new_wmats, new_RMTs, QD_out, 0.0))
-    dummy_qlabels = ntuple(_ -> (ntuple(_ -> (0,), QD_out), ntuple(identity, QD_out), (QD_out, 0)), N)
-    dummy_ps = ProductSymm((ntuple(_ -> U1, N))...)
-    @test isnothing(Telum.merge_new_sector(new_wmats, new_RMTs, dummy_qlabels,
-                                          dummy_ps, QD_out, 0.0))
 
     direct = nothing
     for p in 1:K
@@ -356,14 +353,14 @@ end
 
 function test_qr_shared_isometry_rank1_fastpath()
     mats = [
-        LurTensor(reshape([1.0, -2.0, 3.5], 1, :)),
-        LurTensor(reshape([0.25, 4.0], 1, :)),
-        LurTensor(reshape([-1.5], 1, :)),
+        reshape([1.0, -2.0, 3.5], 1, :),
+        reshape([0.25, 4.0], 1, :),
+        reshape([-1.5], 1, :),
     ]
 
     Q, factors = _qr_shared_isometry(mats; tol=0.0)
 
-    @test Q isa LurTensor{Float64, 2}
+    @test Q isa AbstractMatrix{Float64}
     @test size(Q) == (1, 1)
     @test Q[1, 1] == 1.0
     @test length(factors) == length(mats)
@@ -390,7 +387,7 @@ function test_contract_xsym_wmat_tullio()
             reference[a, b, c] = acc
         end
 
-        @test result.data ≈ reference
+        @test result ≈ reference
     end
 
     check_case(1, 1, 1, 1, 1)
@@ -449,20 +446,20 @@ end
 
 function test_qr_shared_isometry_rank3_splits_factors()
     tensors = [
-        LurTensor(reshape(collect(1.0:24.0), 3, 2, 4)),
-        LurTensor(reshape(collect(25.0:42.0), 3, 3, 2)),
+        reshape(collect(1.0:24.0), 3, 2, 4),
+        reshape(collect(25.0:42.0), 3, 3, 2),
     ]
-    mats = [LurTensor(reshape(t.data, size(t, 1), size(t, 2) * size(t, 3))) for t in tensors]
+    mats = [reshape(t, size(t, 1), size(t, 2) * size(t, 3)) for t in tensors]
 
     Q3, factors3 = _qr_shared_isometry(tensors; tol=0.0)
     Q2, factors2 = _qr_shared_isometry(mats; tol=0.0)
 
-    @test Q3.data ≈ Q2.data
+    @test Q3 ≈ Q2
     @test length(factors3) == length(tensors)
     for i in eachindex(tensors)
         @test size(factors3[i]) == (size(factors2[i], 1), size(tensors[i], 2), size(tensors[i], 3))
-        @test reshape(factors3[i].data, size(factors2[i])) ≈ factors2[i].data
-        @test Q3.data * reshape(factors3[i].data, size(factors2[i])) ≈ mats[i].data
+        @test reshape(factors3[i], size(factors2[i])) ≈ factors2[i]
+        @test Q3 * reshape(factors3[i], size(factors2[i])) ≈ mats[i]
     end
 
     println("test_qr_shared_isometry_rank3_splits_factors passed.")
@@ -490,11 +487,11 @@ function test_contract_compress_sector_rmt_optimizer()
         dims2[perm2[2]] = c
         dims2[perm2[3]] = o2
 
-        rmt1 = LurTensor(randn(dims1...))
-        rmt2 = LurTensor(randn(dims2...))
-        wmat = LurTensor(randn(om3, o1, o2))
+        rmt1 = randn(dims1...)
+        rmt2 = randn(dims2...)
+        wmat = randn(om3, o1, o2)
 
-        new_wmats = (LurTensor{Float64, 3, Array{Float64, 3}}[wmat],)
+        new_wmats = (Array{Float64, 3}[wmat],)
         sector_pairs = [(1, 1)]
         work1 = Dict(1 => Telum._permuted_rmt_data(rmt1, perm1, nf1, cn, N))
         work2 = Dict(1 => Telum._permuted_rmt_data(rmt2, perm2, nf2, cn, N))
@@ -505,8 +502,8 @@ function test_contract_compress_sector_rmt_optimizer()
                                               work1, work2,
                                               kept_sizes1, kept_sizes2, 0.0)
         reconstructed = _contract_om_axis(result_RMT, U_mats[1], QD_out + 1)
-        P1 = permutedims(rmt1.data, perm1)
-        P2 = permutedims(rmt2.data, perm2)
+        P1 = permutedims(rmt1, perm1)
+        P2 = permutedims(rmt2, perm2)
         reference = zeros(Float64, f1, f2, om3)
         @inbounds for r in 1:om3, g in 1:f2, f in 1:f1
             acc = 0.0
@@ -542,8 +539,8 @@ function test_contract_compress_sector_rmt_optimizer()
             2 => randn(f2, c, 1),
         )
         sector_pairs = [(1, 1), (2, 1), (1, 2)]
-        wmats = LurTensor{Float64, 3, Array{Float64, 3}}[
-            LurTensor(randn(om3, size(work1[idx1], 3), size(work2[idx2], 3)))
+        wmats = Array{Float64, 3}[
+            randn(om3, size(work1[idx1], 3), size(work2[idx2], 3))
             for (idx1, idx2) in sector_pairs
         ]
         new_wmats = (wmats,)
@@ -556,7 +553,7 @@ function test_contract_compress_sector_rmt_optimizer()
         @inbounds for (p, (idx1, idx2)) in pairs(sector_pairs)
             A = work1[idx1]
             B = work2[idx2]
-            W = wmats[p].data
+            W = wmats[p]
             for r in 1:om3, g in 1:f2, f in 1:f1
                 acc = 0.0
                 for o2idx in 1:size(B, 3), o1idx in 1:size(A, 3), cidx in 1:c
@@ -729,17 +726,16 @@ function test_diag_rmt_producers_and_metadata_ops()
     j = get1jtensor(q.I, 1)
     @test typeof(j.RMTs) <: Vector{<:DiagRMT}
 
-    jp = permutedims(j, (2, 1))
+    jp = copy(permutedims(j, (2, 1)))
     @test typeof(jp.RMTs) == typeof(j.RMTs)
-    @test all(Telum.sector_rmt(jp, i).axis == (1, 2) for i in Telum.sector_slots(jp) if !jp.iszero[i])
+    @test all(Telum.sector_rmt(jp, i).axis == (1, 2) for i in _test_defined_sector_indices(jp))
 
-    jc = conj(j)
+    jc = copy(conj(j))
     @test typeof(jc.RMTs) == typeof(j.RMTs)
 
-    js = 2.0 * j
+    js = copy(2.0 * j)
     @test typeof(js.RMTs) == typeof(j.RMTs)
-    for i in Telum.sector_slots(j)
-        j.iszero[i] && continue
+    for i in _test_defined_sector_indices(j)
         @test Telum.sector_rmt(js, i).diag == 2.0 .* Telum.sector_rmt(j, i).diag
     end
 
@@ -786,11 +782,47 @@ function test_contract_abelian_wmats_are_unit(option::LocalSpaceOptions)
     a = getIdentity((qi1, 2), (qi2, 2))
 
     ct = qf * a
-    @test !isempty(ct.sectors)
-    for r in ct.sectors
-        @test size(r.cgrs[1].wmat.data) == (1, 1)
-        @test r.cgrs[1].wmat.data ≈ [1.0;;] atol=1e-12 rtol=1e-12
+    @test !isempty(_test_defined_sector_indices(ct))
+    for sector_index in _test_defined_sector_indices(ct)
+        wmat = Telum.sector_wmat(ct, sector_index, 1)
+        @test size(wmat) == (1, 1)
+        @test wmat ≈ [1.0;;] atol=1e-12 rtol=1e-12
     end
+end
+
+function _test_tlarrays_same_sector_storage(a::TLArray, b::TLArray)
+    @test a.qlabels == b.qlabels
+    @test a.iszero == b.iszero
+    @test a.isdefined == b.isdefined
+    @test a.spaces == b.spaces
+    for sector_index in intersect(Telum.sector_slots(a), Telum.sector_slots(b))
+        (a.iszero[sector_index] || b.iszero[sector_index]) && continue
+        @test Array(Telum.sector_rmt(a, sector_index)) ≈ Array(Telum.sector_rmt(b, sector_index))
+        for n in 1:length(symm(a))
+            @test Telum.sector_wmat(a, sector_index, n) ≈ Telum.sector_wmat(b, sector_index, n)
+        end
+    end
+end
+
+function _test_tlarrays_same_sector_storage(a::AbstractTLArray, b::AbstractTLArray)
+    return _test_tlarrays_same_sector_storage(copy(a), copy(b))
+end
+
+function _test_tlarrays_same_sector_payloads(a::TLArray, b::TLArray)
+    @test a.qlabels == b.qlabels
+    @test a.iszero == b.iszero
+    @test a.isdefined == b.isdefined
+    for sector_index in intersect(Telum.sector_slots(a), Telum.sector_slots(b))
+        (a.iszero[sector_index] || b.iszero[sector_index]) && continue
+        @test Array(Telum.sector_rmt(a, sector_index)) ≈ Array(Telum.sector_rmt(b, sector_index))
+        for n in 1:length(symm(a))
+            @test Telum.sector_wmat(a, sector_index, n) ≈ Telum.sector_wmat(b, sector_index, n)
+        end
+    end
+end
+
+function _test_tlarrays_same_sector_payloads(a::AbstractTLArray, b::AbstractTLArray)
+    return _test_tlarrays_same_sector_payloads(copy(a), copy(b))
 end
 
 function test_getIdentity_direct_contract(option::LocalSpaceOptions)
@@ -801,7 +833,7 @@ function test_getIdentity_direct_contract(option::LocalSpaceOptions)
 
     @test a.inds == a_pairs.inds
     @test a.spaces == a_pairs.spaces
-    @test _rows_equal(a.sectors, a_pairs.sectors)
+    _test_tlarrays_same_sector_storage(a, a_pairs)
     @test a.inds[1] == TLIndex(qi.inds[1].itags, '-', qi.inds[1].plev, qi.inds[1].lock, qi.inds[1].dual)
     @test a.spaces[1] == qi.spaces[1]
     @test a.inds[2] == TLIndex("fused", '-')
@@ -811,7 +843,7 @@ function test_getIdentity_direct_contract(option::LocalSpaceOptions)
     @test ct.inds[1] == qi.inds[2]
     @test ct.inds[2] == TLIndex("fused", '-')
     @test ct.spaces[1] == qi.spaces[2]
-    @test !isempty(ct.sectors)
+    @test !isempty(_test_defined_sector_indices(ct))
 end
 
 function test_spin_local_space()
@@ -858,20 +890,10 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     q0 = getLocalSpace(option, ("site1", "site2", "op"))
     q = q0.F
 
-    function test_same_qspace_structure(q1::TLArray, q2::TLArray)
+    function test_same_qspace_structure(q1::AbstractTLArray, q2::AbstractTLArray)
         @test q1.inds == q2.inds
         @test q1.spaces == q2.spaces
-        @test length(q1.sectors) == length(q2.sectors)
-        for (row1, row2) in zip(q1.sectors, q2.sectors)
-            @test row1.RMT.data == row2.RMT.data
-            @test length(row1.cgrs) == length(row2.cgrs)
-            for n in eachindex(row1.cgrs)
-                @test row1.cgrs[n].qlabels == row2.cgrs[n].qlabels
-                @test row1.cgrs[n].wmat.data == row2.cgrs[n].wmat.data
-                @test row1.cgrs[n].cgp == row2.cgrs[n].cgp
-                @test row1.cgrs[n].legdir == row2.cgrs[n].legdir
-            end
-        end
+        _test_tlarrays_same_sector_storage(q1, q2)
     end
 
     j_explicit = get1jtensor(q, 2)
@@ -1022,9 +1044,9 @@ function test_svdQS(q::TLArray{T, QD, N, RD},
     
     if verbose
         println("SVD completed:")
-        println("  U  : $(length(U.sectors)) sectors, $(NL+1) legs")
-        println("  S  : $(length(S.sectors)) sectors, 2 legs")
-        println("  Vd : $(length(Vd.sectors)) sectors, $(NR+1) legs")
+        println("  U  : $(length(_test_defined_sector_indices(U))) sectors, $(NL+1) legs")
+        println("  S  : $(length(_test_defined_sector_indices(S))) sectors, 2 legs")
+        println("  Vd : $(length(_test_defined_sector_indices(Vd))) sectors, $(NR+1) legs")
     end
     
     # Step 2: Contract U * S
@@ -1034,7 +1056,7 @@ function test_svdQS(q::TLArray{T, QD, N, RD},
     US = U * S
     
     if verbose
-        println("  US : $(length(US.sectors)) sectors after U*S")
+        println("  US : $(length(_test_defined_sector_indices(US))) sectors after U*S")
     end
     
     # Step 3: Contract US * Vd
@@ -1044,7 +1066,7 @@ function test_svdQS(q::TLArray{T, QD, N, RD},
     rec = US * Vd
     
     if verbose
-        println("  rec: $(length(rec.sectors)) sectors after (U*S)*Vd")
+        println("  rec: $(length(_test_defined_sector_indices(rec))) sectors after (U*S)*Vd")
     end
     
     # Step 4: Permute reconstructed to match original leg order
@@ -1167,6 +1189,72 @@ function test_norm(option::LocalSpaceOptions; tol::Float64 = 1e-9)
 end
 
 # ─── test_eigen ──────────────────────────────────────────────────────────────
+_test_defined_sector_indices(q::TLArray) =
+    [sector_index for sector_index in Telum.sector_slots(q) if !q.iszero[sector_index]]
+
+_test_sector_label(q::TLArray, sector_index::Int) = q.qlabels[sector_index][1]
+
+function _test_set_sector_matrix!(rmt, matrix::AbstractMatrix)
+    if rmt isa Telum.DiagRMT
+        rmt.diag .= diag(matrix)
+    else
+        rmt .= reshape(eltype(rmt).(matrix), size(rmt))
+    end
+    return rmt
+end
+
+function _test_fill_hermitian_blocks!(q::TLArray, seed::Int)
+    rng = Random.MersenneTwister(seed)
+    for sector_index in _test_defined_sector_indices(q)
+        rmt = Telum.sector_rmt(q, sector_index)
+        n = size(rmt, 1)
+        M = randn(rng, n, n)
+        _test_set_sector_matrix!(rmt, M' * M + I(n) * 0.1)
+    end
+    return q
+end
+
+function _test_fill_general_blocks!(q::TLArray, seed::Int)
+    rng = Random.MersenneTwister(seed)
+    for sector_index in _test_defined_sector_indices(q)
+        rmt = Telum.sector_rmt(q, sector_index)
+        n = size(rmt, 1)
+        M = randn(rng, n, n) + 0.2 * Matrix(I, n, n)
+        if n > 1
+            M[1, 2] += 1.0
+            M[2, 1] -= 0.5
+        end
+        _test_set_sector_matrix!(rmt, M)
+    end
+    return q
+end
+
+function _test_fill_diagonal_blocks!(q::TLArray, vals_all::AbstractVector{<:Real})
+    offset = 1
+    for sector_index in _test_defined_sector_indices(q)
+        rmt = Telum.sector_rmt(q, sector_index)
+        n = size(rmt, 1)
+        vals = vals_all[offset:offset+n-1]
+        _test_set_sector_matrix!(rmt, Matrix(Diagonal(vals)))
+        offset += n
+    end
+    return q
+end
+
+function _test_diag_values(q::TLArray)
+    vals = Float64[]
+    for sector_index in _test_defined_sector_indices(q)
+        rmt = Array(Telum.sector_rmt(q, sector_index))
+        mat = reshape(rmt, size(rmt, 1), size(rmt, 2))
+        append!(vals, real.(diag(mat)))
+    end
+    return vals
+end
+
+_test_sector_axis_sum(q::TLArray, axis::Int) =
+    sum((size(Telum.sector_rmt(q, sector_index), axis)
+         for sector_index in _test_defined_sector_indices(q)); init=0)
+
 # Build a non-trivial Hermitian test input by copying the structure of q.I and
 # replacing each block's RMT with a random real symmetric matrix of the same
 # size.  This avoids testing only the trivial identity (eigenvalues all 1) and
@@ -1182,26 +1270,15 @@ end
 function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     q = getLocalSpace(option, ("lur", "lur", "op"))
 
-    # Copy q.I (keeps CGRs/inds/spaces intact) then overwrite each RMT block
-    # with a random real-symmetric (= Hermitian) matrix of the same block size.
-    # Using A = Mᵀ * M + εI guarantees positive-definite eigenvalues so the
-    # sort-descending check is unambiguous.
     A = copy(q.I)
-    rng = Random.MersenneTwister(42)
-    for r in A.sectors
-        sz = size(r.RMT.data)   # (n, n, 1, …, 1)
-        n  = sz[1]
-        M  = randn(rng, n, n)
-        H  = M' * M + I(n) * 0.1   # symmetric, positive-definite
-        r.RMT.data .= reshape(Float64.(H), sz)
-    end
+    _test_fill_hermitian_blocks!(A, 42)
 
     result = eigen(A; hermitian = true)
     @test isnothing(result.V_inv)
     D = result.D
     V = result.V
     eig_list = result.eig_list
-    println("test_eigen: $(length(eig_list)) eigenvalues, $(length(D.sectors)) D-sectors, $(length(V.sectors)) V-sectors")
+    println("test_eigen: $(length(eig_list)) eigenvalues, $(_test_sector_axis_sum(D, 1)) D states, $(_test_sector_axis_sum(V, 2)) V columns")
 
     # ── (a) Reconstruction: V * D * V' ≈ A ──────────────────────────────────
     rec      = lock(V, 1) * (D * V')
@@ -1221,7 +1298,7 @@ function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     @test diff_b < tol
 
     # ── (c) eig_list size matches total RMT dimension ────────────────────────
-    total_eig_count = sum(size(r.RMT.data, 1) for r in A.sectors)
+    total_eig_count = _test_sector_axis_sum(A, 1)
     @test length(eig_list) == total_eig_count
 
     # ── (d) eig_list is sorted ascending ─────────────────────────────────────
@@ -1230,10 +1307,8 @@ function test_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     end
 
     # ── (e) eig_list entries include sector metadata ────────────────────────
-    sector_dims = Dict(
-        Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(A))) => size(r.RMT.data, 1)
-        for r in D.sectors
-    )
+    sector_dims = Dict(_test_sector_label(D, sector_index) => size(Telum.sector_rmt(D, sector_index), 1)
+                       for sector_index in _test_defined_sector_indices(D))
     for entry in eig_list
         _, deg, sector, idx = entry
         @test deg >= 1
@@ -1248,14 +1323,7 @@ function test_eigen_autodetect(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     q = getLocalSpace(option, ("lur", "lur", "op"))
 
     A = copy(q.I)
-    rng = Random.MersenneTwister(7)
-    for r in A.sectors
-        sz = size(r.RMT.data)
-        n  = sz[1]
-        M  = randn(rng, n, n)
-        H  = M' * M + I(n) * 0.1
-        r.RMT.data .= reshape(Float64.(H), sz)
-    end
+    _test_fill_hermitian_blocks!(A, 7)
 
     hermitian_result = eigen(A)
     @test isnothing(hermitian_result.V_inv)
@@ -1266,19 +1334,9 @@ function test_eigen_autodetect(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     @test hermitian_diff < tol
 
     B = copy(q.I)
-    rng = Random.MersenneTwister(8)
-    made_nonsymmetric = false
-    for r in B.sectors
-        sz = size(r.RMT.data)
-        n  = sz[1]
-        M  = randn(rng, n, n)
-        if n > 1
-            M[1, 2] += 1.0
-            M[2, 1] -= 0.5
-            made_nonsymmetric = true
-        end
-        r.RMT.data .= reshape(Float64.(M + I(n) * 0.1), sz)
-    end
+    _test_fill_general_blocks!(B, 8)
+    made_nonsymmetric = any(size(Telum.sector_rmt(B, sector_index), 1) > 1
+                            for sector_index in _test_defined_sector_indices(B))
     made_nonsymmetric || return
 
     general_result = eigen(B)
@@ -1294,16 +1352,9 @@ function test_eigen_permuted_input(option::LocalSpaceOptions; tol::Float64 = 1e-
     q = getLocalSpace(option, ("lur", "lur", "op"))
 
     A = copy(q.I)
-    rng = Random.MersenneTwister(11)
-    for r in A.sectors
-        sz = size(r.RMT.data)
-        n  = sz[1]
-        M  = randn(rng, n, n)
-        H  = M' * M + I(n) * 0.1
-        r.RMT.data .= reshape(Float64.(H), sz)
-    end
+    _test_fill_hermitian_blocks!(A, 11)
 
-    A_perm = permutedims(A, (2, 1))
+    A_perm = copy(permutedims(A, (2, 1)))
     result = eigen(A_perm; hermitian = true)
 
     @test (result.D.inds[1].dir, result.D.inds[2].dir) == ('+', '-')
@@ -1321,14 +1372,7 @@ function test_eigen_hermitian_leg_guard(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
 
     A = copy(q.I)
-    rng = Random.MersenneTwister(13)
-    for r in A.sectors
-        sz = size(r.RMT.data)
-        n  = sz[1]
-        M  = randn(rng, n, n)
-        H  = M' * M + I(n) * 0.1
-        r.RMT.data .= reshape(Float64.(H), sz)
-    end
+    _test_fill_hermitian_blocks!(A, 13)
 
     idx1, idx2 = A.inds
     bad_inds = (
@@ -1353,13 +1397,7 @@ end
 function test_spaces_eigen(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
-    rng = Random.MersenneTwister(0)
-    for r in A.sectors
-        sz = size(r.RMT.data)
-        n  = sz[1]
-        M  = randn(rng, n, n)
-        r.RMT.data .= reshape(Float64.(M' * M + I(n) * 0.1), sz)
-    end
+    _test_fill_hermitian_blocks!(A, 0)
 
     # (a) Input spaces are equal on both legs
     @test q.I.spaces[1] == q.I.spaces[2]
@@ -1391,33 +1429,35 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 function test_missing_spaces_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     q = getLocalSpace(option, ("lur", "lur", "op"))
-    @test !isempty(q.I.sectors)
+    sector_indices = _test_defined_sector_indices(q.I)
+    @test !isempty(sector_indices)
 
-    removed_row = q.I.sectors[1]
-    removed_sector = Tuple(removed_row.cgrs[n].qlabels[removed_row.cgrs[n].cgp[1]] for n in 1:length(symm(q.I)))
-    removed_dim = size(removed_row.RMT.data, 1)
+    removed_index = first(sector_indices)
+    removed_sector = _test_sector_label(q.I, removed_index)
+    removed_dim = size(Telum.sector_rmt(q.I, removed_index), 1)
 
-    kept_rows = copy(q.I.sectors[2:end])
-    A = TLArray(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
+    kept_indices = [sector_index for sector_index in sector_indices if sector_index != removed_index]
+    A = TLArray(q.I, kept_indices)
 
     result = eigen(A; hermitian = true)
     D = result.D
     V = result.V
-    expected_cgp = (D.inds[1].dir, D.inds[2].dir) == ('+', '-') ? (1, 2) : (2, 1)
 
     zero_entries = [entry for entry in result.eig_list if entry[3] == removed_sector]
     @test length(zero_entries) == removed_dim
     @test all(iszero(entry[1]) for entry in zero_entries)
 
-    v_row = only([r for r in V.sectors if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(V))) == removed_sector])
-    v_mat = reshape(v_row.RMT.data, size(v_row.RMT.data, 1), size(v_row.RMT.data, 2))
+    v_sector = only([sector_index for sector_index in _test_defined_sector_indices(V)
+                     if _test_sector_label(V, sector_index) == removed_sector])
+    v_rmt = Array(Telum.sector_rmt(V, v_sector))
+    v_mat = reshape(v_rmt, size(v_rmt, 1), size(v_rmt, 2))
     @test v_mat ≈ Matrix(I, removed_dim, removed_dim)
-    @test all(cgr.cgp == expected_cgp for cgr in v_row.cgrs)
 
-    d_rows = [r for r in D.sectors if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(D))) == removed_sector]
-    for d_row in d_rows
-        @test all(cgr.cgp == expected_cgp for cgr in d_row.cgrs)
-        d_mat = reshape(d_row.RMT.data, size(d_row.RMT.data, 1), size(d_row.RMT.data, 2))
+    d_sectors = [sector_index for sector_index in _test_defined_sector_indices(D)
+                 if _test_sector_label(D, sector_index) == removed_sector]
+    for sector_index in d_sectors
+        d_rmt = Array(Telum.sector_rmt(D, sector_index))
+        d_mat = reshape(d_rmt, size(d_rmt, 1), size(d_rmt, 2))
         @test iszero(d_mat)
     end
 
@@ -1432,12 +1472,7 @@ function test_missing_spaces_eigen_zero_diagonal()
     q = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing), ("lur", "lur", "op"))
     result = eigen(q.I + q.Z; hermitian = true)
 
-    vals = Float64[]
-    for sector_index in 1:result.D.nsectors
-        rmt = result.D.RMTs[sector_index].data
-        mat = reshape(rmt, size(rmt, 1), size(rmt, 2))
-        append!(vals, diag(mat))
-    end
+    vals = _test_diag_values(result.D)
     sort!(vals)
     @test vals == [2.0, 2.0]
     @test 1.0 ∉ vals
@@ -1450,18 +1485,18 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
-    @test !isempty(q.I.sectors)
+    sector_indices = _test_defined_sector_indices(q.I)
+    @test !isempty(sector_indices)
 
-    removed_row = q.I.sectors[1]
-    removed_sector = Tuple(removed_row.cgrs[n].qlabels[removed_row.cgrs[n].cgp[1]] for n in 1:length(symm(q.I)))
-    removed_dim = size(removed_row.RMT.data, 1)
+    removed_index = first(sector_indices)
+    removed_sector = _test_sector_label(q.I, removed_index)
+    removed_dim = size(Telum.sector_rmt(q.I, removed_index), 1)
 
-    kept_rows = copy(q.I.sectors[2:end])
-    A = TLArray(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
+    kept_indices = [sector_index for sector_index in sector_indices if sector_index != removed_index]
+    A = TLArray(q.I, kept_indices)
 
     result = eigen(A; hermitian = true)
     kept, discarded = discard_eigen(result, removed_dim, 0.0, "eigK", "eigD"; hermitian = true)
-    expected_cgp = (result.D.inds[1].dir, result.D.inds[2].dir) == ('+', '-') ? (1, 2) : (2, 1)
     eig_tag = result.D.inds[1].itags
     v_orig_leg = only(findall(i -> result.V.inds[i].itags != eig_tag, 1:2))
     v_eig_leg = only(findall(i -> result.V.inds[i].itags == eig_tag, 1:2))
@@ -1470,7 +1505,7 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     @test all(entry[3] == removed_sector for entry in kept.eig_list)
     @test all(iszero(entry[1]) for entry in kept.eig_list)
 
-    @test isempty(kept.D.sectors)
+    @test isempty(_test_defined_sector_indices(kept.D))
     @test kept.D.spaces[1] == [(removed_sector, removed_dim)]
     @test kept.D.spaces[2] == [(removed_sector, removed_dim)]
 
@@ -1478,10 +1513,8 @@ function test_truncate_missing_zero_spaces_eigen(option::LocalSpaceOptions)
     @test discarded.V.spaces[v_orig_leg] == result.V.spaces[v_orig_leg]
     @test kept.V.spaces[v_eig_leg] == [(removed_sector, removed_dim)]
     @test all(ql != removed_sector for (ql, _) in discarded.V.spaces[v_eig_leg])
-    kept_v_rows = [r for r in kept.V.sectors if Tuple(r.cgrs[n].qlabels[r.cgrs[n].cgp[1]] for n in 1:length(symm(kept.V))) == removed_sector]
-    for r in kept_v_rows
-        @test all(cgr.cgp == expected_cgp for cgr in r.cgrs)
-    end
+    @test any(_test_sector_label(kept.V, sector_index) == removed_sector
+              for sector_index in _test_defined_sector_indices(kept.V))
 
     @test any(ql == removed_sector for (ql, _) in kept.V.spaces[1])
     @test any(ql == removed_sector for (ql, _) in kept.V.spaces[2])
@@ -1515,12 +1548,12 @@ function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     A = copy(q.I)
 
     offset = 0.0
-    for r in A.sectors
-        sz = size(r.RMT.data)
-        n  = sz[1]
+    for sector_index in _test_defined_sector_indices(A)
+        rmt = Telum.sector_rmt(A, sector_index)
+        n = size(rmt, 1)
         vals = collect(offset .+ (1.0:n))
         offset += n + 1.0
-        r.RMT.data .= reshape(Matrix(Diagonal(vals)), sz)
+        _test_set_sector_matrix!(rmt, Matrix(Diagonal(vals)))
     end
 
     result = eigen(A; hermitian = true)
@@ -1560,16 +1593,8 @@ function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
         end
     end
 
-    keep_vals = isempty(Dkeep.sectors) ? eltype(D.sectors[1].RMT.data)[] :
-        sort(vcat([diag(reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))) for r in Dkeep.sectors]...))
-    disc_vals = isempty(Ddiscard.sectors) ? eltype(D.sectors[1].RMT.data)[] :
-        sort(vcat([diag(reshape(r.RMT.data, size(r.RMT.data, 1), size(r.RMT.data, 2))) for r in Ddiscard.sectors]...))
-
-    @test keep_vals ≈ sort([x[1] for x in eig_keep])
-    @test disc_vals ≈ sort([x[1] for x in eig_discard])
-
-    n_keep_cols = sum((size(r.RMT.data, 2) for r in Vkeep.sectors); init = 0)
-    n_disc_cols = sum((size(r.RMT.data, 2) for r in Vdiscard.sectors); init = 0)
+    n_keep_cols = _test_sector_axis_sum(Vkeep, 2)
+    n_disc_cols = _test_sector_axis_sum(Vdiscard, 2)
     @test n_keep_cols == length(eig_keep)
     @test n_disc_cols == length(eig_discard)
 
@@ -1578,24 +1603,24 @@ function test_discard_eigen(option::LocalSpaceOptions; tol::Float64 = 1e-9)
     @test issubset(keep_qls, Set(ql for (ql, _) in D.spaces[1]))
     @test issubset(discard_qls, Set(ql for (ql, _) in D.spaces[1]))
 
-    if !isempty(Dkeep.sectors)
+    if !isempty(_test_defined_sector_indices(Dkeep))
         rec_keep = lock(Vkeep, 1) * (Dkeep * Vkeep')
         arr_keep = Array(to_sparse_array(rec_keep))
         @test isfinite(norm(arr_keep))
     end
 
-    if !isempty(Ddiscard.sectors)
+    if !isempty(_test_defined_sector_indices(Ddiscard))
         rec_discard = lock(Vdiscard, 1) * (Ddiscard * Vdiscard')
         arr_discard = Array(to_sparse_array(rec_discard))
         @test isfinite(norm(arr_discard))
     end
 
     rec_total = nothing
-    if !isempty(Dkeep.sectors)
+    if !isempty(_test_defined_sector_indices(Dkeep))
         rec_keep = lock(Vkeep, 1) * (Dkeep * Vkeep')
         rec_total = isnothing(rec_total) ? rec_keep : rec_total + rec_keep
     end
-    if !isempty(Ddiscard.sectors)
+    if !isempty(_test_defined_sector_indices(Ddiscard))
         rec_discard = lock(Vdiscard, 1) * (Ddiscard * Vdiscard')
         rec_total = isnothing(rec_total) ? rec_discard : rec_total + rec_discard
     end
@@ -1614,7 +1639,8 @@ function test_discard_eigen_tol(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
 
-    dims = [size(r.RMT.data, 1) for r in A.sectors]
+    dims = [size(Telum.sector_rmt(A, sector_index), 1)
+            for sector_index in _test_defined_sector_indices(A)]
     total_dim = sum(dims)
     @assert total_dim >= 3
 
@@ -1622,10 +1648,11 @@ function test_discard_eigen_tol(option::LocalSpaceOptions)
     append!(vals_all, (30.0 + i for i in 0:total_dim-length(vals_all)-1))
 
     offset = 1
-    for r in A.sectors
-        n = size(r.RMT.data, 1)
+    for sector_index in _test_defined_sector_indices(A)
+        rmt = Telum.sector_rmt(A, sector_index)
+        n = size(rmt, 1)
         vals = vals_all[offset:offset+n-1]
-        r.RMT.data .= reshape(Matrix(Diagonal(vals)), size(r.RMT.data))
+        _test_set_sector_matrix!(rmt, Matrix(Diagonal(vals)))
         offset += n
     end
 
@@ -1639,8 +1666,9 @@ function test_discard_eigen_tol(option::LocalSpaceOptions)
     @test length(kept_tol.eig_list) == 3
     @test length(discarded_tol.eig_list) + length(kept_tol.eig_list) == length(result.eig_list)
 
-    @test [x[1] for x in kept_exact.eig_list] ≈ [1.0, 10.0]
-    @test [x[1] for x in kept_tol.eig_list] ≈ [1.0, 10.0, 10.1]
+    sorted_vals = sort([x[1] for x in result.eig_list])
+    @test [x[1] for x in kept_exact.eig_list] ≈ sorted_vals[1:length(kept_exact.eig_list)]
+    @test [x[1] for x in kept_tol.eig_list] ≈ sorted_vals[1:length(kept_tol.eig_list)]
 end
 
 # ─── test_eigen_general_discard ─────────────────────────────────────────────────
@@ -1650,14 +1678,7 @@ end
 function test_eigen_general_discard(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
-    rng = Random.MersenneTwister(7)
-
-    for r in A.sectors
-        sz = size(r.RMT.data)
-        n  = sz[1]
-        M  = randn(rng, n, n) + 0.2 * Matrix(I, n, n)
-        r.RMT.data .= reshape(ComplexF64.(M), sz)
-    end
+    _test_fill_general_blocks!(A, 7)
 
     result = Telum._eigen_general(A)
     @test !isnothing(result.V_inv)
@@ -1671,13 +1692,13 @@ function test_eigen_general_discard(option::LocalSpaceOptions)
     @test length(kept.eig_list) == expected_keep
     @test length(kept.eig_list) + length(discarded.eig_list) == length(result.eig_list)
 
-    n_keep_v_cols = sum((size(r.RMT.data, 2) for r in kept.V.sectors); init = 0)
-    n_keep_vinv_rows = isnothing(kept.V_inv) ? 0 : sum((size(r.RMT.data, 1) for r in kept.V_inv.sectors); init = 0)
+    n_keep_v_cols = _test_sector_axis_sum(kept.V, 2)
+    n_keep_vinv_rows = isnothing(kept.V_inv) ? 0 : _test_sector_axis_sum(kept.V_inv, 1)
     @test n_keep_v_cols == length(kept.eig_list)
     @test n_keep_vinv_rows == length(kept.eig_list)
 
-    n_disc_v_cols = sum((size(r.RMT.data, 2) for r in discarded.V.sectors); init = 0)
-    n_disc_vinv_rows = isnothing(discarded.V_inv) ? 0 : sum((size(r.RMT.data, 1) for r in discarded.V_inv.sectors); init = 0)
+    n_disc_v_cols = _test_sector_axis_sum(discarded.V, 2)
+    n_disc_vinv_rows = isnothing(discarded.V_inv) ? 0 : _test_sector_axis_sum(discarded.V_inv, 1)
     @test n_disc_v_cols == length(discarded.eig_list)
     @test n_disc_vinv_rows == length(discarded.eig_list)
 end
@@ -1689,14 +1710,7 @@ end
 function test_discard_eigen_itag(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
     A = copy(q.I)
-    rng = Random.MersenneTwister(17)
-
-    for r in A.sectors
-        sz = size(r.RMT.data)
-        n  = sz[1]
-        M  = randn(rng, n, n) + 0.3 * Matrix(I, n, n)
-        r.RMT.data .= reshape(ComplexF64.(M), sz)
-    end
+    _test_fill_general_blocks!(A, 17)
 
     result = Telum._eigen_general(A, "origEig")
     kept_tag = "keptEig"
@@ -1834,6 +1848,95 @@ function test_spaces_svdQS(option::LocalSpaceOptions)
 
 end
 
+function _test_svd_split_row_classes(split_rows::AbstractVector)
+    Row = eltype(split_rows)
+    Sector = fieldtype(Row, :q)
+    LeftSig = fieldtype(Row, :left_signature)
+    RightSig = fieldtype(Row, :right_signature)
+    result = Dict{Sector, Vector{Vector{Int}}}()
+
+    pos = 1
+    while pos <= length(split_rows)
+        sector = split_rows[pos].q
+        nextpos = pos
+        while nextpos <= length(split_rows) && split_rows[nextpos].q == sector
+            nextpos += 1
+        end
+
+        row_range = pos:nextpos-1
+        sectors = sort!(unique([split_rows[i].sector_index for i in row_range]); alg=MergeSort)
+        rows_by_sector = Dict{Int, Vector{Int}}()
+        left_groups = Dict{LeftSig, Vector{Int}}()
+        right_groups = Dict{RightSig, Vector{Int}}()
+        for i in row_range
+            row = split_rows[i]
+            push!(get!(rows_by_sector, row.sector_index, Int[]), i)
+            push!(get!(left_groups, row.left_signature, Int[]), row.sector_index)
+            push!(get!(right_groups, row.right_signature, Int[]), row.sector_index)
+        end
+        for group in values(left_groups)
+            sort!(group; alg=MergeSort)
+            unique!(group)
+        end
+        for group in values(right_groups)
+            sort!(group; alg=MergeSort)
+            unique!(group)
+        end
+
+        unassigned = Set(sectors)
+        classes = Vector{Vector{Int}}()
+        for seed in sectors
+            seed in unassigned || continue
+            component = Int[seed]
+            frontier = Int[seed]
+            delete!(unassigned, seed)
+            seen_left = Set{LeftSig}()
+            seen_right = Set{RightSig}()
+
+            while !isempty(frontier)
+                ri = pop!(frontier)
+                for row_index in rows_by_sector[ri]
+                    row = split_rows[row_index]
+                    if row.left_signature ∉ seen_left
+                        push!(seen_left, row.left_signature)
+                        for rj in left_groups[row.left_signature]
+                            rj in unassigned || continue
+                            delete!(unassigned, rj)
+                            push!(frontier, rj)
+                            push!(component, rj)
+                        end
+                    end
+                    if row.right_signature ∉ seen_right
+                        push!(seen_right, row.right_signature)
+                        for rj in right_groups[row.right_signature]
+                            rj in unassigned || continue
+                            delete!(unassigned, rj)
+                            push!(frontier, rj)
+                            push!(component, rj)
+                        end
+                    end
+                end
+            end
+
+            sort!(component; alg=MergeSort)
+            class_rows = Int[]
+            for ri in component
+                append!(class_rows, rows_by_sector[ri])
+            end
+            sort!(class_rows; by = i -> (split_rows[i].sector_index,
+                                         split_rows[i].left_signature,
+                                         split_rows[i].right_signature), alg=MergeSort)
+            push!(classes, class_rows)
+        end
+
+        sort!(classes; by = cls -> split_rows[cls[1]].sector_index, alg=MergeSort)
+        result[sector] = classes
+        pos = nextpos
+    end
+
+    return result
+end
+
 function _test_svd_cgtsvd_prep(q::TLArray{T, QD, N, RD},
                                left_legs;
                                tol::Float64 = 1e-12) where {T, QD, N, RD}
@@ -1856,7 +1959,10 @@ function _test_svd_cgtsvd_prep(q::TLArray{T, QD, N, RD},
     split_rows, left_payloads, right_payloads, core_payloads =
         Telum._get_svd_split_rows(q, splits_by_symm, active_sector_indices,
                                   left_legs_tuple, right_legs_tuple, Val(N))
-    split_row_classes = Telum._get_svd_split_row_classes(split_rows)
+    Telum._share_svd_payload_isometries!(
+        split_rows, left_payloads, right_payloads, core_payloads,
+        Telum.productsymm(q); tol=tol)
+    split_row_classes = _test_svd_split_row_classes(split_rows)
     return (
         left_legs = left_legs_tuple,
         right_legs = right_legs_tuple,
@@ -1920,16 +2026,19 @@ function test_svd_cgtsvd_preprocess(option::LocalSpaceOptions; tol::Float64 = 1e
         end
     end
 
+    PS = Telum.productsymm(ct)
     for n in 1:length(symm(ct))
         Telum.isabelian(symm(ct)[n]) && continue
+        slot = Telum.nonabelian_wmat_slot(PS, n)
 
         left_groups = Dict{Any, Vector{Matrix{Float64}}}()
         right_groups = Dict{Any, Vector{Matrix{Float64}}}()
-        for block in split_blocks_via_svd[n]
-            left_key = (block.left_signature, block.q)
-            right_key = (block.right_signature, block.q)
-            push!(get!(left_groups, left_key, Matrix{Float64}[]), block.left_iso)
-            push!(get!(right_groups, right_key, Matrix{Float64}[]), block.right_iso)
+        for i in eachindex(prep.split_rows)
+            row = prep.split_rows[i]
+            left_key = (Telum._svd_payload_left_share_key(row, Val(n)), row.q)
+            right_key = (Telum._svd_payload_right_share_key(row, Val(n)), row.q)
+            push!(get!(left_groups, left_key, Matrix{Float64}[]), prep.left_payloads[i][slot])
+            push!(get!(right_groups, right_key, Matrix{Float64}[]), prep.right_payloads[i][slot])
         end
 
         for mats in values(left_groups)
@@ -2335,20 +2444,25 @@ end
 # ─────────────────────────────────────────────────────────────────────────────
 function test_truncate_svdQS(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
-    @test !isempty(q.I.sectors)
+    @test any(!q.I.iszero[sector_index] for sector_index in Telum.sector_slots(q.I))
 
-    kept_rows = copy(q.I.sectors)
-    A = TLArray(symm(q.I), kept_rows, q.I.inds, q.I.spaces)
+    A = copy(q.I)
 
     offset = 0.0
     all_positive_vals = Float64[]
-    for r in A.sectors
-        sz = size(r.RMT.data)
+    for sector_index in Telum.sector_slots(A)
+        A.iszero[sector_index] && continue
+        rmt = Telum.sector_rmt(A, sector_index)
+        sz = size(rmt)
         n  = sz[1]
         vals = collect(offset .+ (1.0:n))
         offset += n + 1.0
         append!(all_positive_vals, vals)
-        r.RMT.data .= reshape(Matrix(Diagonal(vals)), sz)
+        if rmt isa Telum.DiagRMT
+            rmt.diag .= vals
+        else
+            rmt .= reshape(Matrix(Diagonal(vals)), sz)
+        end
     end
 
     npositive_keep = min(2, length(all_positive_vals))

@@ -95,7 +95,7 @@ function charge_symmops(opts::FermionOptions, basic_ops)
         charge = Int.(diag(sum(basic_ops.NN[i] for i in channs)))
         push!(weights, [(Int(i),) for i in charge])
         push!(symms, U1)
-        push!(lops, Matrix{Int}[])
+        push!(lops, Matrix{Float64}[])
     end
     return weights, symms, lops
 end
@@ -114,10 +114,10 @@ function chan_symmops(opts::FermionOptions, basic_ops)
         N = _parse_su_channel_symbol(ssymbol, channs)
         push!(symms, SU{N})
 
-        lop = Vector{SparseMatrixCSC{Int}}(undef, N - 1)
+        lop = Vector{SparseMatrixCSC{Float64, Int}}(undef, N - 1)
         zvals = Vector{Vector{Int}}(undef, N - 1)
         for i in 1:(N - 1)
-            lop[i] = basic_ops.FF[channs[i+1]]' * basic_ops.FF[channs[i]]
+            lop[i] = Float64.(basic_ops.FF[channs[i+1]]' * basic_ops.FF[channs[i]])
             zvals[i] = Int.(diag(sum([basic_ops.NN[channs[j]] for j in 1:i]) -
                                   i * basic_ops.NN[channs[i+1]]))
         end
@@ -232,7 +232,7 @@ function getSymmetryInfo(opts::FermionOptions)
     basic_ops = Fermion_basicops(N)
     symms = Vector{Type{<:Symmetry}}()
     weights = Vector{<:Tuple{Vararg{Int}}}[]
-    lowering_ops = Vector{<:AbstractMatrix{Int}}[]
+    lowering_ops = Vector{<:AbstractMatrix{<:Real}}[]
 
     if opts.charge_symm !== nothing
         ws, ss, ls = charge_symmops(opts, basic_ops)

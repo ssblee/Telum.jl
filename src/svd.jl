@@ -717,22 +717,18 @@ function _compact_svd_rows_by_valid!(rows::Vector{Row},
                                      right_isos::Vector{NTuple{M, Matrix{Float64}}},
                                      cores::Vector{NTuple{M, Array{Float64, 3}}},
                                      valid_rows::BitVector) where {Row, M}
-    last = length(rows)
-    pos = 1
-    while pos <= last
-        if valid_rows[pos]
-            pos += 1
-            continue
+    write = 1
+    for read in eachindex(rows)
+        valid_rows[read] || continue
+        if write != read
+            rows[write] = rows[read]
+            left_isos[write] = left_isos[read]
+            right_isos[write] = right_isos[read]
+            cores[write] = cores[read]
         end
-        if pos != last
-            rows[pos] = rows[last]
-            left_isos[pos] = left_isos[last]
-            right_isos[pos] = right_isos[last]
-            cores[pos] = cores[last]
-            valid_rows[pos] = valid_rows[last]
-        end
-        last -= 1
+        write += 1
     end
+    last = write - 1
     resize!(rows, last)
     resize!(left_isos, last)
     resize!(right_isos, last)

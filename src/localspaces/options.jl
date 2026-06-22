@@ -31,14 +31,15 @@ abstract type LocalSpaceOptions end
 """
     SpinOptions(; symmetry, spin)
 
-Options for a pure spin-`spin` local space with `symmetry` ∈ {`SU{2}`, `U1`, …}.
+Options for a pure spin-`spin` local space with `symmetry` ∈ {`:SU2`, `:U1`, `nothing`, …}.
 
 # Fields
-- `symmetry :: Symbol` – symmetry group for the spin degree of freedom.
+- `symmetry :: Union{Symbol, Nothing}` – symmetry group for the spin degree of
+  freedom, or `nothing` for an unsymmetrized local space.
 - `spin     :: Int`    – 2 * spin quantum number (e.g. `1`, `2`, `3`).
 """
 struct SpinOptions <: LocalSpaceOptions
-    symmetry::Symbol
+    symmetry::Union{Symbol, Nothing}
     spin::Int 
 end
 
