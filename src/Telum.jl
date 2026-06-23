@@ -4,8 +4,6 @@ using MKL
 using HPTT_jll
 using LinearAlgebra
 using SparseArrays
-using LoopVectorization
-using Tullio
 using HDF5
 
 import Base: lock, unlock

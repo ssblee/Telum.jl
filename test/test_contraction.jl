@@ -66,8 +66,8 @@ end
 end
 
 @testset "compress_sector test" begin
-    test_contract_xsym_wmat_tullio()
-    test_accumulate_mkl_matches_small_all_orders()
+    test_contract_xsym_wmat()
+    test_accumulate_mkl_matches_generic_all_orders()
     test_qr_shared_isometry_rank1_fastpath()
     test_qr_shared_isometry_rank3_splits_factors()
     test_compress_sector(2, 1, 3; verbose=false)

@@ -195,8 +195,6 @@ function _contract_om_axis(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, axis:
     return _contract_om_axis_data(A, M, axis)
 end
 
-const _RMT_CONTRACT_TULLIO_THRESHOLD = 0
-
 function _rmt_layout_sizes(rmt::AbstractArray{T, RD},
                            perm::NTuple{RD, Int},
                            nf::Int,
@@ -520,8 +518,7 @@ end
 
 function _rmt_contract_temp_len(fdim::Int, gdim::Int, cdim::Int,
                                 o1dim::Int, o2dim::Int,
-                                K::AbstractArray,
-                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD)
+                                K::AbstractArray)
     rank_dim, om1_dim, om2_dim = size(K)
     rank_dim == 1 && om1_dim == 1 && om2_dim == 1 && return 0
 
@@ -532,17 +529,15 @@ end
 function _rmt_contract_temp_len(::Type{A}, ::Type{B},
                                 fdim::Int, gdim::Int, cdim::Int,
                                 o1dim::Int, o2dim::Int,
-                                K::AbstractArray,
-                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD
+                                K::AbstractArray
 ) where {A<:AbstractArray, B<:AbstractArray}
-    return _rmt_contract_temp_len(fdim, gdim, cdim, o1dim, o2dim, K, threshold)
+    return _rmt_contract_temp_len(fdim, gdim, cdim, o1dim, o2dim, K)
 end
 
 function _rmt_contract_temp_len(::Type{A}, ::Type{B},
                                 fdim::Int, gdim::Int, cdim::Int,
                                 o1dim::Int, o2dim::Int,
-                                K::AbstractArray,
-                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD
+                                K::AbstractArray
 ) where {A<:DiagRMT, B<:Array}
     return gdim * cdim * size(K, 1)
 end
@@ -550,8 +545,7 @@ end
 function _rmt_contract_temp_len(::Type{A}, ::Type{B},
                                 fdim::Int, gdim::Int, cdim::Int,
                                 o1dim::Int, o2dim::Int,
-                                K::AbstractArray,
-                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD
+                                K::AbstractArray
 ) where {A<:Array, B<:DiagRMT}
     return 0
 end
@@ -559,21 +553,19 @@ end
 function _rmt_contract_temp_len(::Type{A}, ::Type{B},
                                 fdim::Int, gdim::Int, cdim::Int,
                                 o1dim::Int, o2dim::Int,
-                                K::AbstractArray,
-                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD
+                                K::AbstractArray
 ) where {A<:DiagRMT, B<:DiagRMT}
     return 0
 end
 
 function _rmt_contract_temp_len(A::AbstractArray,
                                 B::AbstractArray,
-                                K::AbstractArray,
-                                threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD)
+                                K::AbstractArray)
     fdim, cdim, o1dim = size(A)
     gdim, _, o2dim = size(B)
     return _rmt_contract_temp_len(typeof(A), typeof(B),
                                   fdim, gdim, cdim, o1dim, o2dim,
-                                  K, threshold)
+                                  K)
 end
 
 function _rmt_contract_dims(rmt::AbstractArray{T, RD},
@@ -600,47 +592,6 @@ end
                                dims::NTuple{N, Int}) where {T, N}
     @assert length(temp) >= prod(dims; init=1)
     return unsafe_wrap(Array, pointer(temp), dims; own=false)
-end
-
-function _accumulate_small!(out::AbstractArray{T, 3},
-                            A::AbstractArray,
-                            B::AbstractArray,
-                            K::AbstractArray,
-                            order::Symbol,
-                            temp::Vector{T},
-                            beta::T = one(T)) where {T}
-    fdim, cdim, o1dim = size(A)
-    gdim = size(B, 1)
-    o2dim = size(B, 3)
-    rdim = size(K, 1)
-
-    if order === :AB
-        tmp = _rmt_temp_view(temp, (fdim, o1dim, gdim, o2dim))
-        @tullio avx=true tmp[f, o1, g, o2] = A[f, c, o1] * B[g, c, o2]
-        if iszero(beta)
-            @tullio avx=true out[f, g, r] = tmp[f, o1, g, o2] * K[r, o1, o2]
-        else
-            @tullio avx=true out[f, g, r] += tmp[f, o1, g, o2] * K[r, o1, o2]
-        end
-    elseif order === :AK
-        tmp = _rmt_temp_view(temp, (fdim, cdim, o2dim, rdim))
-        @tullio avx=true tmp[f, c, o2, r] = A[f, c, o1] * K[r, o1, o2]
-        if iszero(beta)
-            @tullio avx=true out[f, g, r] = tmp[f, c, o2, r] * B[g, c, o2]
-        else
-            @tullio avx=true out[f, g, r] += tmp[f, c, o2, r] * B[g, c, o2]
-        end
-    else
-        tmp = _rmt_temp_view(temp, (gdim, cdim, o1dim, rdim))
-        @tullio avx=true tmp[g, c, o1, r] = B[g, c, o2] * K[r, o1, o2]
-        if iszero(beta)
-            @tullio avx=true out[f, g, r] = A[f, c, o1] * tmp[g, c, o1, r]
-        else
-            @tullio avx=true out[f, g, r] += A[f, c, o1] * tmp[g, c, o1, r]
-        end
-    end
-
-    return out
 end
 
 function _accumulate_mkl!(out::AbstractArray{T, 3},
@@ -770,7 +721,6 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
                                   B::AbstractArray{T2, 3},
                                   K::AbstractArray,
                                   temp::Vector{T},
-                                  threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
                                   beta::T = one(T)) where {T, T1, T2}
     rank_dim, om1_dim, om2_dim = size(K)
 
@@ -786,13 +736,7 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
     order, cost = _rmt_contract_order(fdim, gdim, cdim, o1dim, o2dim, rank_dim)
     _add_contraction_cost!(cost)
 
-    if cost < threshold
-        _accumulate_small!(out, A, B, K, order, temp, beta)
-    else
-        _accumulate_mkl!(out, A, B, K, order, temp, beta)
-    end
-
-    return out
+    return _accumulate_mkl!(out, A, B, K, order, temp, beta)
 end
 
 function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
@@ -800,7 +744,6 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
                                   B::DiagRMT{T2, 3},
                                   K::AbstractArray,
                                   temp::Vector{T},
-                                  threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
                                   beta::T = one(T)) where {T, T1, T2}
     return _contract_RMT_pair_into_generic_no_count!(out, A, B, K, beta)
 end
@@ -810,7 +753,6 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
                                   B::AbstractArray{T2, 3},
                                   K::AbstractArray,
                                   temp::Vector{T},
-                                  threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
                                   beta::T = one(T)) where {T, T1, T2}
                                   
     if A.axis == (1, 2) && size(A, 3) == 1 && size(K, 2) == 1 && iszero(beta)
@@ -853,7 +795,6 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
                                   B::DiagRMT{T2, 3},
                                   K::AbstractArray,
                                   temp::Vector{T},
-                                  threshold::Int = _RMT_CONTRACT_TULLIO_THRESHOLD,
                                   beta::T = one(T)) where {T, T1, T2}
     if B.axis == (1, 2) && size(B, 3) == 1 && size(K, 3) == 1 && iszero(beta)
         fdim, cdim, o1dim = size(A)
@@ -1023,7 +964,6 @@ function _contract_prepared_compress_sector(
             data2,
             factors_scaled,
             temp,
-            _RMT_CONTRACT_TULLIO_THRESHOLD,
             beta,
         )
     end
@@ -1289,10 +1229,15 @@ function _contract_xsym_wmat(wm1::AbstractMatrix{T1},
     d2 = size(wm2, 2)
     WT = promote_type(T1, T2, T3)
 
-    result = Array{WT}(undef, OM3, d1, d2)
-    @tullio avx=true result[a, b, c] =
-        xarr[bb, cc, a] * wm1[bb, b] * wm2[cc, c]
-    return result
+    result_perm = Array{WT}(undef, d1, d2, OM3)
+    temp = Matrix{WT}(undef, d1, OM2)
+    @inbounds for a in 1:OM3
+        xmat = @view xarr[:, :, a]
+        result_mat = @view result_perm[:, :, a]
+        mul!(temp, transpose(wm1), xmat, one(WT), zero(WT))
+        mul!(result_mat, temp, wm2, one(WT), zero(WT))
+    end
+    return permutedims(result_perm, (3, 1, 2))
 end
 
 function _fill_contract_wmat_concat!(concat::Matrix{Float64},

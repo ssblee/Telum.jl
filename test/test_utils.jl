@@ -369,7 +369,7 @@ function test_qr_shared_isometry_rank1_fastpath()
     println("test_qr_shared_isometry_rank1_fastpath passed.")
 end
 
-function test_contract_xsym_wmat_tullio()
+function test_contract_xsym_wmat()
     Random.seed!(423)
 
     function check_case(OM1::Int, OM2::Int, OM3::Int, d1::Int, d2::Int)
@@ -399,10 +399,10 @@ function test_contract_xsym_wmat_tullio()
     @test_throws DimensionMismatch Telum._contract_xsym_wmat(
         randn(2, 2), randn(2, 2, 1), randn(3, 2))
 
-    println("test_contract_xsym_wmat_tullio passed.")
+    println("test_contract_xsym_wmat passed.")
 end
 
-function test_accumulate_mkl_matches_small_all_orders()
+function test_accumulate_mkl_matches_generic_all_orders()
     Random.seed!(424)
 
     function check_case(; fdim::Int, gdim::Int, cdim::Int,
@@ -413,7 +413,9 @@ function test_accumulate_mkl_matches_small_all_orders()
         initial = randn(fdim, gdim, rdim)
 
         mkl_results = Dict{Symbol, Array{Float64, 3}}()
-        small_results = Dict{Symbol, Array{Float64, 3}}()
+        reference = copy(initial)
+        Telum._contract_RMT_pair_into_generic_no_count!(reference, A, B, K)
+
         for order in (:AB, :AK, :BK)
             temp_len = Telum._rmt_contract_temp_len(
                 fdim, gdim, cdim, o1dim, o2dim, rdim, order)
@@ -422,26 +424,19 @@ function test_accumulate_mkl_matches_small_all_orders()
             Telum._accumulate_mkl!(
                 out_mkl, A, B, K, order, Vector{Float64}(undef, temp_len))
 
-            out_small = copy(initial)
-            Telum._accumulate_small!(
-                out_small, A, B, K, order, Vector{Float64}(undef, temp_len))
-
-            @test out_mkl ≈ out_small atol=1e-10 rtol=1e-10
+            @test out_mkl ≈ reference atol=1e-10 rtol=1e-10
             mkl_results[order] = out_mkl
-            small_results[order] = out_small
         end
 
         @test mkl_results[:AB] ≈ mkl_results[:AK] atol=1e-10 rtol=1e-10
         @test mkl_results[:AB] ≈ mkl_results[:BK] atol=1e-10 rtol=1e-10
-        @test small_results[:AB] ≈ small_results[:AK] atol=1e-10 rtol=1e-10
-        @test small_results[:AB] ≈ small_results[:BK] atol=1e-10 rtol=1e-10
     end
 
     check_case(fdim=3, gdim=4, cdim=5, o1dim=2, o2dim=3, rdim=4)
     check_case(fdim=1, gdim=5, cdim=3, o1dim=4, o2dim=2, rdim=3)
     check_case(fdim=6, gdim=2, cdim=4, o1dim=3, o2dim=1, rdim=5)
 
-    println("test_accumulate_mkl_matches_small_all_orders passed.")
+    println("test_accumulate_mkl_matches_generic_all_orders passed.")
 end
 
 function test_qr_shared_isometry_rank3_splits_factors()
