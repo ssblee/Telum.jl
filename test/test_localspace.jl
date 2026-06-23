@@ -18,6 +18,20 @@ end
     test_spin_local_space()
 end
 
+@testset "SpinOptions local operators across symmetries and spins" begin
+    for symmetry in (:SU2, :U1, nothing), s2 in 1:5
+        q = @test_nowarn getLocalSpace(SpinOptions(symmetry, s2))
+        expected_ops = symmetry == :SU2 ? (:S, :I) : (:Sp, :Sz, :Sm, :I)
+
+        for op in expected_ops
+            @test hasproperty(q, op)
+            tensor = getproperty(q, op)
+            @test !isempty(tensor.RMTs)
+            @test any(tensor.isdefined)
+        end
+    end
+end
+
 @testset "FermionS full-channel IROP names omit channel suffixes" begin
     q1 = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing))
     @test hasproperty(q1, :F)

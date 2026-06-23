@@ -2254,6 +2254,11 @@ const QSPACE_DISPLAY_HEAD = Ref(5)   # number of first sectors to show
 const QSPACE_DISPLAY_TAIL = Ref(5)   # number of last sectors to show
 
 Base.show(io::IO, qs::TLArray) = show(io, MIME"text/plain"(), qs)
+function Base.show(io::IO, qs::TLArrayView)
+    concrete = _eager_tlarray(qs)
+    show(io, concrete)
+    return concrete
+end
 
 _qindex_plev_string(plev::Int) =
     plev == 0 ? "" : "p$(plev)"
@@ -2290,6 +2295,8 @@ function printmeta(io::IO, q::TLArray)
     println()
 end
 printmeta(q::TLArray) = printmeta(stdout, q)
+printmeta(io::IO, q::TLArrayView) = printmeta(io, _eager_tlarray(q))
+printmeta(q::TLArrayView) = printmeta(stdout, q)
 
 # Special pretty-printing for 0-dimensional TLArray (scalar result of full contraction).
 function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, 0, N, N}) where {T, N}
@@ -2353,6 +2360,12 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
         QD == 2 && print(io, "\t√", _sector_cgt_size_2d(qs, i))
         k < length(display_indices) && println(io)
     end
+end
+
+function Base.show(io::IO, mime::MIME"text/plain", qs::TLArrayView)
+    concrete = _eager_tlarray(qs)
+    show(io, mime, concrete)
+    return concrete
 end
 
 # Return a TLArray with sectors sorted in dictionary order by physical leg qlabels.

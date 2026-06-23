@@ -836,5 +836,22 @@ end
         @test (show(buf, MIME"text/plain"(), q4); true)
         out = String(take!(buf))
         @test occursin("4D TLArray", out)
+
+        qv = permutedims(q4, (4, 1, 2, 3))
+        @test qv isa TLArrayView
+        buf = IOBuffer()
+        shown = show(buf, MIME"text/plain"(), qv)
+        out = String(take!(buf))
+        @test shown isa TLArray
+        @test shown.inds == qv.inds
+        @test occursin("4D TLArray", out)
+        @test !occursin("TLArrayView", out)
+
+        buf = IOBuffer()
+        shown = show(buf, qv)
+        out = String(take!(buf))
+        @test shown isa TLArray
+        @test shown.inds == qv.inds
+        @test occursin("4D TLArray", out)
     end
 end
