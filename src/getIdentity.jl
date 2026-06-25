@@ -225,7 +225,7 @@ function getIdentity(leginfos::NTuple{D, leginfo{N, QT, PS}};
     end
 
     # Assemble an internal TLArray whose selected legs are ready for fusion.
-    # For originally-incoming legs we expose the dualized leg with green=true so
+    # For originally-incoming legs we expose the dualized leg with dual=true so
     # we can contract a 1j tensor and recover a directly-contractable external leg.
     fused_ind = TLIndex(itag, '-', plev, lock)
     inds = (ntuple(d -> begin

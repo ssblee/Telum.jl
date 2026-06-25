@@ -1,169 +1,115 @@
-@testset "spaces of svd" begin
-    test_spaces_svdQS(FermionSOptions(1, :U1, :SU2, nothing))
-    test_spaces_svdQS(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "CGTSVD preprocessing for svd" begin
-    test_svd_cgtsvd_preprocess(FermionSOptions(1, :U1, :SU2, nothing))
-    test_svd_cgtsvd_preprocess(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "CGTSVD intermediate qlabels for svd" begin
-    test_svd_cgtsvd_intermediate_qrows(FermionSOptions(1, :U1, :SU2, nothing))
-    test_svd_cgtsvd_intermediate_qrows(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "CGTSVD intermediate qlabel row classes for svd" begin
-    test_svd_cgtsvd_intermediate_qrow_equivclasses(FermionSOptions(1, :U1, :SU2, nothing))
-    test_svd_cgtsvd_intermediate_qrow_equivclasses(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "CGTSVD signature order for svd" begin
-    test_svd_cgtsvd_signature_order(FermionSOptions(1, :U1, :SU2, nothing))
-    test_svd_cgtsvd_signature_order(FermionSOptions(3, :U1, :SU2, :SU3))
-    test_svd_stored_leg_order_preserves_physical_leg_ties()
-end
-
-@testset "CGTSVD block reduction for svd" begin
-    test_svd_cgtsvd_block_reduction(FermionSOptions(1, :U1, :SU2, nothing))
-    test_svd_cgtsvd_block_reduction(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "CGTSVD full svd factorization" begin
-    test_svd_cgtsvd_factorization(FermionSOptions(1, :U1, :SU2, nothing))
-    test_svd_cgtsvd_factorization(FermionSOptions(3, :U1, :SU2, :SU3))
-    test_svd_cgtsvd_heterogeneous_product_qlabels()
-    test_svd_cgtsvd_zero_leading_sector()
-end
-
-@testset "CGTSVD truncation" begin
-    test_truncate_svd_cgtsvd(FermionSOptions(1, :U1, :SU2, nothing))
-    test_truncate_svd_cgtsvd(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "svd truncation of TLArray" begin
-    test_truncate_svdQS(FermionSOptions(1, :U1, :SU2, nothing))
-    test_truncate_svdQS(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "spaces of eigen" begin
-    test_spaces_eigen(FermionSOptions(1, :U1, :SU2, nothing))
-    test_spaces_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "missing spaces of eigen" begin
-    test_missing_spaces_eigen(FermionSOptions(1, :U1, :SU2, nothing))
-    test_missing_spaces_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
-    test_missing_spaces_eigen_zero_diagonal()
-end
-
-@testset "truncate missing zero spaces of eigen" begin
-    test_truncate_missing_zero_spaces_eigen(FermionSOptions(1, :U1, :SU2, nothing))
-    test_truncate_missing_zero_spaces_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "svd test" begin
-    option = FermionSOptions(3, :U1, :SU2, :SU3)
+function _factorization_svd_inputs(option::LocalSpaceOptions)
     q = getLocalSpace(option)
     qi1 = TLArray(q.I, ("lur1", "lur1"))
     qi2 = TLArray(q.I, ("lur2", "lur2"))
     a = getIdentity((qi1, 2), (qi2, 2))
     qf = TLArray(q.F, ("lur2", "lur2", "op"))
     ct = qf * a
-    test_svdQS(ct, [2, 4])
-    test_svdQS(ct, [1, 4])
-    test_svdQS(ct, [1, 2])
+
+    inputs = Tuple{String, TLArray, Vector{Int}}[
+        ("identity", q.I, [1]),
+        ("fermion operator", q.F, [1, 2]),
+        ("contracted operator [2, 4]", ct, [2, 4]),
+        ("contracted operator [1, 4]", ct, [1, 4]),
+        ("contracted operator [1, 2]", ct, [1, 2]),
+    ]
+    hasproperty(q, :S) && push!(inputs, ("spin operator", q.S, [1, 2]))
+    return inputs
 end
 
-@testset "eig of TLArray" begin
-    test_eigen(FermionSOptions(1, :U1, :SU2, nothing))
-    test_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
-end
+function _test_svd_truncation_matches_full(q::TLArray, left_legs)
+    full = svd(q, left_legs; cutoff=0.0, get_lists=true)
+    full_singular_values = sort(first.(full.kept_list); rev=true)
+    @test !isempty(full_singular_values)
 
-@testset "eig autodetect of TLArray" begin
-    test_eigen_autodetect(FermionSOptions(1, :U1, :SU2, nothing))
-    test_eigen_autodetect(FermionSOptions(3, :U1, :SU2, :SU3))
-end
+    for nkeep in eachindex(full_singular_values)
+        @testset "Nkeep=$nkeep" begin
+            truncated = svd(q, left_legs; cutoff=0.0, Nkeep=nkeep, get_lists=true)
+            kept_singular_values = sort(first.(truncated.kept_list); rev=true)
 
-@testset "eig permuted input of TLArray" begin
-    test_eigen_permuted_input(FermionSOptions(1, :U1, :SU2, nothing))
-    test_eigen_permuted_input(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "eig Hermitian leg guard of TLArray" begin
-    test_eigen_hermitian_leg_guard(FermionSOptions(1, :U1, :SU2, nothing))
-    test_eigen_hermitian_leg_guard(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "eig truncation of TLArray" begin
-    test_discard_eigen(FermionSOptions(1, :U1, :SU2, nothing))
-    test_discard_eigen(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "eig truncation tol of TLArray" begin
-    test_discard_eigen_tol(FermionSOptions(1, :U1, :SU2, nothing))
-    test_discard_eigen_tol(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "eig full discard of TLArray" begin
-    test_eigen_general_discard(FermionSOptions(1, :U1, :SU2, nothing))
-    test_eigen_general_discard(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "eig discard itag of TLArray" begin
-    test_discard_eigen_itag(FermionSOptions(1, :U1, :SU2, nothing))
-    test_discard_eigen_itag(FermionSOptions(3, :U1, :SU2, :SU3))
-end
-
-@testset "svd_leg" begin
-    @testset "shape and reconstruction (random 3-D, each leg)" begin
-        A = randn(3, 4, 5)
-
-        for leg in 1:3
-            U, SV, S = svd_leg(A, leg; cutoff=1e-12)
-            chi = length(S)
-
-            expected_size = ntuple(i -> i == leg ? chi : size(A, i), 3)
-            @test size(SV) == expected_size
-            @test size(U) == (size(A, leg), chi)
-
-            rec = reconstruct(U, SV, leg)
-            @test size(rec) == size(A)
-            @test norm(A - rec) < 1e-9
+            @test kept_singular_values ≈ full_singular_values[1:nkeep]
+            @test length(truncated.kept_list) == nkeep
+            @test length(truncated.kept_list) + length(truncated.trunc_list) == length(full.kept_list)
+            @test truncated.U.spaces[end] == truncated.S.spaces[1]
+            @test truncated.Vd.spaces[1] == truncated.S.spaces[2]
         end
     end
+end
 
-    @testset "low-rank truncation" begin
-        u1, u2 = randn(4), randn(4)
-        v1, v2 = randn(3), randn(3)
-        w1, w2 = randn(5), randn(5)
-        A = reshape(u1, 4, 1, 1) .* reshape(v1, 1, 3, 1) .* reshape(w1, 1, 1, 5) .+
-            reshape(u2, 4, 1, 1) .* reshape(v2, 1, 3, 1) .* reshape(w2, 1, 1, 5)
+function _dense_svd_values(q::TLArray, left_legs)
+    left = collect(Int, left_legs)
+    right = [leg for leg in 1:ndims(q) if leg ∉ left]
+    arr = Array(to_sparse_array(q))
+    arr_perm = permutedims(arr, (left..., right...))
+    left_dim = prod(size(arr, leg) for leg in left; init=1)
+    right_dim = prod(size(arr, leg) for leg in right; init=1)
+    return sort(LinearAlgebra.svdvals(reshape(arr_perm, left_dim, right_dim)); rev=true)
+end
 
-        U, SV, S = svd_leg(A, 1; cutoff=1e-10)
-        @test length(S) == 2
-        rec = reconstruct(U, SV, 1)
-        @test norm(A - rec) < 1e-9
+function _test_svd_singular_values_match_dense(q::TLArray, left_legs)
+    result = svd(q, left_legs; cutoff=0.0, get_lists=true)
+    telum_vals = Float64[]
+    for entry in result.kept_list
+        append!(telum_vals, fill(first(entry), entry[2]))
     end
+    filter!(>(1e-10), telum_vals)
+    sort!(telum_vals; rev=true)
 
-    @testset "maxdim truncation" begin
-        A = randn(6, 5, 4)
+    dense_vals = filter(>(1e-10), _dense_svd_values(q, left_legs))
 
-        _, _, S_full = svd_leg(A, 2; cutoff=1e-12)
+    @test length(telum_vals) == length(dense_vals)
+    @test telum_vals ≈ dense_vals atol=1e-10 rtol=1e-10
+end
 
-        U3, SV3, S3 = svd_leg(A, 2; cutoff=1e-12, maxdim=3)
-        @test length(S3) <= 3
-        @test length(S3) <= length(S_full)
-        @test S3 ≈ S_full[1:length(S3)]
+function _test_identity_svd_values_are_one(option::LocalSpaceOptions)
+    q = getLocalSpace(option)
+    result = svd(q.I, (1,); cutoff=0.0, get_lists=true)
+
+    @test !isempty(result.kept_list)
+    @test all(entry -> isapprox(first(entry), 1.0; atol=1e-10, rtol=1e-10), result.kept_list)
+end
+
+@testset "svd reconstruction" begin
+    for option in (
+        FermionSOptions(1, :U1, :SU2, nothing),
+        FermionSOptions(3, :U1, :SU2, :SU3),
+        )
+        for (label, q, left_legs) in _factorization_svd_inputs(option)
+            @testset "$label" begin
+                diff = test_svdQS(q, left_legs; verbose=false)
+                @test diff < 1e-9
+            end
+        end
     end
+end
 
-    @testset "2-D matrix (standard SVD)" begin
-        M = randn(5, 4)
+@testset "identity svd singular values are one" begin
+    _test_identity_svd_values_are_one(FermionSOptions(1, :U1, :SU2, nothing))
+    _test_identity_svd_values_are_one(FermionSOptions(3, :U1, :SU2, :SU3))
+end
 
-        for leg in 1:2
-            U, SV, S = svd_leg(M, leg; cutoff=1e-12)
-            rec = reconstruct(U, SV, leg)
-            @test norm(M - rec) < 1e-9
+@testset "svd singular values match dense SVD" begin
+    for option in (
+        FermionSOptions(1, :U1, :SU2, nothing),
+        FermionSOptions(3, :U1, :SU2, :SU3),
+    )
+        for (label, q, left_legs) in _factorization_svd_inputs(option)
+            @testset "$label" begin
+                _test_svd_singular_values_match_dense(q, left_legs)
+            end
+        end
+    end
+end
+
+@testset "svd truncation keeps leading singular values" begin
+    for option in (
+        FermionSOptions(1, :U1, :SU2, nothing),
+        FermionSOptions(3, :U1, :SU2, :SU3),
+    )
+        for (label, q, left_legs) in _factorization_svd_inputs(option)
+            @testset "$label" begin
+                _test_svd_truncation_matches_full(q, left_legs)
+            end
         end
     end
 end

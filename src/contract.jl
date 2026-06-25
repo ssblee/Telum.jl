@@ -975,7 +975,7 @@ end
 # Automatically contract two TLArray objects by matching their tagged, unlocked
 # indices.  An index on q1 is "contractible" when it has a nonempty tag AND
 # lock == 0; same criterion applies to q2.  Two contractible indices are matched
-# when they compare equal under TLIndex == (same itags, dir, plev, green) and
+# when they compare equal under TLIndex == (same itags, dir, plev, dual) and
 # their precomputed leg spaces are equal. The collected matching pairs define
 # legs1 / legs2 passed to `contract`.
 #function _contract_matched_legs(q1::TLArray, q2::TLArray, legs1::Vector{Int}, legs2::Vector{Int})

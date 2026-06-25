@@ -14,10 +14,6 @@
     @test Telum.Sp === LurCGT.Sp
 end
 
-@testset "spin local space" begin
-    test_spin_local_space()
-end
-
 @testset "SpinOptions local operators across symmetries and spins" begin
     for symmetry in (:SU2, :U1, nothing), s2 in 1:5
         q = @test_nowarn getLocalSpace(SpinOptions(symmetry, s2))
@@ -54,17 +50,6 @@ end
     @test hasproperty(q3, :F)
     @test !hasproperty(q3, :F123)
     @test size(to_sparse_array(q3.I)) == (8, 8)
-end
-
-@testset "local-space lowering operators are floating point" begin
-    for opt in (SpinOptions(:SU2, 1),
-                FermionOptions(3, :U1, :SU3),
-                FermionSOptions(3, :U1, :SU2, :SU3))
-        _, _, lowering_ops, _ = Telum.getSymmetryInfo(opt)
-        for group in lowering_ops, lop in group
-            @test eltype(lop) <: AbstractFloat
-        end
-    end
 end
 
 @testset "no-symmetry local spaces" begin

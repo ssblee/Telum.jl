@@ -25,7 +25,7 @@
 #   Vd bond  = TLIndex(right_tag, '-')   — outgoing (leaves Vd to the left)
 #
 # Legs of U and Vd that come from the original tensor inherit their TLIndex
-# properties (itags, lock, plev, green, direction).
+# properties (itags, lock, plev, dual, direction).
 #
 # Algorithm:
 #   1. Assign each leg of q a unique internal tag at lock=1.
@@ -1662,9 +1662,10 @@ function _select_svd_cgtsvd_entries(class_results,
 
     for (ci, result) in enumerate(class_results)
         isempty(result.S) && continue
-        sv_global_max = max(sv_global_max, result.S[1])
         for j in eachindex(result.S)
-            push!(entries, (result.S[j], ci, j))
+            sv = result.S[j]
+            sv_global_max = max(sv_global_max, sv)
+            push!(entries, (sv, ci, j))
         end
     end
 
@@ -1702,14 +1703,14 @@ function _select_svd_cgtsvd_entries(class_results,
 
     for (ci, result) in enumerate(class_results)
         isempty(result.S) && continue
-        sv_global_max = max(sv_global_max, result.S[1])
         sector = result.sector::NTuple{N, Tuple{Vararg{Int}}}
         offset = get(sector_counts, sector, 0)
         degeneracy = _svd_sector_degeneracy(PS, sector, irrepdim_caches, Val(N))
         for j in eachindex(result.S)
-            display_sv = result.S[j] * sqrt(Float64(degeneracy))
-            push!(entries, (result.S[j], ci, j))
-            push!(full_entries, (display_sv, ci, j, degeneracy, sector, offset + j))
+            sv = result.S[j]
+            sv_global_max = max(sv_global_max, sv)
+            push!(entries, (sv, ci, j))
+            push!(full_entries, (sv, ci, j, degeneracy, sector, offset + j))
         end
         sector_counts[sector] = offset + length(result.S)
     end

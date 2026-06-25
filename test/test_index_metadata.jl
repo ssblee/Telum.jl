@@ -49,6 +49,7 @@ end
         q_tagsets = TLArray(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
         @test findleg(q_tagsets; itag=("aaa,ccc", "bbb,ccc")) == 2
         @test findleg(q_tagsets; itag=["missing", "bbb,ccc"]) == 3
+        @test findleg(q_tagsets; itag=["aaa,bbb,ccc", "aaa,ccc"]) == 2
     end
 
     @testset "matching and unmatching" begin

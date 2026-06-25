@@ -346,8 +346,6 @@ to_outgoing(idx::TLIndex) = TLIndex(idx.itags, '-', idx.plev, idx.lock, idx.dual
 change_dir(idx::TLIndex)  = TLIndex(idx.itags, idx.dir == '+' ? '-' : '+', idx.plev, idx.lock, idx.dual)
 dual(idx::TLIndex) = TLIndex(idx.itags, idx.dir, idx.plev, idx.lock, true)
 change_dual(idx::TLIndex) = TLIndex(idx.itags, idx.dir, idx.plev, idx.lock, !idx.dual)
-green(idx::TLIndex) = dual(idx)
-change_green(idx::TLIndex) = change_dual(idx)
 
 # Format a scalar RMT value as a string with consistent width:
 # integers print without decimal point; floats use %#.7g which always
@@ -2602,7 +2600,7 @@ function _find_oplus_leg_permutation(ref_inds, inds, entry::Int)
         candidates[i] = [j for j in 1:QD if _qindex_match_for_oplus(inds[j], ref_inds[i])]
         isempty(candidates[i]) && throw(ArgumentError(
             "TLArray entry $entry has no leg matching reference leg $i " *
-            "(same itag, direction, prime level, and lock required; green ignored)"))
+            "(same itag, direction, prime level, and lock required; dual ignored)"))
     end
 
     results = Vector{NTuple{QD, Int}}()
@@ -2647,7 +2645,7 @@ function _validate_oplus_common(qs)
             "TLArray entry $i has rank $(length(q.inds)), expected $(length(ref.inds))"))
         _inds_match_for_oplus(q.inds, ref.inds) || throw(ArgumentError(
             "TLArray entry $i has different indices " *
-            "(same itag, direction, prime level, and lock required; green ignored)"))
+            "(same itag, direction, prime level, and lock required; dual ignored)"))
     end
 
     return ref

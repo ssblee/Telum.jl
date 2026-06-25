@@ -90,9 +90,9 @@ end
         @test norm(arr_qsum_dir - arr_ref_dir) < 1e-10
     end
 
-    @testset "vector allows different green fields" begin
-        B_green = TLArray(B, (Telum.change_green(B.inds[1]), B.inds[2], Telum.change_green(B.inds[3])))
-        qsum = oplus([A, B_green], 3)
+    @testset "vector allows different dual fields" begin
+        B_dual = TLArray(B, (Telum.change_dual(B.inds[1]), B.inds[2], Telum.change_dual(B.inds[3])))
+        qsum = oplus([A, B_dual], 3)
         arr_ref, spaces_ref = _dense_vector_oplus_ref([A, B], 3)
         arr_qsum = Array(to_sparse_array(qsum))
 
@@ -144,13 +144,13 @@ end
         @test norm(arr_qsum - arr_ref) < 1e-10
     end
 
-    @testset "matrix allows different green fields" begin
+    @testset "matrix allows different dual fields" begin
         q4 = _make_test_qspace_rank4_oplus()
-        q4_green = TLArray(q4, (Telum.change_green(q4.inds[1]), q4.inds[2], q4.inds[3], Telum.change_green(q4.inds[4])))
+        q4_dual = TLArray(q4, (Telum.change_dual(q4.inds[1]), q4.inds[2], q4.inds[3], Telum.change_dual(q4.inds[4])))
         mat = Matrix{TLArray}(undef, 2, 2)
         mat[1, 1] = q4
-        mat[2, 1] = 2.0 * q4_green
-        mat[1, 2] = 3.0 * q4_green
+        mat[2, 1] = 2.0 * q4_dual
+        mat[1, 2] = 3.0 * q4_dual
         mat[2, 2] = 4.0 * q4
 
         qsum = oplus(mat, (3, 4))
