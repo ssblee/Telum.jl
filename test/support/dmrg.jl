@@ -60,12 +60,12 @@ function MajumdarGhoshMPO(J, N)
     return build_MPO(qss, N)
 end
 
-function HubbardMPO(U, μ, t, N)
-    opt = FermionSOptions(1, :U1, :SU2, nothing)
+function HubbardMPO(U, μ, t, N,
+                    opt::FermionSOptions=FermionSOptions(1, :U1, :SU2, nothing))
     q = getLocalSpace(opt, ("site", "site", "op"))
     nloc = lock(q.F', 2) * q.F
 
-    qss = Matrix{AbstractTLArray{Float64, 4, 2, 6}}(undef, 4, 4)
+    qss = Matrix{AbstractTLArray{Float64, 4}}(undef, 4, 4)
     i4d = addSingleton(q.I; nlegs=2, itag=("left", "right"), dir=('+', '-'))
     ZF_flip = setitag(legflip(lock(q.Z, 1) * q.F, 3), 3, "left")
     FcZ = permutedims(q.F' * lock(q.Z, 2), (1, 3, 2))

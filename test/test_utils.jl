@@ -310,6 +310,43 @@ function test_contract_sparse_equivalence_diag_rmt()
                          [reshape([2.0, -1.0, 0.5, 3.0], 2, 2, 1)],
                          (TLIndex("cc", '+'), TLIndex("ry", '-')), spaces)
     _test_contract_matches_sparse_and_preserves_inputs(complex_left, (2,), real_right, (1,))
+
+    complex_diag_left = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                                [DiagRMT(ComplexF64[1 + im, 2 - im], Val(3), (1, 2))],
+                                (TLIndex("dx", '+'), TLIndex("dc", '-')), spaces)
+    real_dense_right = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                               [reshape([2.0, -1.0, 0.5, 3.0], 2, 2, 1)],
+                               (TLIndex("dc", '+'), TLIndex("dy", '-')), spaces)
+    _test_contract_matches_sparse_and_preserves_inputs(complex_diag_left, (2,), real_dense_right, (1,))
+end
+
+function test_sum_sparse_equivalence_mixed_rmt_eltypes()
+    symm = (U1,)
+    qlabels = [(((0,),), ((0,),))]
+    wmatdata = Float64[]
+    wmatinfo = [Telum._empty_wmat_info(Val(0))]
+    spaces = ([(((0,),), 2)], [(((0,),), 2)])
+    inds = (TLIndex("x", '+'), TLIndex("y", '-'))
+
+    real_dense = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                         [reshape([2.0, -1.0, 0.5, 3.0], 2, 2, 1)],
+                         inds, spaces)
+    complex_dense = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                            [reshape(ComplexF64[1 + 2im, 3 - im, -2 + 0.5im, 4im], 2, 2, 1)],
+                            inds, spaces)
+    complex_diag = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                           [DiagRMT(ComplexF64[1 + im, 2 - im], Val(3), (1, 2))],
+                           inds, spaces)
+
+    for (left, right) in ((real_dense, complex_dense),
+                          (complex_dense, real_dense),
+                          (complex_diag, real_dense),
+                          (real_dense, complex_diag))
+        result = left + right
+        reference = Array(to_sparse_array(left, ComplexF64)) + Array(to_sparse_array(right, ComplexF64))
+        @test Array(to_sparse_array(result, ComplexF64)) ≈ reference
+        @test eltype(result) == ComplexF64
+    end
 end
 
 function test_FAcont(option::LocalSpaceOptions)

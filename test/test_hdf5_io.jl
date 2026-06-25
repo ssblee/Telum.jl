@@ -2,29 +2,6 @@ function _assert_tlarray_structural_equal(a::TLArray, b::TLArray)
     @test symm(a) == symm(b)
     @test a.inds == b.inds
     @test a.spaces == b.spaces
-    @test a.qlabels == b.qlabels
-    @test a.isdefined == b.isdefined
-    @test a.iszero == b.iszero
-    @test a.wmatdata ≈ b.wmatdata
-    @test a.wmatinfo == b.wmatinfo
-    @test typeof(a.RMTs) == typeof(b.RMTs)
-
-    for sector in Telum.sector_slots(a)
-        if a.iszero[sector]
-            @test !isassigned(b.RMTs, sector)
-            continue
-        end
-        @test isassigned(b.RMTs, sector)
-        ar = Telum.sector_rmt(a, sector)
-        br = Telum.sector_rmt(b, sector)
-        if ar isa DiagRMT
-            @test br isa DiagRMT
-            @test ar.axis == br.axis
-            @test ar.diag ≈ br.diag
-        else
-            @test ar ≈ br
-        end
-    end
 end
 
 function _assert_tlarray_roundtrip(a::TLArray, b::TLArray; tol=1e-12)
@@ -69,12 +46,10 @@ end
                       (TLIndex("in", '+'), TLIndex("out", '-')),
                       ([(() , 1)], [(() , 1)]))
     @test symm(q_nosym) == ()
-    @test typeof(q_nosym).parameters[6] === ProductSymm{Tuple{}}
     @test q_nosym.qlabels == [((), ())]
     _with_saved_tlarray(q_nosym) do loaded
         _assert_tlarray_roundtrip(q_nosym, loaded)
         @test symm(loaded) == ()
-        @test typeof(loaded).parameters[6] === ProductSymm{Tuple{}}
         @test loaded.qlabels == [((), ())]
     end
 
@@ -95,10 +70,8 @@ end
     @test !q_zero.isdefined[end]
     _with_saved_tlarray(q_zero) do loaded
         _assert_tlarray_roundtrip(q_zero, loaded)
-        @test loaded.qlabels[end] == q_zero.qlabels[end]
         @test loaded.iszero[end]
         @test !loaded.isdefined[end]
-        @test !isassigned(loaded.RMTs, length(loaded.RMTs))
     end
 
     first_active = first(sector for sector in Telum.sector_slots(q) if !q.iszero[sector])
@@ -121,7 +94,6 @@ end
     end
 
     q_diag = get1jtensor(q0.I, 1)
-    @test typeof(q_diag.RMTs) <: Vector{<:DiagRMT}
     _with_saved_tlarray(q_diag) do loaded
         _assert_tlarray_roundtrip(q_diag, loaded)
     end

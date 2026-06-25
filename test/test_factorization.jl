@@ -49,8 +49,10 @@ end
 function _test_svd_singular_values_match_dense(q::TLArray, left_legs)
     result = svd(q, left_legs; cutoff=0.0, get_lists=true)
     telum_vals = Float64[]
-    for entry in result.kept_list
-        append!(telum_vals, fill(first(entry), entry[2]))
+    for (singular_value, degeneracy, _, _) in result.kept_list
+        for _ in 1:degeneracy
+            push!(telum_vals, singular_value)
+        end
     end
     filter!(>(1e-10), telum_vals)
     sort!(telum_vals; rev=true)
@@ -72,6 +74,7 @@ end
 @testset "svd reconstruction" begin
     for option in (
         FermionSOptions(1, :U1, :SU2, nothing),
+        FermionSOptions(2, :U1, :SU2, :SU2),
         FermionSOptions(3, :U1, :SU2, :SU3),
         )
         for (label, q, left_legs) in _factorization_svd_inputs(option)

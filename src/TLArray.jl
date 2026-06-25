@@ -354,6 +354,13 @@ function _fmt_scalar_str(v::Real)
     return @sprintf("%#.7g", v)
 end
 
+function _fmt_scalar_str(v::Complex)
+    re = _fmt_scalar_str(real(v))
+    im = _fmt_scalar_str(abs(imag(v)))
+    sign = signbit(imag(v)) ? " - " : " + "
+    return string(re, sign, im, "im")
+end
+
 function _localspace_cgt_fields(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Vararg{Int}}}}, Array{T, RD}}},
                                 symm::NTuple{N, Any},
                                 spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {T, QD, N, RD}
@@ -2387,9 +2394,20 @@ end
 # Scalar multiplication and division: only the RMT arrays are scaled.
 # CGT metadata (w-matrices, qlabels) are left untouched.
 function _materialized_scale(qs::TLArray{T, QD, N, RD}, fac::Number) where {T, QD, N, RD}
+    RT = promote_type(T, typeof(fac))
     if iszero(fac)
-        RMTs = Vector{Array{promote_type(T, typeof(fac)), RD}}(undef, sector_count(qs))
+        RMTs = Vector{Array{RT, RD}}(undef, sector_count(qs))
         return TLArray(symm(qs), copy(qs.qlabels), qs.wmatdata, qs.wmatinfo, RMTs, qs.inds, qs.spaces)
+    end
+    if RT !== T
+        RMTs = eltype(qs.RMTs) <: DiagRMT ? Vector{DiagRMT{RT, RD}}(undef, sector_count(qs)) :
+                                            Vector{Array{RT, RD}}(undef, sector_count(qs))
+        for sector_index in sector_slots(qs)
+            qs.iszero[sector_index] && continue
+            RMTs[sector_index] = qs.RMTs[sector_index] * fac
+        end
+        return TLArray(symm(qs), copy(qs.qlabels), _copy_wmat_storage(qs; deep=true)...,
+                       RMTs, qs.inds, _copy_spaces_tuple(qs.spaces))
     end
     result = deepcopy(qs)
     for sector_index in sector_slots(result)

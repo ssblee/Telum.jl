@@ -35,6 +35,10 @@ end
     test_contract_sparse_equivalence_diag_rmt()
 end
 
+@testset "sum sparse equivalence mixed RMT and eltypes" begin
+    test_sum_sparse_equivalence_mixed_rmt_eltypes()
+end
+
 @testset "Generating 1jtensor of TLArray test" begin
     test_1jpair(FermionSOptions(1, :U1, :SU2, nothing))
     test_1jpair(FermionSOptions(3, :U1, :SU2, :SU3))
