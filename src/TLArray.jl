@@ -363,7 +363,7 @@ end
 
 function _localspace_cgt_fields(data::Vector{Tuple{NTuple{QD, NTuple{N, Tuple{Vararg{Int}}}}, Array{T, RD}}},
                                 symm::NTuple{N, Any},
-                                spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {T, QD, N, RD}
+                                spaces::Tuple{Vararg{AbstractVector, QD}}) where {T, QD, N, RD}
 
     @assert RD == QD + N; @assert QD == 2 || QD == 3
     QT = qlabeltype(symm)
@@ -472,7 +472,7 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} 
         wmatinfo::Vector{WMatInfo{M}},
         RMTs::Vector{RMT},
         inds::NTuple{QD, TLIndex},
-        spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {
+        spaces::Tuple{Vararg{AbstractVector, QD}}) where {
             N, QD, QL, M, T, RD, RMT<:AbstractArray{T, RD}}
 
         RD == QD + N ||
@@ -552,7 +552,7 @@ function TLArray(symm::NTuple{N, Any},
                  wmatinfo::Vector{WMatInfo{M}},
                  RMTs::Vector{RMT},
                  inds::NTuple{QD, TLIndex},
-                 spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {
+                 spaces::Tuple{Vararg{AbstractVector, QD}}) where {
         N, QD, QT, M, T, RD, RMT<:AbstractArray{T, RD}}
     return TLArray(symm, _qlabel_vector(qlabels, Val(QD)), wmatdata, wmatinfo, RMTs, inds, spaces)
 end
@@ -1126,26 +1126,26 @@ Base.getindex(q::TLArray, i::Int) = TLArray(q, i)
 Base.firstindex(q::AbstractTLArray) = 1
 Base.lastindex(q::AbstractTLArray) = sector_count(q)
 
-function _normalize_qspace_sector_index(i::Int, nsectors::Int)
+function _normalize_tlarray_sector_index(i::Int, nsectors::Int)
     i == 0 && throw(BoundsError(1:nsectors, i))
     idx = i < 0 ? nsectors + i + 1 : i
     1 <= idx <= nsectors || throw(BoundsError(1:nsectors, i))
     return idx
 end
 
-function _normalize_qspace_sector_selector(selector, nsectors::Int)
+function _normalize_tlarray_sector_selector(selector, nsectors::Int)
     if selector isa Colon
         return collect(1:nsectors)
     elseif selector isa Integer
-        return Int[_normalize_qspace_sector_index(Int(selector), nsectors)]
+        return Int[_normalize_tlarray_sector_index(Int(selector), nsectors)]
     elseif selector isa AbstractVector{Bool}
         length(selector) == nsectors || throw(DimensionMismatch(
             "sector selector of length $(length(selector)) does not match number of sectors $nsectors"))
         return findall(selector)
     elseif selector isa AbstractRange{<:Integer}
-        return _normalize_qspace_sector_selector(collect(selector), nsectors)
+        return _normalize_tlarray_sector_selector(collect(selector), nsectors)
     elseif selector isa AbstractVector{<:Integer}
-        inds = Int[_normalize_qspace_sector_index(Int(i), nsectors) for i in selector]
+        inds = Int[_normalize_tlarray_sector_index(Int(i), nsectors) for i in selector]
         length(unique(inds)) == length(inds) || throw(ArgumentError(
             "sector selector must not contain duplicate indices"))
         return inds
@@ -1165,7 +1165,7 @@ symmetry tuple, leg indices, and cached leg-space metadata in `q.spaces`.
 boolean mask. Negative integer indices count from the end.
 """
 function TLArray(q::TLArray{T, QD, N, RD}, selector) where {T, QD, N, RD}
-    inds = _normalize_qspace_sector_selector(selector, sector_count(q))
+    inds = _normalize_tlarray_sector_selector(selector, sector_count(q))
     qlabels = copy(q.qlabels[inds])
     wmatdata, wmatinfo = _copy_wmat_storage(q, inds; deep=true)
     RMTs = _copy_sector_RMTs(q, inds; deep=true)
@@ -1476,7 +1476,7 @@ end
 #
 # ─────────────────────────────────────────────────────────────────────────────
 
-const LegList = Union{AbstractVector{<:Integer}, Tuple{Vararg{<:Integer}}}
+const LegList = Union{AbstractVector{<:Integer}, Tuple{Vararg{Integer}}}
 
 # Internal: apply a lock modification function to selected leg indices.
 # legs can be any iterable of integers (Int, Vector, UnitRange, Tuple, etc.)
@@ -2250,13 +2250,13 @@ end
 #     2.  <sector inline>
 #     ...
 #
-# When the number of sectors exceeds QSPACE_DISPLAY_HEAD + QSPACE_DISPLAY_TAIL,
-# only the first QSPACE_DISPLAY_HEAD and last QSPACE_DISPLAY_TAIL sectors are shown.
+# When the number of sectors exceeds TLARRAY_DISPLAY_HEAD + TLARRAY_DISPLAY_TAIL,
+# only the first TLARRAY_DISPLAY_HEAD and last TLARRAY_DISPLAY_TAIL sectors are shown.
 # Set these globals to control the truncation behaviour.
 # ─────────────────────────────────────────────────────────────────────────────
 
-const QSPACE_DISPLAY_HEAD = Ref(5)   # number of first sectors to show
-const QSPACE_DISPLAY_TAIL = Ref(5)   # number of last sectors to show
+const TLARRAY_DISPLAY_HEAD = Ref(5)   # number of first sectors to show
+const TLARRAY_DISPLAY_TAIL = Ref(5)   # number of last sectors to show
 
 Base.show(io::IO, qs::TLArray) = show(io, MIME"text/plain"(), qs)
 function Base.show(io::IO, qs::TLArrayView)
@@ -2323,8 +2323,8 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
     end
 
     # Determine which sector indices to display.
-    head = QSPACE_DISPLAY_HEAD[]
-    tail = QSPACE_DISPLAY_TAIL[]
+    head = TLARRAY_DISPLAY_HEAD[]
+    tail = TLARRAY_DISPLAY_TAIL[]
     truncate = nr > head + tail
     active_indices = [i for i in sector_slots(qs) if !qs.iszero[i]]
     display_indices = if truncate
@@ -2425,7 +2425,7 @@ Base.:-(qs::AbstractTLArray) = qs * -1
 Base.copy(q::TLArray) = deepcopy(q)
 Base.copy(q::TLArrayView) = _eager_tlarray(q)
 
-function _identity_on_qspace(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, RD}
+function _identity_on_tlarray(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, RD}
     @assert QD == 2 "Scalar add/subtract is only defined for rank-2 TLArray objects"
 
     in_legs  = findlegs(q; dir='+')
@@ -2434,9 +2434,9 @@ function _identity_on_qspace(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, 
 
     in_leg  = only(in_legs)
     out_leg = only(out_legs)
-    qspaces = spaces(q)
+    legspaces = spaces(q)
     qinds = inds(q)
-    @assert qspaces[in_leg] == qspaces[out_leg] "Scalar add/subtract requires matching incoming and outgoing spaces"
+    @assert legspaces[in_leg] == legspaces[out_leg] "Scalar add/subtract requires matching incoming and outgoing spaces"
 
     id_q = getIdentity((q, out_leg); itag=qinds[out_leg].itags)
     return TLArray(id_q, (qinds[in_leg], qinds[out_leg]))
@@ -2526,9 +2526,9 @@ function _sum_splists_many(splists)
 end
 
 _copy_spaces_tuple(spaces::NTuple{QD, Vector}) where {QD} = ntuple(l -> copy(spaces[l]), QD)
-_qspace_eltype(::AbstractTLArray{T}) where {T} = T
+_tlarray_eltype(::AbstractTLArray{T}) where {T} = T
 
-function _oplus_pad_qspace(q::TLArray{T, QD, N, RD},
+function _oplus_pad_tlarray(q::TLArray{T, QD, N, RD},
                            result_spaces,
                            dims_tuple,
                            start_dim_maps,
@@ -2536,7 +2536,8 @@ function _oplus_pad_qspace(q::TLArray{T, QD, N, RD},
     dims_set = Set(dims_tuple)
     qlabels = copy(q.qlabels)
     wmatdata, wmatinfo = _copy_wmat_storage(q; deep=true)
-    RMTs = similar(q.RMTs, sector_count(q))
+    # Padding a direct-sum leg generally destroys diagonal RMT structure.
+    RMTs = Vector{Array{T, RD}}(undef, sector_count(q))
     for sector_index in sector_slots(q)
         q.iszero[sector_index] && continue
         old_sizes = size(sector_rmt(q, sector_index))
@@ -2567,7 +2568,7 @@ function _oplus_pad_qspace(q::TLArray{T, QD, N, RD},
     return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, _copy_spaces_tuple(result_spaces))
 end
 
-function _zero_qspace_with_spaces(symm::NTuple{N, Any},
+function _zero_tlarray_with_spaces(symm::NTuple{N, Any},
                                   inds::NTuple{QD, TLIndex},
                                   spaces::NTuple{QD, Vector};
                                   T::Type=Float64) where {N, QD}
@@ -2703,11 +2704,11 @@ function _materialize_vector_oplus(qs, dims_tuple)
     QD = length(ref.inds)
     result_dim_maps = ntuple(leg -> _splist_dim_map(result_spaces[leg]), QD)
     start_maps = _accumulate_oplus_starts(qs, dims_tuple, QD)
-    T = promote_type((_qspace_eltype(q) for q in qs)...)
+    T = promote_type((_tlarray_eltype(q) for q in qs)...)
 
-    acc = _zero_qspace_with_spaces(symm(ref), ref.inds, result_spaces; T=T)
+    acc = _zero_tlarray_with_spaces(symm(ref), ref.inds, result_spaces; T=T)
     for (q, qstarts) in zip(qs, start_maps)
-        padded = _oplus_pad_qspace(q, result_spaces, dims_tuple, qstarts, result_dim_maps)
+        padded = _oplus_pad_tlarray(q, result_spaces, dims_tuple, qstarts, result_dim_maps)
         padded = q.inds == ref.inds ? padded : TLArray(padded, ref.inds)
         acc = acc + padded
     end
@@ -2832,13 +2833,13 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
         end
     end
 
-    T = promote_type((_qspace_eltype(q) for q in defined_qs)...)
+    T = promote_type((_tlarray_eltype(q) for q in defined_qs)...)
     filled = Matrix{TLArray}(undef, size(mat, 1), size(mat, 2))
     for j in axes(mat, 2), i in axes(mat, 1)
         q = _oplus_matrix_entry(mat, i, j)
         if q === nothing
             spaces = _infer_zero_matrix_spaces(first_axis_sources, second_axis_sources, i, j, length(ref.inds))
-            filled[i, j] = _zero_qspace_with_spaces(symm(ref), ref.inds, spaces; T=T)
+            filled[i, j] = _zero_tlarray_with_spaces(symm(ref), ref.inds, spaces; T=T)
         else
             filled[i, j] = aligned_by_position[(i, j)]
         end
@@ -3112,7 +3113,7 @@ function getsub(q::TLArray{T, QD, N, RD}, pred::Function; preserve_space::Bool=f
 end
 
 """
-    empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex}; T::Type=Float64) where {N, QD}
+    empty_tlarray(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex}; T::Type=Float64) where {N, QD}
 
 Create an empty rank-`QD` (zero-sector) TLArray over the given symmetries.
 
@@ -3123,7 +3124,7 @@ levels.  All `TLIndex` entries with non-empty tags must be pairwise distinct.
 The element type of future sector data defaults to `Float64`; pass `T=ComplexF64`
 (or another concrete `<:Number` type) to use a different element type.
 """
-function empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex};
+function empty_tlarray(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex};
                       T::Type=Float64) where {N, QD}
     RD = QD + N
     QT = qlabeltype(symm)
@@ -3136,8 +3137,8 @@ function empty_qspace(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex};
     return TLArray(symm, qlabels, wmatdata, wmatinfo, RMTs, inds, spaces)
 end
 
-function empty_qspace(q::AbstractTLArray; T::Type=Float64)
-    return empty_qspace(symm(q), inds(q); T=T)
+function empty_tlarray(q::AbstractTLArray; T::Type=Float64)
+    return empty_tlarray(symm(q), inds(q); T=T)
 end
 
 function Base.zero(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, RD}

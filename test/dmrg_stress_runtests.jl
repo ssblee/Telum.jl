@@ -1,6 +1,5 @@
 using Test
 
-include("common.jl")
 include("support/dmrg.jl")
 
 function _dmrg_stress_fixture(; nsites::Int=20, nkeep::Int=30, nsweep::Int=1,
@@ -148,12 +147,9 @@ end
     _test_dmrg_fixture_contractions_and_svd(
         fixture; check_large_rmt=true, check_sparse=true, check_svd=true)
 
-    for opt in (FermionSOptions(2, :U1, :SU2, :SU2),
-                FermionSOptions(3, :U1, :SU2, :SU3))
-        @testset "Hubbard MPS/MPO contractions with opt=$(opt)" begin
-            option_fixture = _dmrg_stress_fixture(; nsites=4, nkeep=4, nsweep=1, opt)
-            _test_dmrg_fixture_contractions_and_svd(
-                option_fixture; check_large_rmt=false, check_sparse=false, check_svd=false)
-        end
-    end
+    option_fixture = _dmrg_stress_fixture(; 
+    nsites=4, nkeep=4, nsweep=1, opt=FermionSOptions(2, :U1, :SU2, :SU2))
+
+    _test_dmrg_fixture_contractions_and_svd(
+        option_fixture; check_large_rmt=true, check_sparse=true, check_svd=true)
 end

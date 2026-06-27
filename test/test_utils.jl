@@ -338,6 +338,8 @@ function test_sum_sparse_equivalence_mixed_rmt_eltypes()
                            [DiagRMT(ComplexF64[1 + im, 2 - im], Val(3), (1, 2))],
                            inds, spaces)
 
+    # Exercise both promotion order and dense/diagonal RMT mixing; the sparse
+    # reference keeps the check independent of the internal storage chosen.
     for (left, right) in ((real_dense, complex_dense),
                           (complex_dense, real_dense),
                           (complex_diag, real_dense),
@@ -346,6 +348,38 @@ function test_sum_sparse_equivalence_mixed_rmt_eltypes()
         reference = Array(to_sparse_array(left, ComplexF64)) + Array(to_sparse_array(right, ComplexF64))
         @test Array(to_sparse_array(result, ComplexF64)) ≈ reference
         @test eltype(result) == ComplexF64
+    end
+end
+
+function test_contract_tlarrayview_inputs()
+    @testset "contract TLArrayView inputs" begin
+        symm = (U1,)
+        qlabels = [(((0,),), ((0,),))]
+        wmatdata = Float64[]
+        wmatinfo = [Telum._empty_wmat_info(Val(0))]
+        spaces = ([(((0,),), 2)], [(((0,),), 2)])
+
+        left = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                       [reshape([1.0, 2.0, 3.0, 4.0], 2, 2, 1)],
+                       (TLIndex("x", '+'), TLIndex("c", '-')), spaces)
+        right = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                        [reshape(ComplexF64[0.5 - im, -1 + 3im, 2 + im, 1 - 0.25im], 2, 2, 1)],
+                        (TLIndex("c", '+'), TLIndex("y", '-')), spaces)
+
+        left_view = 2.0 * left
+        right_view = (1.5 - 0.5im) * right
+        @test left_view isa TLArrayView
+        @test right_view isa TLArrayView
+
+        # Compare view*dense and view*view contraction against the sparse-array
+        # reference so scalar view materialization and eltype promotion are both covered.
+        for (a, b) in ((left_view, right), (left_view, right_view))
+            result = a * b
+            reference = Array(contract_sparse(to_sparse_array(a, ComplexF64),
+                                              to_sparse_array(b, ComplexF64),
+                                              (2,), (1,)))
+            @test Array(to_sparse_array(result, ComplexF64)) ≈ reference atol=1e-10 rtol=1e-10
+        end
     end
 end
 
@@ -449,7 +483,7 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     q0 = getLocalSpace(option, ("site1", "site2", "op"))
     q = q0.F
 
-    function test_same_qspace_structure(q1::AbstractTLArray, q2::AbstractTLArray)
+    function test_same_tlarray_structure(q1::AbstractTLArray, q2::AbstractTLArray)
         @test q1.inds == q2.inds
         @test q1.spaces == q2.spaces
         _test_tlarrays_same_sector_storage(q1, q2)
@@ -457,14 +491,14 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
 
     j_explicit = get1jtensor(q, 2)
     j_kw = get1jtensor(q; itag="site2")
-    test_same_qspace_structure(j_kw, j_explicit)
+    test_same_tlarray_structure(j_kw, j_explicit)
 
     @test_throws ArgumentError get1jtensor(q; plev=0)
     @test_throws ArgumentError get1jtensor(q; itag="missing")
 
     flipped_explicit = legflip(q, 2)
     flipped_kw = legflip(q; itag="site2")
-    test_same_qspace_structure(flipped_kw, flipped_explicit)
+    test_same_tlarray_structure(flipped_kw, flipped_explicit)
 
     @test flipped_explicit.inds[1] == q.inds[1]
     @test flipped_explicit.inds[2] == change_dir(Telum.change_dual(q.inds[2]))
@@ -478,8 +512,8 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     flipped_multi_vector = legflip(q, [2, 3])
     flipped_multi_kw = legflip(q; dir='-')
 
-    test_same_qspace_structure(flipped_multi_vector, flipped_multi_tuple)
-    test_same_qspace_structure(flipped_multi_kw, flipped_multi_tuple)
+    test_same_tlarray_structure(flipped_multi_vector, flipped_multi_tuple)
+    test_same_tlarray_structure(flipped_multi_kw, flipped_multi_tuple)
 
     @test flipped_multi_tuple.inds[1] == q.inds[1]
     @test flipped_multi_tuple.inds[2] == change_dir(Telum.change_dual(q.inds[2]))
@@ -604,6 +638,171 @@ function test_svdQS(q::TLArray{T, QD, N, RD},
     @assert Vdiso_diff < tol "SVD Vd isometry error ‖lock(Vd, bond) * Vd' - I‖ = $Vdiso_diff exceeds tolerance $tol"
 
     return diff_norm
+end
+
+function _test_svd_diag_rmt_case(q::TLArray; expected_singular_values=nothing)
+    @test all(i -> q.iszero[i] || q.RMTs[i] isa DiagRMT, eachindex(q.RMTs))
+    diff = test_svdQS(q, (1,); cutoff=0.0, verbose=false)
+    @test diff < 1e-10
+
+    result = svd(q, (1,); cutoff=0.0, get_lists=true)
+    @test all(i -> result.S.iszero[i] || result.S.RMTs[i] isa DiagRMT, eachindex(result.S.RMTs))
+
+    telum_vals = Float64[]
+    # kept_list stores one value per symmetry-degenerate multiplet; expand it
+    # before comparing with the flat dense singular-value list.
+    for (singular_value, degeneracy, _, _) in result.kept_list
+        append!(telum_vals, fill(singular_value, degeneracy))
+    end
+    sort!(telum_vals; rev=true)
+    reference_vals =
+        if isnothing(expected_singular_values)
+            sort(LinearAlgebra.svdvals(Array(to_sparse_array(q))); rev=true)
+        else
+            sort(collect(Float64, expected_singular_values); rev=true)
+        end
+    @test telum_vals ≈ reference_vals atol=1e-10 rtol=1e-10
+end
+
+function test_svd_diag_rmt()
+    @testset "svd accepts DiagRMT sector storage" begin
+        @testset "U1" begin
+            symm = (U1,)
+            qlabels = [(((0,),), ((0,),))]
+            wmatdata = Float64[]
+            wmatinfo = [Telum._empty_wmat_info(Val(0))]
+            spaces = ([(((0,),), 2)], [(((0,),), 2)])
+            q = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                        [DiagRMT([3.0, -1.5], Val(3), (1, 2))],
+                        (TLIndex("left", '+'), TLIndex("right", '-')), spaces)
+
+            _test_svd_diag_rmt_case(q)
+        end
+
+        @testset "SU2" begin
+            # get1jtensor builds realistic non-Abelian DiagRMT storage; the
+            # spin-1/2 identity contributes two degenerate singular values.
+            q = get1jtensor(getLocalSpace(SpinOptions(:SU2, 1)).I, 1)
+            _test_svd_diag_rmt_case(q; expected_singular_values=[1.0, 1.0])
+        end
+    end
+end
+
+function _test_multi_sector_matrix_tlarray(matrices::AbstractVector{<:AbstractMatrix{T}};
+                                           qlabels=[((i - 1,),) for i in eachindex(matrices)],
+                                           tags=("phys", "phys")) where {T}
+    @assert length(matrices) == length(qlabels)
+    symmetries = (U1,)
+    # Each input matrix is stored as one symmetry sector, giving a block-diagonal
+    # TLArray whose dense reference has the same per-sector eigenspectrum.
+    sector_qlabels = [(qlabel, qlabel) for qlabel in qlabels]
+    wmatdata = Float64[]
+    wmatinfo = [Telum._empty_wmat_info(Val(0)) for _ in eachindex(matrices)]
+    RMTs = Array{T, 3}[]
+    spaces = Tuple{eltype(qlabels), Int}[]
+    for (qlabel, matrix) in zip(qlabels, matrices)
+        n = size(matrix, 1)
+        @assert size(matrix, 2) == n
+        push!(RMTs, reshape(Matrix{T}(matrix), n, n, 1))
+        push!(spaces, (qlabel, n))
+    end
+    inds = (TLIndex(tags[1], '+'), TLIndex(tags[2], '-'))
+    return TLArray(symmetries, sector_qlabels, wmatdata, wmatinfo, RMTs, inds, (spaces, copy(spaces)))
+end
+
+function _test_eigen_dense_matrix(q::TLArray)
+    arr = Array(to_sparse_array(q))
+    return reshape(arr, size(arr, 1), size(arr, 2))
+end
+
+function _test_eigen_expanded_eigenvalues(result)
+    vals = mapreduce(entry -> fill(entry[1], entry[2]), append!, result.eig_list;
+                     init=eltype(first(result.eig_list)[1])[])
+    return sort(vals; by=abs)
+end
+
+function _test_eigen_dense_eigenvalues(q::TLArray; hermitian::Bool=false)
+    mat = _test_eigen_dense_matrix(q)
+    vals = hermitian ? LinearAlgebra.eigvals(Hermitian(mat)) : LinearAlgebra.eigvals(mat)
+    return sort(vals; by=abs)
+end
+
+function _test_eigen_assert_reconstructs(q::TLArray; hermitian::Bool=false, tol=1e-9)
+    result = eigen(q; hermitian)
+    # Lock the original matrix leg so multiplication contracts only the eigen bond.
+    V = lock(result.V, 1)
+    rec = isnothing(result.V_inv) ? V * result.D * result.V' : V * result.D * result.V_inv
+    @test norm(q - rec) / max(norm(q), 1.0) < tol
+    return result
+end
+
+function test_eigen_multi_sector()
+    @testset "multi-sector eigenvalues match dense eigendecomposition" begin
+        # 5x5 and 10x10 blocks exercise the per-sector eigensolver beyond
+        # scalar/small fixtures while keeping the test cheap.
+        hermitian_blocks = [
+            Matrix(Symmetric(randn(5, 5))),
+            Matrix(Symmetric(randn(10, 10))),
+        ]
+        hermitian_q = _test_multi_sector_matrix_tlarray(hermitian_blocks)
+        hermitian_result = _test_eigen_assert_reconstructs(hermitian_q; hermitian=true)
+        @test _test_eigen_expanded_eigenvalues(hermitian_result) ≈
+              _test_eigen_dense_eigenvalues(hermitian_q; hermitian=true) atol=1e-10 rtol=1e-10
+
+        complex_blocks = [
+            randn(ComplexF64, 5, 5),
+            randn(ComplexF64, 10, 10),
+        ]
+        complex_blocks[1][1, 2] += 1.0 - 0.5im
+        complex_blocks[1][2, 1] -= 0.25 + 1.0im
+        complex_blocks[2][1, 2] += 2.0 - 0.5im
+        complex_blocks[2][2, 1] -= 1.0 + 1.5im
+        complex_q = _test_multi_sector_matrix_tlarray(complex_blocks)
+        complex_result = _test_eigen_assert_reconstructs(complex_q; tol=1e-8)
+        @test !isnothing(complex_result.V_inv)
+        @test _test_eigen_expanded_eigenvalues(complex_result) ≈
+              _test_eigen_dense_eigenvalues(complex_q) atol=1e-8 rtol=1e-8
+    end
+end
+
+function _test_eigen_reconstructs_view(q::AbstractTLArray; hermitian::Bool=false, tol=1e-9)
+    result = eigen(q; hermitian)
+    # TLArrayView inputs should reconstruct the represented tensor, not only the
+    # eager TLArray produced internally by eigen.
+    V = lock(result.V, 1)
+    rec = isnothing(result.V_inv) ? V * result.D * result.V' : V * result.D * result.V_inv
+    @test norm(q - rec) / max(norm(q), 1.0) < tol
+    return result
+end
+
+function test_eigen_tlarrayview()
+    @testset "eigen accepts TLArrayView input" begin
+        # Nonzero scalar multiplication returns TLArrayView for these operands,
+        # covering both Hermitian and non-Hermitian eigen paths on lazy inputs.
+        hermitian_blocks = [
+            Matrix(Symmetric(randn(5, 5))),
+            Matrix(Symmetric(randn(10, 10))),
+        ]
+        hermitian_q = _test_multi_sector_matrix_tlarray(hermitian_blocks)
+        hermitian_view = 2.0 * hermitian_q
+        @test hermitian_view isa TLArrayView
+        hermitian_result = _test_eigen_reconstructs_view(hermitian_view; hermitian=true)
+        @test isnothing(hermitian_result.V_inv)
+
+        complex_blocks = [
+            randn(ComplexF64, 5, 5),
+            randn(ComplexF64, 10, 10),
+        ]
+        complex_blocks[1][1, 2] += 1.0 - 0.5im
+        complex_blocks[1][2, 1] -= 0.25 + 1.0im
+        complex_blocks[2][1, 2] += 2.0 - 0.5im
+        complex_blocks[2][2, 1] -= 1.0 + 1.5im
+        complex_q = _test_multi_sector_matrix_tlarray(complex_blocks)
+        complex_view = (1.5 - 0.25im) * complex_q
+        @test complex_view isa TLArrayView
+        complex_result = _test_eigen_reconstructs_view(complex_view; tol=1e-8)
+        @test !isnothing(complex_result.V_inv)
+    end
 end
 
 # ─── test_norm ───────────────────────────────────────────────────────────────

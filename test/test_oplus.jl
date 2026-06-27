@@ -60,6 +60,59 @@ end
         @test norm(arr_qsum - arr_ref) < 1e-10
     end
 
+    @testset "vector mixed eltype RMT storage and views" begin
+        symm = (U1,)
+        qlabels = [(((0,),), ((0,),))]
+        wmatdata = Float64[]
+        wmatinfo = [Telum._empty_wmat_info(Val(0))]
+        spaces = ([(((0,),), 2)], [(((0,),), 2)])
+        inds = (TLIndex("x", '+'), TLIndex("y", '-'))
+
+        real_dense = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                             [reshape([2.0, -1.0, 0.5, 3.0], 2, 2, 1)],
+                             inds, spaces)
+        complex_dense = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                                [reshape(ComplexF64[1 + 2im, 3 - im, -2 + 0.5im, 4im], 2, 2, 1)],
+                                inds, spaces)
+        complex_diag = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                               [DiagRMT(ComplexF64[1 + im, 2 - im], Val(3), (1, 2))],
+                               inds, spaces)
+        complex_view = permutedims(complex_dense, (2, 1))
+
+        for (inputs, reference_inputs) in (
+            ([real_dense, complex_dense], [real_dense, complex_dense]),
+            ([complex_diag, real_dense], [complex_diag, real_dense]),
+            ([real_dense, complex_diag], [real_dense, complex_diag]),
+            ([real_dense, complex_view], [real_dense, complex_dense]),
+        )
+            qsum = oplus(inputs, 1)
+            arr_ref, spaces_ref = _dense_vector_oplus_ref(reference_inputs, 1)
+            arr_qsum = Array(to_sparse_array(qsum, ComplexF64))
+
+            @test eltype(qsum) == ComplexF64
+            @test qsum.inds == real_dense.inds
+            @test qsum.spaces == (spaces_ref[1], real_dense.spaces[2])
+            @test size(arr_qsum) == size(arr_ref)
+            @test norm(arr_qsum - arr_ref) < 1e-10
+        end
+
+        mat = Matrix{Any}(undef, 2, 2)
+        mat[1, 1] = real_dense
+        mat[2, 1] = complex_diag
+        mat[1, 2] = complex_dense
+        mat[2, 2] = nothing
+
+        qsum = oplus(mat, (1, 2))
+        arr_ref, spaces_ref = _dense_matrix_oplus_ref(mat, (1, 2))
+        arr_qsum = Array(to_sparse_array(qsum, ComplexF64))
+
+        @test eltype(qsum) == ComplexF64
+        @test qsum.inds == real_dense.inds
+        @test qsum.spaces == spaces_ref
+        @test size(arr_qsum) == size(arr_ref)
+        @test norm(arr_qsum - arr_ref) < 1e-10
+    end
+
     @testset "vector validation" begin
         B_bad = TLArray(B, ("other1", "site2", "op"))
         @test_throws ArgumentError oplus([A, nothing], 3)

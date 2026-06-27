@@ -91,6 +91,8 @@ end
     _test_identity_svd_values_are_one(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
+test_svd_diag_rmt()
+
 @testset "svd singular values match dense SVD" begin
     for option in (
         FermionSOptions(1, :U1, :SU2, nothing),

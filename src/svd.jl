@@ -737,7 +737,7 @@ function _compact_svd_rows_by_valid!(rows::Vector{Row},
 end
 
 function _get_svd_split_rows(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
-                             splits_by_symm::Tuple{Vararg{<:AbstractVector, N}},
+                             splits_by_symm::Tuple{Vararg{AbstractVector, N}},
                              sector_indices::Vector{Int},
                              sector_row_ranges::Vector{UnitRange{Int}},
                              left_legs::NTuple{L, Int},
@@ -795,7 +795,7 @@ function _get_svd_split_rows(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
 end
 
 function _get_svd_split_rows(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
-                             splits_by_symm::Tuple{Vararg{<:AbstractVector, N}},
+                             splits_by_symm::Tuple{Vararg{AbstractVector, N}},
                              sector_indices::Vector{Int},
                              left_legs::NTuple{L, Int},
                              right_legs::NTuple{R, Int},

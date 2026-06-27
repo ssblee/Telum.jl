@@ -39,6 +39,8 @@ end
     test_sum_sparse_equivalence_mixed_rmt_eltypes()
 end
 
+test_contract_tlarrayview_inputs()
+
 @testset "Generating 1jtensor of TLArray test" begin
     test_1jpair(FermionSOptions(1, :U1, :SU2, nothing))
     test_1jpair(FermionSOptions(3, :U1, :SU2, :SU3))

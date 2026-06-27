@@ -657,7 +657,7 @@ end
 function _accumulate_scalar_om!(out::AbstractArray{T, 3},
                                 A::AbstractArray,
                                 B::AbstractArray,
-                                scale::Float64,
+                                scale,
                                 beta::T = one(T)) where {T}
     fdim, cdim, o1dim = size(A)
     gdim, cdim2, o2dim = size(B)

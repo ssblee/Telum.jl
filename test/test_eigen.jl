@@ -1,6 +1,6 @@
 function _one_sector_matrix_tlarray(matrix::AbstractMatrix{T};
                                     qlabel=((0,),),
-                                    tags=("eig", "eig")) where {T}
+                                    tags=("phys", "phys")) where {T}
     n = size(matrix, 1)
     @assert size(matrix, 2) == n
     symmetries = (U1,)
@@ -19,16 +19,15 @@ function _dense_matrix(q::TLArray)
 end
 
 function _eigen_reconstruction(result)
-    V = _dense_matrix(result.V)
-    D = _dense_matrix(result.D)
-    return isnothing(result.V_inv) ? V * D * V' : V * D * _dense_matrix(result.V_inv)
+    # Lock the original matrix leg so multiplication contracts only the eigen bond.
+    V = lock(result.V, 1)
+    return isnothing(result.V_inv) ? V * result.D * result.V' : V * result.D * result.V_inv
 end
 
-function _assert_eigen_reconstructs(q::TLArray; hermitian::Bool=false, tol=1e-9)
+function _assert_eigen_reconstructs(q::TLArray; hermitian::Bool=false, tol=1e-11)
     result = eigen(q; hermitian)
     rec = _eigen_reconstruction(result)
-    arr_q = _dense_matrix(q)
-    @test norm(arr_q - rec) / max(norm(arr_q), 1.0) < tol
+    @test norm(q - rec) / max(norm(q), 1.0) < tol
     return result
 end
 
@@ -92,3 +91,6 @@ end
     @test _expanded_eigenvalues(complex_general_result) ≈
           _dense_eigenvalues(complex_general_q) atol=1e-8 rtol=1e-8
 end
+
+test_eigen_multi_sector()
+test_eigen_tlarrayview()

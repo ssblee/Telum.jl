@@ -1,11 +1,11 @@
-function _make_index_metadata_qspace()
+function _make_index_metadata_tlarray()
     option = FermionSOptions(3, :U1, :SU2, :SU3)
     q0 = getLocalSpace(option)
     return TLArray(q0.F, ("site1", "site2", "op"))
 end
 
 @testset "index metadata selection and modifiers" begin
-    q = _make_index_metadata_qspace()
+    q = _make_index_metadata_tlarray()
 
     @testset "findlegs" begin
         @test findlegs(q; dir='+') == [1]

@@ -58,7 +58,7 @@ function _needs_sum_alignment(ref::AbstractTLArray, q::AbstractTLArray)
     return inds(ref) != inds(q) || spaces(ref) != spaces(q)
 end
 
-function _align_sum_inputs(qs::Tuple{Vararg{<:AbstractTLArray}})
+function _align_sum_inputs(qs::Tuple{AbstractTLArray, Vararg{AbstractTLArray}})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
     ref = qs[1]
     any(q -> _needs_sum_alignment(ref, q), qs) || return qs
@@ -663,20 +663,21 @@ function _sum_tlarrays_from_ref(ref::AbstractTLArray{TR, QD, N, RD, QT, PS, M, R
             "and w-matrix tuple width; only RMT element/storage may differ"))
     end
     aligned = _align_sum_inputs(qs)
-    T = promote_type((_qspace_eltype(q) for q in aligned)...)
+    T = promote_type((_tlarray_eltype(q) for q in aligned)...)
     return _sum_tlarrays_aligned(aligned, T, Val(QD), Val(N), QT, PS, Val(M), Val(RD))
 end
 
-function _sum_tlarrays(qs::Union{Tuple{Vararg{<:AbstractTLArray}}, AbstractVector{<:AbstractTLArray}})
+function _sum_tlarrays(qs::Union{Tuple{AbstractTLArray, Vararg{AbstractTLArray}},
+                                 AbstractVector{<:AbstractTLArray}})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
     return _sum_tlarrays_from_ref(qs[begin], qs)
 end
 
 # Keep tuple overloads anchored on concrete tensor containers. A broad
 # Tuple{<:AbstractTLArray,...} sum method invalidates Julia's REPL hint path.
-Base.sum(qs::Tuple{TLArray, Vararg{<:AbstractTLArray}}) =
+Base.sum(qs::Tuple{TLArray, Vararg{AbstractTLArray}}) =
     _sum_tlarrays(qs)
-Base.sum(qs::Tuple{TLArrayView, Vararg{<:AbstractTLArray}}) =
+Base.sum(qs::Tuple{TLArrayView, Vararg{AbstractTLArray}}) =
     _sum_tlarrays(qs)
 Base.sum(qs::AbstractVector{<:AbstractTLArray}) =
     _sum_tlarrays(qs)
@@ -687,13 +688,13 @@ function Base.:+(qs1::TLArray{T1, QD, N, RD, QT, PS},
 end
 
 Base.:-(qs1::TLArray, qs2::TLArray) = qs1 + (-1 * qs2)
-Base.:+(q::TLArray, x::Number) = q + x * _identity_on_qspace(q)
+Base.:+(q::TLArray, x::Number) = q + x * _identity_on_tlarray(q)
 Base.:+(x::Number, q::TLArray) = q + x
-Base.:-(q::TLArray, x::Number) = q + (-x) * _identity_on_qspace(q)
-Base.:-(x::Number, q::TLArray) = x * _identity_on_qspace(q) + (-q)
+Base.:-(q::TLArray, x::Number) = q + (-x) * _identity_on_tlarray(q)
+Base.:-(x::Number, q::TLArray) = x * _identity_on_tlarray(q) + (-q)
 Base.:+(qs1::AbstractTLArray, qs2::AbstractTLArray) = _sum_tlarrays((qs1, qs2))
 Base.:-(qs1::AbstractTLArray, qs2::AbstractTLArray) = qs1 + (-1 * qs2)
-Base.:+(q::AbstractTLArray, x::Number) = q + x * _identity_on_qspace(q)
+Base.:+(q::AbstractTLArray, x::Number) = q + x * _identity_on_tlarray(q)
 Base.:+(x::Number, q::AbstractTLArray) = q + x
-Base.:-(q::AbstractTLArray, x::Number) = q + (-x) * _identity_on_qspace(q)
-Base.:-(x::Number, q::AbstractTLArray) = x * _identity_on_qspace(q) + (-q)
+Base.:-(q::AbstractTLArray, x::Number) = q + (-x) * _identity_on_tlarray(q)
+Base.:-(x::Number, q::AbstractTLArray) = x * _identity_on_tlarray(q) + (-q)

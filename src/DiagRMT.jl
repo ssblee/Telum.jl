@@ -140,7 +140,7 @@ function _dense_diagonal_rmt_from_values(vals::AbstractVector{T}, ::Val{N},
     return rmt
 end
 
-function _diag_rmt_axes_if_valid(spaces::Tuple{Vararg{<:AbstractVector, QD}}) where {QD}
+function _diag_rmt_axes_if_valid(spaces::Tuple{Vararg{AbstractVector, QD}}) where {QD}
     nonsingleton = Int[]
     for leg in 1:QD
         if !(length(spaces[leg]) == 1 && only(spaces[leg])[2] == 1)

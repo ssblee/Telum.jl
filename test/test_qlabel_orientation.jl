@@ -100,7 +100,7 @@ end
         fermion_u1.F,
         fermion_su2.I,
         fermion_su2.F,
-        empty_qspace((U1, SU{2}), (TLIndex("empty_in", '+'), TLIndex("empty_out", '-'))),
+        empty_tlarray((U1, SU{2}), (TLIndex("empty_in", '+'), TLIndex("empty_out", '-'))),
         getvac(fermion_su2.I),
     )
 

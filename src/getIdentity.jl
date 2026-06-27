@@ -36,7 +36,7 @@ Base.propertynames(::leginfo, private::Bool=false) =
 
 # Variadic entry point: accepts multiple (TLArray, Int) pairs as positional arguments
 # Keyword arguments control the fused output leg's TLIndex properties
-function getIdentity(legs::Vararg{Tuple{<:AbstractTLArray, Int}};
+function getIdentity(legs::Vararg{Tuple{AbstractTLArray, Int}};
                      itag::AbstractString="", plev::Int=0, lock::Int=0)
     leginfos = Tuple(leginfo(q, i) for (q, i) in legs)
     return getIdentity(leginfos; itag=itag, plev=plev, lock=lock)

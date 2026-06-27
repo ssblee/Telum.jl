@@ -55,9 +55,9 @@ Fields:
 Constructor side effects and invariants:
 
 - converts rows and spaces to concrete typed containers;
-- normalizes rank-2 and rank-0 rows with `normalize_qspace!`;
+- normalizes rank-2 and rank-0 rows with `normalize_tlarray!`;
 - orients one-element negative w-matrices by moving the sign into `RMT`;
-- drops tiny rows using `QSPACE_ROW_CUTOFF`;
+- drops tiny rows using `TLARRAY_ROW_CUTOFF`;
 - checks CGR qlabel ordering, unique non-empty indices, and lock rules.
 
 ### `TLIndex`
@@ -142,9 +142,9 @@ builds a type encoding that product symmetry.
 - `getLocalSpace(opts, tags=("", "", ""))`: build symmetry-adapted local-space
   operators for `SpinOptions`, `FermionOptions`, or `FermionSOptions`. Returns a
   named tuple such as `IS`, `Z`, `F`, `S`, depending on the option type.
-- `empty_qspace(symm, inds; T=Float64)`: create a zero-row `TLArray` over a
+- `empty_tlarray(symm, inds; T=Float64)`: create a zero-row `TLArray` over a
   symmetry tuple and index tuple.
-- `empty_qspace(q; T=Float64)`: create an empty tensor with `q`'s symmetries and
+- `empty_tlarray(q; T=Float64)`: create an empty tensor with `q`'s symmetries and
   indices.
 - `getvac(q, itags=("", ""))`: build a rank-2 vacuum tensor with one incoming
   and one outgoing trivial leg.
