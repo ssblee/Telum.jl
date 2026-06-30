@@ -63,7 +63,7 @@ export empty_tlarray, qlabeltype, zero_qlabels, getvac
 export addSingleton, deleteSingleton, ⊗
 export oplus, getsub
 export complete_oplus_matrix
-export printmeta, canonicalize
+export printmeta, to_concrete
 export findlegs, findleg, matchings, matching, unmatchings, unmatching
 export contractables, contractable, uncontractables, uncontractable
 export prime, setprime, noprime

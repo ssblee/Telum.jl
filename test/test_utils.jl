@@ -343,12 +343,56 @@ function test_sum_sparse_equivalence_mixed_rmt_eltypes()
     for (left, right) in ((real_dense, complex_dense),
                           (complex_dense, real_dense),
                           (complex_diag, real_dense),
-                          (real_dense, complex_diag))
+                          (real_dense, complex_diag),)
         result = left + right
         reference = Array(to_sparse_array(left, ComplexF64)) + Array(to_sparse_array(right, ComplexF64))
         @test Array(to_sparse_array(result, ComplexF64)) ≈ reference
         @test eltype(result) == ComplexF64
     end
+
+    complex_view = permutedims(complex_dense, (2, 1))
+    scaled_complex_view = (1.5 - 0.5im) * complex_dense
+    @test complex_view isa TLArrayView
+    @test scaled_complex_view isa TLArrayView
+
+    result_tuple = sum((real_dense, complex_view, scaled_complex_view, complex_diag))
+    reference_tuple = Array(to_sparse_array(real_dense, ComplexF64)) +
+                      Array(to_sparse_array(complex_dense, ComplexF64)) +
+                      (1.5 - 0.5im) .* Array(to_sparse_array(complex_dense, ComplexF64)) +
+                      Array(to_sparse_array(complex_diag, ComplexF64))
+    @test Array(to_sparse_array(result_tuple, ComplexF64)) ≈ reference_tuple
+    @test eltype(result_tuple) == ComplexF64
+
+    result_vector = sum(AbstractTLArray[complex_diag, complex_view, 3 * real_dense])
+    reference_vector = Array(to_sparse_array(complex_diag, ComplexF64)) +
+                       Array(to_sparse_array(complex_dense, ComplexF64)) +
+                       3 .* Array(to_sparse_array(real_dense, ComplexF64))
+    @test Array(to_sparse_array(result_vector, ComplexF64)) ≈ reference_vector
+    @test eltype(result_vector) == ComplexF64
+
+    q0 = ((0,),)
+    q1 = ((1,),)
+    q2 = ((2,),)
+    spaces_multi = ([(q0, 2), (q1, 2), (q2, 2)],
+                    [(q0, 2), (q1, 2), (q2, 2)])
+    real_multi = TLArray(symm, [(q0, q0), (q1, q1)], wmatdata,
+                         [Telum._empty_wmat_info(Val(0)), Telum._empty_wmat_info(Val(0))],
+                         [reshape([1.0, 2.0, -1.0, 0.5], 2, 2, 1),
+                          reshape([0.25, -1.5, 2.5, 1.0], 2, 2, 1)],
+                         inds, spaces_multi)
+    diag_multi = TLArray(symm, [(q1, q1), (q2, q2)], wmatdata,
+                         [Telum._empty_wmat_info(Val(0)), Telum._empty_wmat_info(Val(0))],
+                         [DiagRMT(ComplexF64[1 + im, -2 + 0.5im], Val(3), (1, 2)),
+                          DiagRMT(ComplexF64[0.25 - im, 3 + 2im], Val(3), (1, 2))],
+                         inds, spaces_multi)
+
+    result_multi_sector = sum((real_multi, diag_multi))
+    reference_multi_sector = Array(to_sparse_array(real_multi, ComplexF64)) +
+                             Array(to_sparse_array(diag_multi, ComplexF64))
+    @test Array(to_sparse_array(result_multi_sector, ComplexF64)) ≈ reference_multi_sector
+    @test eltype(result_multi_sector) == ComplexF64
+    @test all(rmt -> rmt isa Array{ComplexF64, 3}, result_multi_sector.RMTs)
+    @test Set(result_multi_sector.qlabels) == Set([(q0, q0), (q1, q1), (q2, q2)])
 end
 
 function test_contract_tlarrayview_inputs()

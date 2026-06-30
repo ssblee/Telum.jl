@@ -820,23 +820,25 @@ function _eager_tlarray(q::TLArrayView)
 end
 
 """
-    canonicalize(q::AbstractTLArray) -> TLArray
+    to_concrete(q::AbstractTLArray) -> TLArray
 
-Return an eager `TLArray` whose storage has the canonical w-matrix/RMT sign and
-orientation conventions. This is storage cleanup, not `q / norm(q)`.
+Return an eager concrete `TLArray` whose storage has the canonical w-matrix/RMT
+sign and orientation conventions. This is storage cleanup, not `q / norm(q)`.
 
-`canonicalize` never mutates `q` or arrays reachable from `q`: it first lets the
+`to_concrete` never mutates `q` or arrays reachable from `q`: it first lets the
 internal `materialize` hook complete any future undefined lazy sectors, then
 copies the represented tensor data, and finally applies the current
 `_normalize_wmats!` and `_orient_wmats!` cleanup to the copy.
 """
-function canonicalize(q::AbstractTLArray)
+function to_concrete(q::AbstractTLArray)
     materialize(q)
     result = _eager_tlarray(q)
     _normalize_wmats!(result)
     _orient_wmats!(result)
     return result
 end
+
+canonicalize(q::AbstractTLArray) = to_concrete(q)
 
 function _qlabels_from_accessors(q::AbstractTLArray{T, QD, N, RD, QT}) where {T, QD, N, RD, QT}
     return [ntuple(leg -> sector_qlabel(q, sector, leg), Val(QD))::NTuple{QD, QT}
