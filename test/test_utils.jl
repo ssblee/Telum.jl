@@ -732,6 +732,26 @@ function test_svd_diag_rmt()
     end
 end
 
+function _test_qr_reconstructs(q::AbstractTLArray, left_legs; tol=1e-9)
+    result = qr(q, left_legs)
+    rec = result.Q * result.R
+
+    @test norm(q - rec) / max(norm(q), 1.0) < tol
+
+    Qiso_work = result.Q
+    for leg in 1:(ndims(Qiso_work) - 1)
+        Qiso_work = additag(Qiso_work, leg, "__test_qr_Q_$leg")
+    end
+    Qiso = Qiso_work' * lock(Qiso_work, ndims(Qiso_work))
+    @test norm(Qiso - 1) < tol
+
+    @test all(i -> !(result.Q.isdefined[i] && result.Q.iszero[i]), Telum.sector_slots(result.Q))
+    @test all(i -> !(result.R.isdefined[i] && result.R.iszero[i]), Telum.sector_slots(result.R))
+    @test length(unique(typeof(result.Q.RMTs[i]) for i in Telum.sector_slots(result.Q) if !result.Q.iszero[i])) <= 1
+    @test length(unique(typeof(result.R.RMTs[i]) for i in Telum.sector_slots(result.R) if !result.R.iszero[i])) <= 1
+    return result
+end
+
 function _test_multi_sector_matrix_tlarray(matrices::AbstractVector{<:AbstractMatrix{T}};
                                            qlabels=[((i - 1,),) for i in eachindex(matrices)],
                                            tags=("phys", "phys")) where {T}

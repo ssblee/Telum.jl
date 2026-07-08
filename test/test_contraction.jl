@@ -39,6 +39,19 @@ end
     test_sum_sparse_equivalence_mixed_rmt_eltypes()
 end
 
+@testset "no-symmetry contraction and sum" begin
+    q = getLocalSpace(SpinOptions(nothing, 1))
+    left = TLArray(q.I, ("left", "bond"))
+    right = TLArray(q.Sz, ("bond", "right"))
+    contracted = contract(left, (2,), right, (1,))
+    @test Telum.sector_rmt(contracted, 1) ≈ Telum.sector_rmt(q.I, 1) * Telum.sector_rmt(q.Sz, 1)
+
+    summed = q.Sz + q.Sz
+    @test norm(summed - 2 * q.Sz) < 1e-12
+    tuple_sum = sum((q.Sz, q.Sz, -q.Sz))
+    @test norm(tuple_sum - q.Sz) < 1e-12
+end
+
 test_contract_tlarrayview_inputs()
 
 @testset "Generating 1jtensor of TLArray test" begin
