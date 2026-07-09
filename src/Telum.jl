@@ -58,7 +58,7 @@ export LocalSpaceOptions, SpinOptions, FermionOptions, FermionSOptions
 export Z, U1, SU, SO, Sp
 export getLocalSpace, getSymmetryInfo, getIdentity, get1jtensor, legflip, contract
 export discard_eigen
-export svd_leg, svd_cgtsvd, get_new_cgp
+export svd_leg, svd_cgtsvd
 export empty_tlarray, qlabeltype, zero_qlabels, getvac
 export addSingleton, deleteSingleton, ⊗
 export oplus, getsub

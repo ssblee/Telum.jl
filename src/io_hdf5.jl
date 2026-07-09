@@ -256,8 +256,6 @@ function _validate_eager_tlarray_for_hdf5(q::TLArray)
         if q.isdefined[sector]
             isassigned(q.RMTs, sector) ||
                 throw(ArgumentError("sector $sector is marked defined but has no assigned RMT"))
-            q.iszero[sector] &&
-                throw(ArgumentError("sector $sector is both defined and zero"))
             current = typeof(q.RMTs[sector])
             rmt_type === nothing || current === rmt_type ||
                 throw(ArgumentError("all defined RMTs in one TLArray must have the same concrete type"))
@@ -279,7 +277,7 @@ function _write_dense_rmt_arena!(g, q::TLArray{T, QD, N, RD}) where {T, QD, N, R
     data = T[]
     info = zeros(Int, 2 + RD, length(q.qlabels))
     for sector in sector_slots(q)
-        q.iszero[sector] && continue
+        q.isdefined[sector] || continue
         rmt = q.RMTs[sector]
         offset = length(data) + 1
         append!(data, vec(rmt))
@@ -299,7 +297,7 @@ function _write_diag_rmt_arena!(g, q::TLArray{T}) where {T}
     data = T[]
     info = zeros(Int, 4, length(q.qlabels))
     for sector in sector_slots(q)
-        q.iszero[sector] && continue
+        q.isdefined[sector] || continue
         rmt = q.RMTs[sector]
         offset = length(data) + 1
         append!(data, rmt.diag)
@@ -345,7 +343,7 @@ function _read_dense_rmts(parent, ::Type{T}, ::Val{RD}, isdefined_bits::BitVecto
     RMTs = Vector{Array{T, RD}}(undef, sector_count)
     for sector in 1:sector_count
         offset, len = info[1, sector], info[2, sector]
-        if isdefined_bits[sector] && !iszero_bits[sector]
+        if isdefined_bits[sector]
             _check_rmt_range(length(data), offset, len, sector)
             shape = ntuple(axis -> info[2 + axis, sector], Val(RD))
             prod(shape) == len ||
@@ -353,7 +351,7 @@ function _read_dense_rmts(parent, ::Type{T}, ::Val{RD}, isdefined_bits::BitVecto
             RMTs[sector] = Array(reshape(copy(view(data, offset:offset + len - 1)), shape))
         else
             offset == 0 && len == 0 ||
-                throw(ArgumentError("undefined zero sector $sector must have zero RMT arena range"))
+                throw(ArgumentError("undefined sector $sector must have zero RMT arena range"))
         end
     end
     return RMTs
@@ -369,13 +367,13 @@ function _read_diag_rmts(parent, ::Type{T}, ::Val{RD}, isdefined_bits::BitVector
     RMTs = Vector{DiagRMT{T, RD}}(undef, sector_count)
     for sector in 1:sector_count
         offset, len = info[1, sector], info[2, sector]
-        if isdefined_bits[sector] && !iszero_bits[sector]
+        if isdefined_bits[sector]
             _check_rmt_range(length(data), offset, len, sector)
             axis = (info[3, sector], info[4, sector])
             RMTs[sector] = DiagRMT(Vector{T}(view(data, offset:offset + len - 1)), Val(RD), axis)
         else
             all(iszero, view(info, :, sector)) ||
-                throw(ArgumentError("undefined zero sector $sector must have zero diagonal RMT metadata"))
+                throw(ArgumentError("undefined sector $sector must have zero diagonal RMT metadata"))
         end
     end
     return RMTs
@@ -412,8 +410,6 @@ function _read_sector_metadata(parent, symmetries, ::Val{QD}) where {QD}
     for sector in 1:sector_count
         (!isdefined_bits[sector] && !iszero_bits[sector]) &&
             throw(ArgumentError("undefined sector $sector is not marked zero"))
-        (isdefined_bits[sector] && iszero_bits[sector]) &&
-            throw(ArgumentError("sector $sector is both defined and zero"))
     end
     return qlabels, isdefined_bits, iszero_bits
 end

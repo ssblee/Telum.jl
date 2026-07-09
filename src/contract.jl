@@ -16,6 +16,27 @@ function _hptt_permutedims(A::Array{Float64, D},
     return out
 end
 
+function _hptt_permutedims!(dest::StridedArray{Float64, D},
+                            A::Array{Float64, D},
+                            perm::NTuple{D, Int}) where {D}
+    if perm == _identity_perm(Val(D))
+        copyto!(dest, A)
+        return dest
+    end
+
+    @assert size(dest) == ntuple(i -> size(A, perm[i]), Val(D))
+    perm0 = Int32[perm[i] - 1 for i in 1:D]
+    sizeA = Int32[size(A, i) for i in 1:D]
+    GC.@preserve dest A begin
+        ccall((:dTensorTranspose, HPTT_jll.libhptt), Cvoid,
+              (Ptr{Int32}, Cint, Float64, Ptr{Float64}, Ptr{Int32}, Ptr{Int32},
+               Float64, Ptr{Float64}, Ptr{Int32}, Cint, Cint),
+              perm0, D, 1.0, pointer(A), sizeA, C_NULL,
+              0.0, pointer(dest), C_NULL, max(1, Threads.nthreads()), 0)
+    end
+    return dest
+end
+
 function _hptt_permutedims(A::Array{Float32, D},
                            perm::NTuple{D, Int}) where {D}
     perm == _identity_perm(Val(D)) && return A
@@ -29,6 +50,27 @@ function _hptt_permutedims(A::Array{Float32, D},
           perm0, D, Float32(1), A, sizeA, C_NULL,
           Float32(0), out, C_NULL, max(1, Threads.nthreads()), 0)
     return out
+end
+
+function _hptt_permutedims!(dest::StridedArray{Float32, D},
+                            A::Array{Float32, D},
+                            perm::NTuple{D, Int}) where {D}
+    if perm == _identity_perm(Val(D))
+        copyto!(dest, A)
+        return dest
+    end
+
+    @assert size(dest) == ntuple(i -> size(A, perm[i]), Val(D))
+    perm0 = Int32[perm[i] - 1 for i in 1:D]
+    sizeA = Int32[size(A, i) for i in 1:D]
+    GC.@preserve dest A begin
+        ccall((:sTensorTranspose, HPTT_jll.libhptt), Cvoid,
+              (Ptr{Int32}, Cint, Float32, Ptr{Float32}, Ptr{Int32}, Ptr{Int32},
+               Float32, Ptr{Float32}, Ptr{Int32}, Cint, Cint),
+              perm0, D, Float32(1), pointer(A), sizeA, C_NULL,
+              Float32(0), pointer(dest), C_NULL, max(1, Threads.nthreads()), 0)
+    end
+    return dest
 end
 
 function _hptt_permutedims(A::Array{ComplexF64, D},
@@ -46,6 +88,27 @@ function _hptt_permutedims(A::Array{ComplexF64, D},
     return out
 end
 
+function _hptt_permutedims!(dest::StridedArray{ComplexF64, D},
+                            A::Array{ComplexF64, D},
+                            perm::NTuple{D, Int}) where {D}
+    if perm == _identity_perm(Val(D))
+        copyto!(dest, A)
+        return dest
+    end
+
+    @assert size(dest) == ntuple(i -> size(A, perm[i]), Val(D))
+    perm0 = Int32[perm[i] - 1 for i in 1:D]
+    sizeA = Int32[size(A, i) for i in 1:D]
+    GC.@preserve dest A begin
+        ccall((:zTensorTranspose, HPTT_jll.libhptt), Cvoid,
+              (Ptr{Int32}, Cint, ComplexF64, Cuchar, Ptr{ComplexF64}, Ptr{Int32}, Ptr{Int32},
+               ComplexF64, Ptr{ComplexF64}, Ptr{Int32}, Cint, Cint),
+              perm0, D, one(ComplexF64), false, pointer(A), sizeA, C_NULL,
+              zero(ComplexF64), pointer(dest), C_NULL, max(1, Threads.nthreads()), 0)
+    end
+    return dest
+end
+
 function _hptt_permutedims(A::Array{ComplexF32, D},
                            perm::NTuple{D, Int}) where {D}
     perm == _identity_perm(Val(D)) && return A
@@ -61,101 +124,43 @@ function _hptt_permutedims(A::Array{ComplexF32, D},
     return out
 end
 
+function _hptt_permutedims!(dest::StridedArray{ComplexF32, D},
+                            A::Array{ComplexF32, D},
+                            perm::NTuple{D, Int}) where {D}
+    if perm == _identity_perm(Val(D))
+        copyto!(dest, A)
+        return dest
+    end
+
+    @assert size(dest) == ntuple(i -> size(A, perm[i]), Val(D))
+    perm0 = Int32[perm[i] - 1 for i in 1:D]
+    sizeA = Int32[size(A, i) for i in 1:D]
+    GC.@preserve dest A begin
+        ccall((:cTensorTranspose, HPTT_jll.libhptt), Cvoid,
+              (Ptr{Int32}, Cint, ComplexF32, Cuchar, Ptr{ComplexF32}, Ptr{Int32}, Ptr{Int32},
+               ComplexF32, Ptr{ComplexF32}, Ptr{Int32}, Cint, Cint),
+              perm0, D, one(ComplexF32), false, pointer(A), sizeA, C_NULL,
+              zero(ComplexF32), pointer(dest), C_NULL, max(1, Threads.nthreads()), 0)
+    end
+    return dest
+end
+
 @inline function _hptt_permutedims(A::AbstractArray{T, D},
                                    perm::NTuple{D, Int}) where {T, D}
     return Tuple(perm) == _identity_perm(Val(D)) ? A : permutedims(A, perm)
 end
 
-# ─── CGTContrInfo ────────────────────────────────────────────────────────────
-# Holds the CGT space/leg data needed to call getNsave_Xsymbol for one
-# non-abelian symmetry in a matched (r1, r2) sector pair.
-struct CGTContrInfo{S<:NonabelianSymm, U1, D1, U2, D2, NZ, M}
-    up1sp::NTuple{U1, NTuple{NZ, Int}}   # incoming qlabels of CGT1
-    dn1sp::NTuple{D1, NTuple{NZ, Int}}   # outgoing qlabels of CGT1
-    up2sp::NTuple{U2, NTuple{NZ, Int}}   # incoming qlabels of CGT2
-    dn2sp::NTuple{D2, NTuple{NZ, Int}}   # outgoing qlabels of CGT2
-    ctlegs1::NTuple{M, Int}              # contracted stored-qlabel indices in CGT1
-    ctlegs2::NTuple{M, Int}              # contracted stored-qlabel indices in CGT2
+function _hptt_permutedims!(dest::AbstractArray{T, D},
+                            A::AbstractArray{T, D},
+                            perm::NTuple{D, Int}) where {T, D}
+    if Tuple(perm) == _identity_perm(Val(D))
+        copyto!(dest, A)
+    else
+        copyto!(dest, permutedims(A, perm))
+    end
+    return dest
 end
 
-# ─── Output CGT metadata ─────────────────────────────────────────────────────
-
-# Core plain-data function: given two CGTs' qlabel/legdir/cgp data and the
-# physical free/contracted legs, compute the resulting CGT's qlabels, cgp,
-# and legdir.  This function is independent of the sector/CGT structs.
-#
-# Arguments (one symmetry at a time):
-#   qlabels1/2  : NTuple{QD, NTuple{NZ,Int}} — stored qlabels of each CGT
-#   legdir1/2   : (m, k) — number of incoming / outgoing stored qlabels
-#   cgp1/2      : NTuple{QD, Int} — physical leg → stored qlabel index
-#   free1/2     : physical free leg indices (1-based in each source TLArray)
-#   legs1/2     : physical contracted leg indices
-#
-# Returns (new_qlabels, new_cgp, new_legdir).
-function get_new_cgp(qlabels1::NTuple{QD1, NTuple{NZ, Int}}, legdir1,
-                     cgp1::NTuple{QD1, Int},
-                     free1::NTuple{NF1, Int}, legs1::NTuple{CN, Int},
-                     qlabels2::NTuple{QD2, NTuple{NZ, Int}}, legdir2,
-                     cgp2::NTuple{QD2, Int},
-                     free2::NTuple{NF2, Int}, legs2::NTuple{CN, Int}) where {QD1, QD2, NZ, NF1, NF2, CN}
-    m1, _ = legdir1;  m2, _ = legdir2
-    QD_out = NF1 + NF2
-    ctset1 = ntuple(k -> cgp1[legs1[k]], Val(CN))
-    ctset2 = ntuple(k -> cgp2[legs2[k]], Val(CN))
-
-    # (qlabel, output_physical_leg_index) pairs, insertion order = CGT1 then CGT2
-    up3 = Vector{Tuple{NTuple{NZ, Int}, Int}}()
-    dn3 = Vector{Tuple{NTuple{NZ, Int}, Int}}()
-    sizehint!(up3, QD_out)
-    sizehint!(dn3, QD_out)
-
-    for (i, l_in) in enumerate(free1)
-        sp = cgp1[l_in]
-        sp ∈ ctset1 && continue
-        if sp <= m1
-            push!(up3, (qlabels1[sp], i))
-        else
-            push!(dn3, (qlabels1[sp], i))
-        end
-    end
-    for (i, l_in) in enumerate(free2)
-        sp = cgp2[l_in]
-        sp ∈ ctset2 && continue
-        if sp <= m2
-            push!(up3, (qlabels2[sp], i + NF1))
-        else
-            push!(dn3, (qlabels2[sp], i + NF1))
-        end
-    end
-
-    # Stable sort: equal qlabels keep CGT1-before-CGT2 insertion order.
-    sort!(up3; by = x -> x[1], alg = MergeSort)
-    sort!(dn3; by = x -> x[1], alg = MergeSort)
-
-    m3, k3 = length(up3), length(dn3)
-    new_qlabels = ntuple(Val(QD_out)) do i
-        i <= m3 ? up3[i][1] : dn3[i - m3][1]
-    end
-    new_legdir  = (m3, k3)
-
-    cgp3 = zeros(Int, QD_out)
-    for (si, (_, l_out)) in enumerate(up3);  cgp3[l_out] = si      end
-    for (si, (_, l_out)) in enumerate(dn3);  cgp3[l_out] = m3 + si end
-
-    return (new_qlabels, ntuple(i -> cgp3[i], Val(QD_out)), new_legdir)
-end
-
-function get_new_cgp(qlabels1, legdir1, cgp1, free1, legs1,
-                     qlabels2, legdir2, cgp2, free2, legs2)
-    return get_new_cgp(qlabels1, legdir1, cgp1, Tuple(free1), Tuple(legs1),
-                       qlabels2, legdir2, cgp2, Tuple(free2), Tuple(legs2))
-end
-
-# ─── merge_new_sector helpers ───────────────────────────────────────────────────
-
-# Mode-product: replace axis `axis` of array A (size k) with the output of
-# multiplying matrix M (shape r×k) along that axis.
-# Equivalent to: result[..., j, ...] = Σ_l M[j,l] * A[...,l,...] at `axis`.
 function _contract_om_axis_data(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, axis::Int) where {T1, T2<:Real, D}
     dims  = size(A)
     k     = dims[axis]
@@ -176,8 +181,6 @@ function _contract_om_axis_data(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, 
         prod_after *= dims[i]
     end
 
-    # Reshape A to (prod_before, k, prod_after), move k to the back,
-    # multiply by M', then restore.  If prod_after == 1, k is already last.
     A_3  = reshape(A, prod_before, k, prod_after)
     if prod_after == 1
         A_mk = reshape(A_3, prod_before, k)
@@ -281,69 +284,6 @@ function _permuted_rmt_data(rmt::DiagRMT{T, RD},
     return DiagRMT{T,3}(rmt.diag, axis)
 end
 
-function _cached_permuted_rmt_data!(cache::Vector{Array{T, 3}},
-                                    sectors::AbstractVector,
-                                    idx::Int,
-                                    perm::NTuple{RD, Int},
-                                    nf::Int,
-                                    cn::Int,
-                                    nsyms::Int) where {T, RD}
-    return _cached_permuted_rmt_data!(cache, sectors, idx, perm,
-                                      Val(nf), Val(cn), Val(nsyms))
-end
-
-function _cached_permuted_rmt_data!(cache::Vector{Array{T, 3}},
-                                    sectors::AbstractVector,
-                                    idx::Int,
-                                    perm::NTuple{RD, Int},
-                                    ::Val{NF},
-                                    ::Val{CN},
-                                    ::Val{N}) where {T, RD, NF, CN, N}
-    if !isassigned(cache, idx)
-        cache[idx] = _permuted_rmt_data(sector_rmt(sectors[idx]), perm, Val(NF), Val(CN), Val(N))
-    end
-    return cache[idx]
-end
-
-function _cached_permuted_rmt_data!(cache::Vector{PRMT},
-                                    sectors::AbstractVector,
-                                    idx::Int,
-                                    perm::NTuple{RD, Int},
-                                    ::Val{NF},
-                                    ::Val{CN},
-                                    ::Val{N}) where {PRMT<:DiagRMT, RD, NF, CN, N}
-    if !isassigned(cache, idx)
-        cache[idx] = _permuted_rmt_data(sector_rmt(sectors[idx]), perm, Val(NF), Val(CN), Val(N))
-    end
-    return cache[idx]
-end
-
-function _cached_permuted_rmt_data!(cache::Vector{Array{T, 3}},
-                                    q::TLArray,
-                                    idx::Int,
-                                    perm::NTuple{RD, Int},
-                                    ::Val{NF},
-                                    ::Val{CN},
-                                    ::Val{N}) where {T, RD, NF, CN, N}
-    if !isassigned(cache, idx)
-        cache[idx] = _permuted_rmt_data(sector_rmt(q, idx), perm, Val(NF), Val(CN), Val(N))
-    end
-    return cache[idx]
-end
-
-function _cached_permuted_rmt_data!(cache::Vector{PRMT},
-                                    q::TLArray,
-                                    idx::Int,
-                                    perm::NTuple{RD, Int},
-                                    ::Val{NF},
-                                    ::Val{CN},
-                                    ::Val{N}) where {PRMT<:DiagRMT, RD, NF, CN, N}
-    if !isassigned(cache, idx)
-        cache[idx] = _permuted_rmt_data(sector_rmt(q, idx), perm, Val(NF), Val(CN), Val(N))
-    end
-    return cache[idx]
-end
-
 function prepared_sector_rmt(q::TLArray{T},
                              idx::Int,
                              perm::NTuple{RD, Int},
@@ -368,6 +308,110 @@ function prepared_sector_rmt(q::TLArrayView{T, QD},
         return conj(prepared), conj(scale)
     end
     return prepared, scale
+end
+
+@inline _effective_rmt_perm(q::TLArray, perm::NTuple{RD, Int}, ::Val{RD}) where {RD} = perm
+
+@inline function _effective_rmt_perm(q::TLArrayView{T, QD},
+                                     perm::NTuple{RD, Int},
+                                     ::Val{RD}) where {T, QD, RD}
+    return ntuple(pos -> perm[pos] <= QD ? q.perm[perm[pos]] : perm[pos], Val(RD))
+end
+
+@inline _layout_source_rmt(q::TLArray, sector::Int) = sector_rmt(q, sector)
+@inline _layout_source_rmt(q::TLArrayView, sector::Int) = sector_rmt(q.arr, sector)
+
+@inline _stream_conj_requires_buffer(q::TLArray{T}) where {T} = false
+@inline _stream_conj_requires_buffer(q::TLArrayView{T}) where {T} = q.conj && !(T <: Real)
+
+function _can_stream_prepared_rmt(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                  perm::NTuple{RD, Int},
+                                  ::Val{NF},
+                                  ::Val{CN},
+                                  ::Val{N}) where {T, QD, N, RD, QT, PS, M, RMT, NF, CN}
+    RMT <: DiagRMT && return false
+    eff_perm = _effective_rmt_perm(q, perm, Val(RD))
+    return eff_perm != _identity_perm(Val(RD)) || _stream_conj_requires_buffer(q)
+end
+
+function _prepared_rmt_storage_size(q::AbstractTLArray{T, QD, N, RD},
+                                    perm::NTuple{RD, Int},
+                                    ::Val{NF},
+                                    ::Val{CN},
+                                    ::Val{N}) where {T, QD, N, RD, NF, CN}
+    eff_perm = _effective_rmt_perm(q, perm, Val(RD))
+    total_len = 0
+    max_len = 0
+    for sector in sector_slots(q)
+        is_sector_zero(q, sector) && continue
+        fdim, cdim, odim =
+            _rmt_contract_dims(_layout_source_rmt(q, sector), eff_perm, Val(NF), Val(CN), Val(N))
+        len = fdim * cdim * odim
+        total_len += len
+        max_len = max(max_len, len)
+    end
+    return total_len, max_len
+end
+
+function _prepared_rmt_dims(q::AbstractTLArray{T, QD, N, RD},
+                            sector::Int,
+                            perm::NTuple{RD, Int},
+                            ::Val{NF},
+                            ::Val{CN},
+                            ::Val{N}) where {T, QD, N, RD, NF, CN}
+    eff_perm = _effective_rmt_perm(q, perm, Val(RD))
+    return _rmt_contract_dims(_layout_source_rmt(q, sector), eff_perm, Val(NF), Val(CN), Val(N))
+end
+
+function _prepare_sector_rmt_into!(buffer::Vector{T},
+                                   q::TLArray{T},
+                                   idx::Int,
+                                   perm::NTuple{RD, Int},
+                                   ::Val{NF},
+                                   ::Val{CN},
+                                   ::Val{N}) where {T, RD, NF, CN, N}
+    rmt, alpha = sector_rmt_with_scale(q, idx)
+    kept_sizes, contracted_sizes, om_sizes =
+        _rmt_layout_sizes(rmt, perm, Val(NF), Val(CN), Val(N))
+    out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
+    len = prod(out_dims; init=1)
+    @assert length(buffer) >= len
+    dest = reshape(view(buffer, 1:len), out_dims)
+    _hptt_permutedims!(dest, _rmt_array_data(rmt), perm)
+    return reshape(view(buffer, 1:len),
+                   prod(kept_sizes; init=1),
+                   prod(contracted_sizes; init=1),
+                   prod(om_sizes; init=1)), alpha
+end
+
+function _prepare_sector_rmt_into!(buffer::Vector{T},
+                                   q::TLArrayView{T, QD},
+                                   idx::Int,
+                                   perm::NTuple{RD, Int},
+                                   ::Val{NF},
+                                   ::Val{CN},
+                                   ::Val{N}) where {T, QD, RD, NF, CN, N}
+    source_perm = _effective_rmt_perm(q, perm, Val(RD))
+    rmt, alpha = sector_rmt_with_scale(q.arr, idx)
+    kept_sizes, contracted_sizes, om_sizes =
+        _rmt_layout_sizes(rmt, source_perm, Val(NF), Val(CN), Val(N))
+    out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
+    len = prod(out_dims; init=1)
+    @assert length(buffer) >= len
+    dest = reshape(view(buffer, 1:len), out_dims)
+    _hptt_permutedims!(dest, _rmt_array_data(rmt), source_perm)
+
+    scale = alpha * q.scale
+    scale != one(T) && (dest .*= scale)
+    if q.conj && !(T <: Real)
+        # Conjugate only the streamed copy; the source RMT may be shared.
+        dest .= conj.(dest)
+    end
+
+    return reshape(view(buffer, 1:len),
+                   prod(kept_sizes; init=1),
+                   prod(contracted_sizes; init=1),
+                   prod(om_sizes; init=1)), one(T)
 end
 
 function _cached_prepared_sector_rmt!(cache::Vector{Tuple{PRMT, T}},
@@ -451,39 +495,6 @@ function _rmt_factor_array_and_rank_sizes(factors::NTuple{N, LT}) where {N, LT<:
     K = _combined_om_factor_array(factors, rank_dim, om1_dim, om2_dim)
     scale == 1.0 || (K .*= scale)
     return K, rank_sizes
-end
-
-function _prepare_compress_sector(
-    new_wmats::NTuple{N, Vector{AW}},
-    tol::Float64 = 1e-12,
-) where {N, AW<:AbstractArray{Float64, 3}}
-    K = length(first(new_wmats))
-    @assert K > 0 "_compress_sector requires at least one RMT contract"
-
-    U_mats   = Vector{Matrix{Float64}}(undef, N)
-    SV_split = Matrix{AW}(undef, N, K)
-
-    for n in 1:N
-        shared = _qr_shared_isometry(new_wmats[n]; tol=tol)
-        isnothing(shared) && return nothing
-        common_iso::Matrix{Float64},
-        factors::Vector{AW} = shared
-
-        U_mats[n] = common_iso
-        for i in 1:K
-            SV_split[n, i] = factors[i]
-        end
-    end
-
-    factor_arrays = Vector{Array{Float64, 3}}(undef, K)
-    first_rank_sizes = ntuple(_ -> 0, Val(N))
-    for i in 1:K
-        factor_arrays[i], rank_sizes =
-            _rmt_factor_array_and_rank_sizes(ntuple(n -> SV_split[n, i], Val(N)))
-        i == 1 && (first_rank_sizes = rank_sizes)
-    end
-
-    return U_mats, factor_arrays, first_rank_sizes
 end
 
 function _rmt_contract_order(fdim::Int, gdim::Int, cdim::Int,
@@ -671,19 +682,6 @@ function _accumulate_scalar_om!(out::AbstractArray{T, 3},
     return out
 end
 
-function _contract_RMT_pair_into_generic!(out::AbstractArray{T, 3},
-                                          A::AbstractArray{T1, 3},
-                                          B::AbstractArray{T2, 3},
-                                          K::AbstractArray,
-                                          beta::T = one(T)) where {T, T1, T2}
-    fdim, cdim, o1dim = size(A)
-    gdim, cdim2, o2dim = size(B)
-    rdim = size(K, 1)
-    @assert cdim == cdim2
-    _add_contraction_cost!(fdim * gdim * rdim * o1dim * o2dim * cdim)
-    return _contract_RMT_pair_into_generic_no_count!(out, A, B, K, beta)
-end
-
 function _contract_RMT_pair_into_generic_no_count!(out::AbstractArray{T, 3},
                                                    A::AbstractArray{T1, 3},
                                                    B::AbstractArray{T2, 3},
@@ -829,146 +827,151 @@ function _contract_RMT_pair_into!(out::AbstractArray{T, 3},
     return _contract_RMT_pair_into_generic_no_count!(out, A, B, K, beta)
 end
 
-# ─── _compress_sector ────────────────────────────────────────────────────────
-# Pure-arithmetic core: given K per-pair (w-matrix, RMT) contributions for one
-# output sector, compress the per-symmetry w-matrices into a shared basis and
-# accumulate the result into a single (U_mats, result_RMT) pair.
-#
-#   new_wmats[n][i] : (OM3_n, OM12_n_i)  — w-matrix for pair i, symmetry n
-#   new_RMTs[i]     : AbstractArray{T} (sz_free..., OM12_1_i,...,OM12_N_i)
-#
-# Returns:
-#   U_mats[n]  : Matrix{Float64} (OM3_n, r_n)  — new CGT wmat per symmetry
-#   result_RMT : AbstractArray{T} (sz_free..., r_1,...,r_N)  — compressed RMT
-#   nothing    : when QR reveals that any symmetry contributes no usable
-#                columns, so the whole merged sector is identically zero
-#
-# We use QR-based shared isometries for every sector, including K == 1, so the
-# resulting basis is normalized consistently with the multi-contribution case.
-function _compress_sector(
-    new_wmats ::NTuple{N, Vector{AW}},
-    new_RMTs  ::Vector{AR},
-    QD_out    ::Int,
-    tol       ::Float64 = 1e-12,
-) where {T, N, RD, AW<:AbstractArray{Float64, 2}, AR<:AbstractArray{T, RD}}
-    K = length(new_RMTs)
-    @assert K > 0 "_compress_sector requires at least one RMT"
-
-    # Shared QR basis per symmetry
-    U_mats   = Vector{AW}(undef, N)
-    # SV pieces per symmetry and pair
-    SV_split = Matrix{AW}(undef, N, K)  
-
-    for n in 1:N
-        shared = _qr_shared_isometry(new_wmats[n]; tol=tol)
-        isnothing(shared) && return nothing
-        common_iso::AW, 
-        factors::Vector{AW} = shared
-
-        U_mats[n] = common_iso
-        for i in 1:K
-            SV_split[n, i] = factors[i]
-        end
-    end
-
-    result_RMT = new_RMTs[1]
-    for n in 1:N
-        result_RMT = _contract_om_axis(result_RMT, SV_split[n, 1], QD_out + n)
-    end
-
-    # Reuse the first contracted contribution as the output buffer.  This avoids
-    # allocating a separate zero-filled result, and removes the double allocation
-    # in the K == 1 case.
-    for i in 2:K
-        contrib = new_RMTs[i]
-        for n in 1:N
-            contrib = _contract_om_axis(contrib, SV_split[n, i], QD_out + n)
-        end
-        result_RMT .+= contrib
-    end
-
-    return U_mats, result_RMT
-end
-
-function _compress_sector(
-    new_wmats    ::NTuple{N, Vector{AW}},
-    sector_pairs    ::AbstractVector{Tuple{Int, Int}},
-    work1        ::Dict{Int, AR1},
-    work2        ::Dict{Int, AR2},
-    kept_sizes1  ::NTuple{NF1, Int},
-    kept_sizes2  ::NTuple{NF2, Int},
-    tol          ::Float64 = 1e-12,
-) where {N, AW<:AbstractArray{Float64, 3}, T1, T2, NF1, NF2,
-         AR1<:AbstractArray{T1, 3}, AR2<:AbstractArray{T2, 3}}
-    prepared = _prepare_compress_sector(new_wmats, tol)
-    isnothing(prepared) && return nothing
-    first_i, first_j = first(sector_pairs)
-    first_data1 = work1[first_i]
-    first_data2 = work2[first_j]
-
-    RT = promote_type(eltype(first_data1), eltype(first_data2), Float64)
-    max_temp_len = 0
-    for i in eachindex(sector_pairs)
-        idx1, idx2 = sector_pairs[i]
-        max_temp_len = max(max_temp_len,
-                           _rmt_contract_temp_len(work1[idx1], work2[idx2],
-                                                  prepared[2][i]))
-    end
-    temp = Vector{RT}(undef, max_temp_len)
-
-    return _contract_prepared_compress_sector(prepared, sector_pairs, work1, work2,
-                                              kept_sizes1, kept_sizes2, temp,
-                                              Val(NF1 + NF2 + N))
-end
-
 @inline _prepared_cache_rmt(x::Tuple) = x[1]
 @inline _prepared_cache_rmt(x::AbstractArray) = x
 @inline _prepared_cache_scale(x::Tuple) = x[2]
 @inline _prepared_cache_scale(x::AbstractArray{T}) where {T} = one(T)
 
-function _contract_prepared_compress_sector(
-    prepared,
-    sector_pairs    ::AbstractVector{Tuple{Int, Int}},
-    work1,
-    work2,
-    kept_sizes1  ::NTuple{NF1, Int},
-    kept_sizes2  ::NTuple{NF2, Int},
-    temp         ::Vector{RT},
-    ::Val{RD_out}
-) where {NF1, NF2, RT, RD_out}
-    first_i, first_j = first(sector_pairs)
-    first_data1 = _prepared_cache_rmt(work1[first_i])
-    first_data2 = _prepared_cache_rmt(work2[first_j])
-    U_mats, factor_arrays, rank_sizes = prepared
+function _allocate_contract_result_rmts!(result_RMTs::Vector{Array{RT, RD_out}},
+                                         prepared_sectors,
+                                         out_keys,
+                                         out_to_result::AbstractVector{Int},
+                                         ::Val{NF1},
+                                         ::Val{NF2}) where {RT, RD_out, NF1, NF2}
+    for out_pos in eachindex(out_keys)
+        result_pos = out_to_result[out_pos]
+        result_pos == 0 && continue
+        rank_sizes = prepared_sectors[out_pos][3]
+        kept_sizes1 = ntuple(i -> out_keys[out_pos][1][i][2], Val(NF1))
+        kept_sizes2 = ntuple(i -> out_keys[out_pos][2][i][2], Val(NF2))
+        result_shape::NTuple{RD_out, Int} = (kept_sizes1..., kept_sizes2..., rank_sizes...)
+        result_RMTs[result_pos] = Array{RT, RD_out}(undef, result_shape)
+    end
+    return result_RMTs
+end
 
-    result_shape::NTuple{RD_out, Int} = (kept_sizes1..., kept_sizes2..., rank_sizes...)
-    result_data::Array{RT, RD_out} = Array{RT, RD_out}(undef, result_shape)
-    result_view = reshape(result_data,
-                          size(first_data1, 1),
-                          size(first_data2, 1),
-                          size(first(factor_arrays), 1))
+function _accumulate_contract_work_item!(result_RMTs::Vector{Array{RT, RD_out}},
+                                         result_has_contribution::BitVector,
+                                         prepared_sectors,
+                                         out_to_result::AbstractVector{Int},
+                                         item::NTuple{4, Int},
+                                         entry1,
+                                         entry2,
+                                         temp::Vector{RT}) where {RT, RD_out}
+    _, _, out_pos, factor_pos = item
+    result_pos = out_to_result[out_pos]
+    data1 = _prepared_cache_rmt(entry1)
+    data2 = _prepared_cache_rmt(entry2)
+    pair_alpha = _prepared_cache_scale(entry1) * _prepared_cache_scale(entry2)
+    factors = prepared_sectors[out_pos][2][factor_pos]
+    factors_scaled = pair_alpha == one(typeof(pair_alpha)) ? factors : factors .* pair_alpha
+    result_view = reshape(result_RMTs[result_pos],
+                          size(data1, 1),
+                          size(data2, 1),
+                          size(factors, 1))
+    beta = result_has_contribution[result_pos] ? one(RT) : zero(RT)
+    _contract_RMT_pair_into!(result_view, data1, data2, factors_scaled, temp, beta)
+    result_has_contribution[result_pos] = true
+    return result_RMTs
+end
 
-    for i in eachindex(sector_pairs)
-        idx1, idx2 = sector_pairs[i]
-        entry1 = work1[idx1]
-        entry2 = work2[idx2]
-        data1 = _prepared_cache_rmt(entry1)
-        data2 = _prepared_cache_rmt(entry2)
-        pair_alpha = _prepared_cache_scale(entry1) * _prepared_cache_scale(entry2)
-        factors = factor_arrays[i]
-        factors_scaled = pair_alpha == one(typeof(pair_alpha)) ? factors : factors .* pair_alpha
-        beta = i == firstindex(sector_pairs) ? zero(RT) : one(RT)
-        _contract_RMT_pair_into!(
-            result_view,
-            data1,
-            data2,
-            factors_scaled,
-            temp,
-            beta,
-        )
+function _fill_cached_contract_side!(cache::Vector{Tuple{PRMT, T}},
+                                     q::AbstractTLArray{T},
+                                     perm::NTuple{RD, Int},
+                                     work_items::AbstractVector{NTuple{4, Int}},
+                                     ::Val{NF},
+                                     ::Val{CN},
+                                     ::Val{N},
+                                     ::Val{side}) where {PRMT, T, RD, NF, CN, N, side}
+    for item in work_items
+        idx = side == 1 ? item[1] : item[2]
+        _cached_prepared_sector_rmt!(cache, q, idx, perm, Val(NF), Val(CN), Val(N))
+    end
+    return cache
+end
+
+function _contract_with_streaming_side!(
+    result_RMTs::Vector{Array{RT, RD_out}},
+    prepared_sectors,
+    work_items::Vector{NTuple{4, Int}},
+    out_keys,
+    out_to_result::AbstractVector{Int},
+    q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
+    q2::AbstractTLArray{T2, QD2, N, RD2, QT, PS, M, RMT2},
+    perm1::NTuple{RD1, Int},
+    perm2::NTuple{RD2, Int},
+    max_stream_len::Int,
+    temp::Vector{RT},
+    ::Val{NF1},
+    ::Val{NF2},
+    ::Val{CN},
+    ::Val{streaming_side},
+) where {RT, RD_out, T1, QD1, N, RD1, QT, PS, M, RMT1,
+         T2, QD2, RD2, RMT2, NF1, NF2, CN, streaming_side}
+    _allocate_contract_result_rmts!(result_RMTs, prepared_sectors, out_keys,
+                                    out_to_result, Val(NF1), Val(NF2))
+    result_has_contribution = falses(length(result_RMTs))
+
+    PermutedRMT1 = _permuted_rmt_type(RMT1)
+    PermutedRMT2 = _permuted_rmt_type(RMT2)
+
+    if streaming_side == 1
+        cache2 = Vector{Tuple{PermutedRMT2, T2}}(undef, sector_count(q2))
+        _fill_cached_contract_side!(cache2, q2, perm2, work_items,
+                                    Val(NF2), Val(CN), Val(N), Val(2))
+        buffer = Vector{T1}(undef, max_stream_len)
+        pos = firstindex(work_items)
+        while pos <= lastindex(work_items)
+            idx1 = work_items[pos][1]
+            streamed_entry = _prepare_sector_rmt_into!(buffer, q1, idx1, perm1,
+                                                       Val(NF1), Val(CN), Val(N))
+            next_pos = pos
+            while next_pos <= lastindex(work_items) && work_items[next_pos][1] == idx1
+                item = work_items[next_pos]
+                entry2 = cache2[item[2]]
+                _accumulate_contract_work_item!(result_RMTs, result_has_contribution,
+                                                prepared_sectors, out_to_result,
+                                                item, streamed_entry, entry2, temp)
+                next_pos += 1
+            end
+            pos = next_pos
+        end
+    elseif streaming_side == 2
+        cache1 = Vector{Tuple{PermutedRMT1, T1}}(undef, sector_count(q1))
+        _fill_cached_contract_side!(cache1, q1, perm1, work_items,
+                                    Val(NF1), Val(CN), Val(N), Val(1))
+        buffer = Vector{T2}(undef, max_stream_len)
+        pos = firstindex(work_items)
+        while pos <= lastindex(work_items)
+            idx2 = work_items[pos][2]
+            streamed_entry = _prepare_sector_rmt_into!(buffer, q2, idx2, perm2,
+                                                       Val(NF2), Val(CN), Val(N))
+            next_pos = pos
+            while next_pos <= lastindex(work_items) && work_items[next_pos][2] == idx2
+                item = work_items[next_pos]
+                entry1 = cache1[item[1]]
+                _accumulate_contract_work_item!(result_RMTs, result_has_contribution,
+                                                prepared_sectors, out_to_result,
+                                                item, entry1, streamed_entry, temp)
+                next_pos += 1
+            end
+            pos = next_pos
+        end
+    else
+        cache1 = Vector{Tuple{PermutedRMT1, T1}}(undef, sector_count(q1))
+        cache2 = Vector{Tuple{PermutedRMT2, T2}}(undef, sector_count(q2))
+        for item in work_items
+            entry1 = _cached_prepared_sector_rmt!(cache1, q1, item[1], perm1,
+                                                  Val(NF1), Val(CN), Val(N))
+            entry2 = _cached_prepared_sector_rmt!(cache2, q2, item[2], perm2,
+                                                  Val(NF2), Val(CN), Val(N))
+            _accumulate_contract_work_item!(result_RMTs, result_has_contribution,
+                                            prepared_sectors, out_to_result,
+                                            item, entry1, entry2, temp)
+        end
     end
 
-    return U_mats, result_data
+    return result_RMTs
 end
 
 # ─── * operator ──────────────────────────────────────────────────────────────
@@ -1030,9 +1033,8 @@ function Base.:*(q1::AbstractTLArray, q2::AbstractTLArray)
 end
 
 # ─── contract ────────────────────────────────────────────────────────────────
-# Contraction sorted by *contracted* qlabels.  RMT pairs are collected as
-# pending contractions per output sector, so the actual RMT contraction happens
-# after the w-matrices have been compressed in `_compress_sector`.
+# Contraction sorted by *contracted* qlabels.  QR/factor data is prepared per
+# output sector, then dense RMT work is executed from a flat sector-pair list.
 #
 # Algorithm sketch:
 #   1. Build sorted sector-info vectors for each TLArray. Each entry carries the
@@ -1214,30 +1216,6 @@ function _sector_pairs_from_interval(pairs::AbstractVector,
         out_pos += 1
     end
     return sector_pairs
-end
-
-function _contract_xsym_wmat(wm1::AbstractMatrix{T1},
-                             xarr::AbstractArray{T2, 3},
-                             wm2::AbstractMatrix{T3}) where {T1, T2, T3}
-    OM1, OM2, OM3 = size(xarr)
-    size(wm1, 1) == OM1 ||
-        throw(DimensionMismatch("wm1 first axis must match x-symbol OM1 axis"))
-    size(wm2, 1) == OM2 ||
-        throw(DimensionMismatch("wm2 first axis must match x-symbol OM2 axis"))
-
-    d1 = size(wm1, 2)
-    d2 = size(wm2, 2)
-    WT = promote_type(T1, T2, T3)
-
-    result_perm = Array{WT}(undef, d1, d2, OM3)
-    temp = Matrix{WT}(undef, d1, OM2)
-    @inbounds for a in 1:OM3
-        xmat = @view xarr[:, :, a]
-        result_mat = @view result_perm[:, :, a]
-        mul!(temp, transpose(wm1), xmat, one(WT), zero(WT))
-        mul!(result_mat, temp, wm2, one(WT), zero(WT))
-    end
-    return permutedims(result_perm, (3, 1, 2))
 end
 
 function _fill_contract_wmat_concat!(concat::Matrix{Float64},
@@ -1689,8 +1667,19 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
 
     PermutedRMT1 = _permuted_rmt_type(RMT1)
     PermutedRMT2 = _permuted_rmt_type(RMT2)
-    permuted_rmts1 = Vector{Tuple{PermutedRMT1, T1}}(undef, sector_count(q1))
-    permuted_rmts2 = Vector{Tuple{PermutedRMT2, T2}}(undef, sector_count(q2))
+
+    can_stream1 = _can_stream_prepared_rmt(q1, perm1, Val(nf1), Val(CN), Val(N))
+    can_stream2 = _can_stream_prepared_rmt(q2, perm2, Val(nf2), Val(CN), Val(N))
+    total1, max1 = can_stream1 ?
+        _prepared_rmt_storage_size(q1, perm1, Val(nf1), Val(CN), Val(N)) : (0, 0)
+    total2, max2 = can_stream2 ?
+        _prepared_rmt_storage_size(q2, perm2, Val(nf2), Val(CN), Val(N)) : (0, 0)
+    streaming_side =
+        can_stream1 && !can_stream2 ? 1 :
+        can_stream2 && !can_stream1 ? 2 :
+        !can_stream1 && !can_stream2 ? 0 :
+        total1 > total2 || (total1 == total2 && max1 >= max2) ? 1 : 2
+    max_stream_len = streaming_side == 1 ? max1 : streaming_side == 2 ? max2 : 0
 
     # ── 1. Build sorted sector-info vectors keyed by contracted qlabels ─────────
     sector_infos1 = _contract_sector_infos(QT, q1, free1, legs1)
@@ -1700,8 +1689,6 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
     FreeKey1  = NTuple{nf1, Tuple{QT, Int}}
     FreeKey2  = NTuple{nf2, Tuple{QT, Int}}
     OutKey    = Tuple{FreeKey1, FreeKey2}
-
-    SectorPairVec = Vector{Tuple{Int, Int}}
 
     xsym_caches = _new_xsym_caches(PS, QT, Val(nf1), Val(nf2), Val(CN))
     impossible_sets = _new_impossible_sets(PS, QT, Val(nf1), Val(nf2))
@@ -1716,7 +1703,8 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
                             Vector{Array{Float64, 3}},
                             NTuple{N, Int}}
     prepared_sectors = Vector{PreparedSectorT}(undef, length(out_keys))
-    prepared_sector_pairs = Vector{SectorPairVec}(undef, length(out_keys))
+    work_items = Vector{NTuple{4, Int}}()
+    sizehint!(work_items, length(possible_pairs))
     max_temp_len = 0
     for out_pos in eachindex(out_keys)
         valid_output[out_pos] || continue
@@ -1740,21 +1728,24 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
         for i in eachindex(sector_pairs)
             idx1, idx2 = sector_pairs[i]
             fdim, cdim1, o1dim =
-                size(_cached_prepared_sector_rmt!(permuted_rmts1, q1, idx1,
-                                                  perm1, Val(nf1), Val(CN), Val(N))[1])
+                _prepared_rmt_dims(q1, idx1, perm1, Val(nf1), Val(CN), Val(N))
             gdim, cdim2, o2dim =
-                size(_cached_prepared_sector_rmt!(permuted_rmts2, q2, idx2,
-                                                  perm2, Val(nf2), Val(CN), Val(N))[1])
+                _prepared_rmt_dims(q2, idx2, perm2, Val(nf2), Val(CN), Val(N))
             @assert cdim1 == cdim2
             max_temp_len = max(max_temp_len,
                                _rmt_contract_temp_len(PermutedRMT1, PermutedRMT2,
                                                       fdim, gdim, cdim1,
                                                       o1dim, o2dim,
                                                       factor_arrays[i]))
+            push!(work_items, (idx1, idx2, out_pos, i))
         end
 
         prepared_sectors[out_pos] = prepared
-        prepared_sector_pairs[out_pos] = sector_pairs
+    end
+    if streaming_side == 1
+        sort!(work_items; by = item -> item[1], alg = MergeSort)
+    elseif streaming_side == 2
+        sort!(work_items; by = item -> item[2], alg = MergeSort)
     end
     contract_temp = Vector{promote_type(T1, T2, Float64)}(undef, max_temp_len)
 
@@ -1796,43 +1787,19 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
         end
 
         prepared = prepared_sectors[out_pos]
-        sector_pairs = prepared_sector_pairs[out_pos]
-        kept_sizes1 = ntuple(i -> out_keys[out_pos][1][i][2], Val(nf1))
-        kept_sizes2 = ntuple(i -> out_keys[out_pos][2][i][2], Val(nf2))
-        for (idx1, idx2) in sector_pairs
-            _cached_prepared_sector_rmt!(permuted_rmts1, q1, idx1,
-                                         perm1, Val(nf1), Val(CN), Val(N))
-            _cached_prepared_sector_rmt!(permuted_rmts2, q2, idx2,
-                                         perm2, Val(nf2), Val(CN), Val(N))
-        end
-
-        U_mats, result_RMT = _contract_prepared_compress_sector(
-            prepared, sector_pairs, permuted_rmts1, permuted_rmts2,
-            kept_sizes1, kept_sizes2, contract_temp, Val(RD_out))
+        U_mats = prepared[1]
         for m in 1:M
             n = nonabelian_indices[m]
             U = U_mats[n]
             offset, nrow, ncol = result_wmatinfo[result_pos][m]
             copyto!(view(result_wmatdata, offset:offset + nrow * ncol - 1), vec(U))
         end
-        if iszero(sum(abs2, result_RMT))
-            continue
-        end
-        result_RMTs[result_pos] = result_RMT
     end
 
-    #nrow1 = length(permuted_rmts1)
-    #used_rows1 = count(isassigned(permuted_rmts1, i) for i in eachindex(permuted_rmts1))
-    #nrow2 = length(permuted_rmts2)
-    #used_rows2 = count(isassigned(permuted_rmts2, i) for i in eachindex(permuted_rmts2))
-    #println("Contracted $(used_rows1)/$(nrow1) sectors from q1, $(used_rows2)/$(nrow2) sectors from q2")
-    #println("===============================================================")
-    #for i in eachindex(permuted_rmts1)
-    #    if !isassigned(permuted_rmts1, i)
-    #        sz = size(sector_rmt(q1, i))
-    #        println(sz)
-    #    end
-    #end
+    _contract_with_streaming_side!(
+        result_RMTs, prepared_sectors, work_items, out_keys, out_to_result,
+        q1, q2, perm1, perm2, max_stream_len, contract_temp,
+        Val(nf1), Val(nf2), Val(CN), Val(streaming_side))
 
     # ── 6. Lock reduction ────────────────────────────────────────────────────
     changed_inds2 = Set(change_dir(inds2[l]) for l in 1:QD2)

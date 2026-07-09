@@ -37,6 +37,41 @@ function _with_zero_sector(q::TLArray)
     return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, q.spaces)
 end
 
+function _push_copied_wmat_info!(wmatdata, wmatinfo, q::TLArray, sector::Int)
+    M = length(q.wmatinfo[sector])
+    info = ntuple(Val(M)) do slot
+        offset0, nrow, ncol = q.wmatinfo[sector][slot]
+        offset0 == 0 && return (0, 0, 0)
+        wmat = Telum.sector_wmat_slot(q, sector, slot)
+        offset = length(wmatdata) + 1
+        append!(wmatdata, vec(wmat))
+        return (offset, nrow, ncol)
+    end
+    push!(wmatinfo, info)
+    return wmatdata, wmatinfo
+end
+
+function _with_defined_zero_sector(q::TLArray)
+    qlabels = copy(q.qlabels)
+    push!(qlabels, first(q.qlabels))
+
+    wmatdata = copy(q.wmatdata)
+    wmatinfo = copy(q.wmatinfo)
+    source_sector = first(i for i in Telum.sector_slots(q) if q.isdefined[i])
+    _push_copied_wmat_info!(wmatdata, wmatinfo, q, source_sector)
+
+    RMTs = similar(q.RMTs, length(q.RMTs) + 1)
+    for sector in Telum.sector_slots(q)
+        q.isdefined[sector] || continue
+        RMTs[sector] = deepcopy(Telum.sector_rmt(q, sector))
+    end
+    zero_rmt = deepcopy(Telum.sector_rmt(q, source_sector))
+    fill!(zero_rmt, zero(eltype(zero_rmt)))
+    RMTs[end] = zero_rmt
+
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, q.spaces)
+end
+
 @testset "HDF5 TLArray round trip" begin
     q_nosym = TLArray((),
                       [((), ())],
@@ -72,6 +107,16 @@ end
         _assert_tlarray_roundtrip(q_zero, loaded)
         @test loaded.iszero[end]
         @test !loaded.isdefined[end]
+    end
+
+    q_defined_zero = _with_defined_zero_sector(q)
+    @test q_defined_zero.iszero[end]
+    @test q_defined_zero.isdefined[end]
+    _with_saved_tlarray(q_defined_zero) do loaded
+        _assert_tlarray_roundtrip(q_defined_zero, loaded)
+        @test loaded.iszero[end]
+        @test loaded.isdefined[end]
+        @test iszero(sum(abs2, Telum.sector_rmt(loaded, length(loaded.RMTs))))
     end
 
     first_active = first(sector for sector in Telum.sector_slots(q) if !q.iszero[sector])
