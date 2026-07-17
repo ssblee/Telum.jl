@@ -118,3 +118,77 @@ end
         end
     end
 end
+
+@testset "qr reconstruction" begin
+    q0 = getLocalSpace(SpinOptions(nothing, 1))
+    _test_qr_reconstructs(q0.Sz, (1,))
+    _test_qr_reconstructs(q0.Sm, (1,))
+
+    q_u1 = getLocalSpace(SpinOptions(:U1, 1))
+    _test_qr_reconstructs(q_u1.Sz, (1,))
+    _test_qr_reconstructs(q_u1.Sm, (1, 2))
+
+    q_su2 = getLocalSpace(SpinOptions(:SU2, 1))
+    _test_qr_reconstructs(q_su2.S, (1, 2))
+
+    q_fermion = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing))
+    _test_qr_reconstructs(q_fermion.F, (1, 2))
+end
+
+@testset "qr reconstruction higher-rank tensors" begin
+    for option in (
+        FermionSOptions(1, :U1, :SU2, nothing),
+        FermionSOptions(2, :U1, :SU2, :SU2),
+        FermionSOptions(3, :U1, :SU2, :SU3),
+        )
+        for (label, q, left_legs) in _factorization_svd_inputs(option)
+            ndims(q) > 2 || continue
+            @testset "$label" begin
+                _test_qr_reconstructs(q, left_legs; tol=1e-8)
+            end
+        end
+    end
+end
+
+@testset "qr accepts DiagRMT sector storage" begin
+    symm = (U1,)
+    qlabels = [(((0,),), ((0,),))]
+    wmatdata = Float64[]
+    wmatinfo = [Telum._empty_wmat_info(Val(0))]
+    spaces = ([(((0,),), 2)], [(((0,),), 2)])
+    q = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                [DiagRMT([3.0, -1.5], Val(3), (1, 2))],
+                (TLIndex("left", '+'), TLIndex("right", '-')), spaces)
+
+    @test all(i -> q.iszero[i] || q.RMTs[i] isa DiagRMT, eachindex(q.RMTs))
+    _test_qr_reconstructs(q, (1,); tol=1e-10)
+
+    q_su2 = get1jtensor(getLocalSpace(SpinOptions(:SU2, 1)).I, 1)
+    @test all(i -> q_su2.iszero[i] || q_su2.RMTs[i] isa DiagRMT, eachindex(q_su2.RMTs))
+    _test_qr_reconstructs(q_su2, (1,); tol=1e-10)
+end
+
+@testset "qr accepts TLArrayView input" begin
+    q = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing))
+
+    scaled_view = 2.0 * q.F
+    @test scaled_view isa TLArrayView
+    _test_qr_reconstructs(scaled_view, (1, 2))
+
+    permuted_view = permutedims(q.F, (3, 1, 2))
+    @test permuted_view isa TLArrayView
+    _test_qr_reconstructs(permuted_view, (2, 3))
+end
+
+@testset "qr keyword selection and errors" begin
+    q = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing))
+    q4 = addSingleton(q.F, 1; itag="left_aux", dir='+')
+    explicit = qr(q4, (1, 2, 3), "kwqr")
+    keyword = qr(q4, "kwqr"; dir='+')
+    @test norm(explicit.Q * explicit.R - keyword.Q * keyword.R) < 1e-9
+    @test_throws ArgumentError qr(q4)
+    @test_throws ArgumentError qr(q4, Int[])
+    @test_throws ArgumentError qr(q4, collect(1:ndims(q4)))
+    @test_throws ArgumentError qr(q4, [1, 1])
+    @test_throws ArgumentError qr(q4, [0])
+end
