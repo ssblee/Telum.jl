@@ -230,6 +230,9 @@ to_sparse_array(q::TLArray) = to_sparse_array(q, eltype(q))
 to_sparse_array(q::TLArrayView, ::Type{FT} = Float64) where {FT} =
     to_sparse_array(Telum._eager_tlarray(q), FT)
 to_sparse_array(q::TLArrayView) = to_sparse_array(q, eltype(q))
+to_sparse_array(q::TLArrayContraction, ::Type{FT} = Float64) where {FT} =
+    to_sparse_array(Telum._eager_tlarray(q), FT)
+to_sparse_array(q::TLArrayContraction) = to_sparse_array(q, eltype(q))
 
 function _test_contract_matches_sparse_and_preserves_inputs(a::TLArray,
                                                             legs_a::Tuple,
@@ -243,7 +246,7 @@ function _test_contract_matches_sparse_and_preserves_inputs(a::TLArray,
     a_before = Array(a_sparse)
     b_before = Array(b_sparse)
 
-    result = contract(a, legs_a, b, legs_b)
+    result = contract(a, legs_a, b, legs_b; lazy=false)
     result_sparse = Array(to_sparse_array(result, FT))
     reference = Array(contract_sparse(a_sparse, b_sparse, legs_a, legs_b))
 
@@ -454,7 +457,7 @@ function _test_tlarrays_same_sector_storage(a::TLArray, b::TLArray)
 end
 
 function _test_tlarrays_same_sector_storage(a::AbstractTLArray, b::AbstractTLArray)
-    return _test_tlarrays_same_sector_storage(copy(a), copy(b))
+    return _test_tlarrays_same_sector_storage(Telum._eager_tlarray(a), Telum._eager_tlarray(b))
 end
 
 function _test_tlarrays_same_sector_payloads(a::TLArray, b::TLArray)
@@ -492,7 +495,7 @@ function test_getIdentity_direct_contract(option::LocalSpaceOptions)
     @test ct.inds[1] == qi.inds[2]
     @test ct.inds[2] == TLIndex("fused", '-')
     @test ct.spaces[1] == qi.spaces[2]
-    @test !isempty(_test_defined_sector_indices(ct))
+    @test !isempty(_test_defined_sector_indices(convert(TLArray, ct)))
 end
 
 function test_1jpair(option::LocalSpaceOptions)
@@ -577,9 +580,9 @@ function test_contract_verify_legs_checks_dual(option::LocalSpaceOptions)
     q = q0.F
     j = get1jtensor(q, 2)
 
-    @test contract(q, (2,), j, (1,); reduce_lock=false) isa TLArray
+    @test contract(q, (2,), j, (1,); reduce_lock=false, lazy=false) isa TLArray
     @test_throws AssertionError contract(q, (2,), j, (2,); reduce_lock=false)
-    @test contract(q, (2,), j, (2,); reduce_lock=false, verify_legs=false) isa TLArray
+    @test contract(q, (2,), j, (2,); reduce_lock=false, verify_legs=false, lazy=false) isa TLArray
 end
 
 # ─── test_conj ───────────────────────────────────────────────────────────────

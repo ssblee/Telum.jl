@@ -75,6 +75,17 @@ end
     @test !isnothing(general_result.V_inv)
 end
 
+@testset "eigen accepts lazy contraction input" begin
+    left = _one_sector_matrix_tlarray(Matrix(Symmetric(randn(5, 5)));
+                                     tags=("phys", "bond"))
+    right = _one_sector_matrix_tlarray(Matrix{Float64}(I, 5, 5);
+                                      tags=("bond", "phys"))
+    lazy = contract(left, (2,), right, (1,))
+
+    @test lazy isa TLArrayContraction
+    @test eigen(lazy; hermitian=true).V isa TLArray
+end
+
 @testset "eigenvalues match dense eigendecomposition" begin
     real_hermitian = Matrix(Symmetric(randn(10, 10)))
     real_hermitian_q = _one_sector_matrix_tlarray(real_hermitian)

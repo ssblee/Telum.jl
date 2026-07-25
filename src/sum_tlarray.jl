@@ -123,6 +123,10 @@ end
     return size(sector_rmt_materialized(q, sector))
 end
 
+@inline function _sum_processed_rmt_dims(q::TLArrayContraction, sector::Int, ::Val{RD}) where {RD}
+    return q.rmt_sizes[sector]
+end
+
 function _sum_processed_rmt_dims(q::TLArrayView{T, QD}, sector::Int, ::Val{RD}) where {T, QD, RD}
     source_dims = size(sector_rmt_materialized(q.arr, sector))
     return ntuple(d -> d <= QD ? source_dims[q.perm[d]] : source_dims[d], Val(RD))
@@ -134,6 +138,13 @@ end
 end
 
 @inline _sum_reference_safe(q::TLArray, sector::Int, ::Type{T}) where {T} = false
+
+@inline function _sum_reference_safe(q::TLArrayContraction{T, QD, N, RD}, sector::Int, ::Type{T}) where {T, QD, N, RD}
+    rmt = sector_rmt_materialized(q, sector)
+    return rmt isa Array{T, RD}
+end
+
+@inline _sum_reference_safe(q::TLArrayContraction, sector::Int, ::Type{T}) where {T} = false
 
 @inline function _sum_reference_safe(q::TLArrayView{T, QD}, sector::Int, ::Type{RT}) where {T, QD, RT}
     q.perm == _identity_phys_perm(Val(QD)) || return false

@@ -23,7 +23,7 @@ end
     qi1 = TLArray(q.I, ("dup1", "dup1"))
     qi2 = TLArray(q.I, ("dup2", "dup2"))
     a = getIdentity((qi1, 2), (qi2, 2))
-    @test qi1 * a isa TLArray
+    @test contract(qi1, (2,), a, (1,); lazy=false) isa TLArray
 end
 
 @testset "getIdentity direct contraction" begin
@@ -43,13 +43,31 @@ end
     q = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
-    contracted = contract(left, (2,), right, (1,))
+    contracted = contract(left, (2,), right, (1,); lazy=false)
     @test Telum.sector_rmt(contracted, 1) ≈ Telum.sector_rmt(q.I, 1) * Telum.sector_rmt(q.Sz, 1)
 
     summed = q.Sz + q.Sz
     @test norm(summed - 2 * q.Sz) < 1e-12
     tuple_sum = sum((q.Sz, q.Sz, -q.Sz))
     @test norm(tuple_sum - q.Sz) < 1e-12
+end
+
+@testset "lazy contraction materialization" begin
+    q = getLocalSpace(SpinOptions(nothing, 1))
+    left = TLArray(q.I, ("left", "bond"))
+    right = TLArray(q.Sz, ("bond", "right"))
+    eager = contract(left, (2,), right, (1,); lazy=false)
+    lazy = contract(left, (2,), right, (1,))
+
+    @test lazy isa TLArrayContraction
+    @test !Telum.is_sector_defined(lazy, 1)
+    @test Telum.sector_rmt_axis_dim(lazy, 1, 1) == size(Telum.sector_rmt(eager, 1), 1)
+    @test !Telum.is_sector_defined(lazy, 1)
+
+    materialized = convert(TLArray, lazy)
+    @test materialized isa TLArray
+    @test Telum.is_sector_defined(lazy, 1)
+    @test Telum.sector_rmt(materialized, 1) ≈ Telum.sector_rmt(eager, 1)
 end
 
 test_contract_tlarrayview_inputs()

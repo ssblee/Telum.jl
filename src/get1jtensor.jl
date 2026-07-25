@@ -1,7 +1,7 @@
 get1jtensor(q::TLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
 get1jtensor(leginfo(q, leg))
 
-function _resolve_unique_leg(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
+function _resolve_unique_leg(q::AbstractTLArray; dir=nothing, itag=nothing, plev=nothing,
                              lock=nothing, rev::Bool=false,
                              opname::AbstractString="operation")
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
@@ -10,7 +10,7 @@ function _resolve_unique_leg(q::TLArray; dir=nothing, itag=nothing, plev=nothing
     throw(ArgumentError("$opname requires a uniquely specified leg, but matched legs $legs"))
 end
 
-function _resolve_matching_legs(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
+function _resolve_matching_legs(q::AbstractTLArray; dir=nothing, itag=nothing, plev=nothing,
                                 lock=nothing, rev::Bool=false,
                                 opname::AbstractString="operation")
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
@@ -18,7 +18,7 @@ function _resolve_matching_legs(q::TLArray; dir=nothing, itag=nothing, plev=noth
     return legs
 end
 
-function _normalize_legflip_legs(q::TLArray{T, QD}, legs) where {T, QD}
+function _normalize_legflip_legs(q::AbstractTLArray{T, QD}, legs) where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
     isempty(positions) && throw(ArgumentError("legflip requires at least one leg"))
 
@@ -79,11 +79,28 @@ function legflip(q::TLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
     return permutedims(q_flip, perm)
 end
 
+legflip(q::TLArrayContraction, leg::Int) = legflip(materialize(q), leg)
+
+function legflip(q::TLArrayContraction, legs::LegList)
+    q_flip = q
+    for leg in _normalize_legflip_legs(q, legs)
+        q_flip = legflip(q_flip, leg)
+    end
+    return q_flip
+end
+
+function legflip(q::TLArrayContraction; dir=nothing, itag=nothing, plev=nothing,
+                 lock=nothing, rev::Bool=false)
+    legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
+                                  rev=rev, opname="legflip")
+    return legflip(q, legs)
+end
+
 function legflip(q::TLArray{T, QD, N, RD}, legs::LegList) where {T, QD, N, RD}
     positions = _normalize_legflip_legs(q, legs)
     q_flip = q
     for leg in positions
-        q_flip = copy(legflip(q_flip, leg))
+        q_flip = legflip(q_flip, leg)
     end
     return q_flip
 end
@@ -102,7 +119,7 @@ end
 function legflip(q::TLArrayView, legs::LegList)
     q_flip = q
     for leg in _normalize_legflip_legs(q, legs)
-        q_flip = copy(legflip(q_flip, leg))
+        q_flip = legflip(q_flip, leg)
     end
     return q_flip
 end

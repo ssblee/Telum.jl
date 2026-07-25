@@ -499,6 +499,8 @@ end
 
 LinearAlgebra.eigen(q::TLArrayView, args...; kwargs...) =
     eigen(_eager_tlarray(q), args...; kwargs...)
+LinearAlgebra.eigen(q::TLArrayContraction, args...; kwargs...) =
+    eigen(_eager_tlarray(q), args...; kwargs...)
 
 """
     discard_eigen(result::EigenResult, Nkeep, tol, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))

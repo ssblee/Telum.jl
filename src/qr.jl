@@ -1354,3 +1354,5 @@ end
 
 LinearAlgebra.qr(q::TLArrayView, args...; kwargs...) =
     qr(_eager_tlarray(q), args...; kwargs...)
+LinearAlgebra.qr(q::TLArrayContraction, args...; kwargs...) =
+    qr(_eager_tlarray(q), args...; kwargs...)

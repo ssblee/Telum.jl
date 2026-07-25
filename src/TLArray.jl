@@ -540,6 +540,28 @@ struct TLArrayView{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, R
     wmatinfo::Vector{WMatInfo{M}}
 end
 
+struct TLArrayContraction{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} <:
+       AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
+    qlabels::Vector{NTuple{QD, QT}}
+    wmatdata::Vector{Float64}
+    wmatinfo::Vector{WMatInfo{M}}
+    RMTs::Vector{RMT}
+    isdefined::BitVector
+    iszero::BitVector
+    inds::NTuple{QD, TLIndex}
+    spaces::NTuple{QD, Vector{Tuple{QT, Int}}}
+
+    arr1::AbstractTLArray
+    arr2::AbstractTLArray
+    work_items::Vector{NTuple{4, Int}}
+    factors::Vector{Vector{Array{Float64, 3}}}
+    perm1::Vector{Int}
+    perm2::Vector{Int}
+    rmt_sizes::Vector{NTuple{RD, Int}}
+    lock::ReentrantLock
+    reference_depth::Int
+end
+
 function _qlabel_vector(qlabels::AbstractMatrix{QT}, ::Val{QD}) where {QT, QD}
     size(qlabels, 1) == QD ||
         throw(ArgumentError("qlabels row count must equal number of TLArray legs"))
@@ -588,6 +610,10 @@ Base.propertynames(q::TLArray, private::Bool=false) =
     (:qlabels, :wmatdata, :wmatinfo, :RMTs, :isdefined, :iszero, :inds, :spaces)
 Base.propertynames(q::TLArrayView, private::Bool=false) =
     (:arr, :conj, :scale, :perm, :wmatdata, :wmatinfo, :inds, :spaces)
+Base.propertynames(q::TLArrayContraction, private::Bool=false) =
+    (:qlabels, :wmatdata, :wmatinfo, :RMTs, :isdefined, :iszero, :inds, :spaces,
+     :arr1, :arr2, :work_items, :factors, :perm1, :perm2, :rmt_sizes, :lock,
+     :reference_depth)
 
 function Base.getproperty(q::TLArrayView, name::Symbol)
     name === :inds && return inds(q)
@@ -641,6 +667,40 @@ end
 @inline sector_rmt_with_scale(q::TLArray{T}, sector::Int) where {T} =
     (sector_rmt_materialized(q, sector), one(T))
 @inline sector_rmt(q::TLArray, sector::Int) = sector_rmt_materialized(q, sector)
+
+@inline inds(q::TLArrayContraction) = q.inds
+@inline spaces(q::TLArrayContraction) = q.spaces
+@inline sector_count(q::TLArrayContraction) = length(q.qlabels)
+@inline sector_slots(q::TLArrayContraction) = eachindex(q.qlabels)
+@inline nsectors(q::TLArrayContraction) = count(!, q.iszero)
+@inline is_sector_defined(q::TLArrayContraction, sector::Int) = q.isdefined[sector]
+@inline is_sector_zero(q::TLArrayContraction, sector::Int) = q.iszero[sector]
+@inline is_sector_active(q::TLArrayContraction, sector::Int) = !q.iszero[sector]
+@inline sector_qlabel(q::TLArrayContraction, sector::Int, leg::Int) = q.qlabels[sector][leg]
+@inline sector_qlabel(::Type{QT}, q::TLArrayContraction, sector::Int, leg::Int) where {QT} =
+    q.qlabels[sector][leg]::QT
+@inline function sector_wmat(q::TLArrayContraction{T, QD, N, RD, QT, PS, M, RMT}, sector::Int, n::Int) where {T, QD, N, RD, QT, PS, M, RMT}
+    isabelian(symm(q)[n]) && return _trivial_wmat()
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, nonabelian_wmat_slot(PS, n))
+end
+@inline function sector_wmat(q::TLArrayContraction{T, QD, N, RD, QT, PS, M, RMT}, sector::Int, ::Val{n}) where {T, QD, N, RD, QT, PS, M, RMT, n}
+    is_stored_wmat_symmetry(PS, Val(n)) || return _trivial_wmat()
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, nonabelian_wmat_slot(PS, Val(n)))
+end
+@inline function sector_wmat_slot(q::TLArrayContraction, sector::Int, slot::Int)
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, slot)
+end
+@inline function sector_rmt_axis_dim(q::TLArrayContraction, sector::Int, leg::Int)
+    return q.rmt_sizes[sector][leg]
+end
+@inline function sector_rmt_materialized(q::TLArrayContraction, sector::Int)
+    compute_sectors(q, [sector])
+    q.isdefined[sector] || throw(ArgumentError("sector $sector is not evaluated"))
+    return q.RMTs[sector]
+end
+@inline sector_rmt_with_scale(q::TLArrayContraction{T}, sector::Int) where {T} =
+    (sector_rmt_materialized(q, sector), one(T))
+@inline sector_rmt(q::TLArrayContraction, sector::Int) = sector_rmt_materialized(q, sector)
 
 @inline _identity_phys_perm(::Val{QD}) where {QD} = ntuple(identity, Val(QD))
 
@@ -808,6 +868,11 @@ materialize(q::TLArray) = q
 
 materialize(q::TLArrayView) = materialize(q.arr)
 
+function materialize(q::TLArrayContraction)
+    compute_sectors(q, sector_slots(q))
+    return TLArray(symm(q), q.qlabels, q.wmatdata, q.wmatinfo, q.RMTs, q.inds, q.spaces)
+end
+
 _eager_tlarray(q::TLArray) = copy(q)
 
 function _eager_tlarray(q::TLArrayView)
@@ -818,6 +883,8 @@ function _eager_tlarray(q::TLArrayView)
     q.conj && (result = _materialized_conj(result))
     return result
 end
+
+_eager_tlarray(q::TLArrayContraction) = materialize(q)
 
 """
     to_concrete(q::AbstractTLArray) -> TLArray
@@ -1122,7 +1189,16 @@ TLArray(q::TLArrayView{T, QD, N, RD}, inds::NTuple{QD, TLIndex}) where {T, QD, N
 TLArray(q::TLArrayView{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) where {T, QD, N, RD} =
     TLArray(_eager_tlarray(q), itags)
 
+TLArray(q::TLArrayContraction{T, QD, N, RD}, inds::NTuple{QD, TLIndex}) where {T, QD, N, RD} =
+    TLArray(_eager_tlarray(q), inds)
+
+TLArray(q::TLArrayContraction{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) where {T, QD, N, RD} =
+    TLArray(_eager_tlarray(q), itags)
+
 Base.convert(::Type{TLArray}, q::TLArrayView) = _eager_tlarray(q)
+Base.convert(::Type{TLArray}, q::TLArrayContraction) = _eager_tlarray(q)
+Base.convert(::Type{T}, q::TLArrayView) where {T<:TLArray} = convert(T, _eager_tlarray(q))
+Base.convert(::Type{T}, q::TLArrayContraction) where {T<:TLArray} = convert(T, _eager_tlarray(q))
 
 Base.getindex(q::TLArray, i::Int) = TLArray(q, i)
 Base.firstindex(q::AbstractTLArray) = 1
@@ -1205,6 +1281,15 @@ function Base.getindex(q::TLArrayView{T, 0, N, N}) where {T, N}
         rmt = sector_rmt_materialized(q, sector_index)
         @assert length(rmt) == 1 "0D TLArrayView RMT must be a scalar"
         return only(rmt) * _scalar_wmat_product(q, sector_index)
+    else return zero(T) end
+end
+
+function Base.getindex(q::TLArrayContraction{T, 0, N, N}) where {T, N}
+    @assert nsectors(q) <= 1 "0D TLArrayContraction must have zero or one sector"
+    if nsectors(q) == 1
+        sector_index = first(sector for sector in sector_slots(q) if is_sector_active(q, sector))
+        @assert length(sector_rmt(q, sector_index)) == 1 "0D TLArrayContraction RMT must be a scalar"
+        return only(sector_rmt(q, sector_index)) * _scalar_wmat_product(q, sector_index)
     else return zero(T) end
 end
 
@@ -2089,6 +2174,11 @@ _view_arr_legs(q::TLArrayView, legs) = Int[_view_arr_leg(q, leg) for leg in legs
 _view_arr_legs(q::TLArrayView, leg::Integer) = (_view_arr_leg(q, leg),)
 _view_rewrap(q::TLArrayView, arr::AbstractTLArray) =
     _normalize_tlarray_view(arr, q.conj, q.scale, q.perm)
+function _view_rewrap(q::TLArrayView{T, QD}, arr::TLArrayView{T, QD}) where {T, QD}
+    new_perm = ntuple(l -> arr.perm[q.perm[l]], Val(QD))
+    return _normalize_tlarray_view(arr.arr, xor(q.conj, arr.conj),
+                                   q.scale * arr.scale, new_perm)
+end
 
 function Base.lock(q::TLArrayView, leg::Integer; inc::Int=1)
     return _view_rewrap(q, lock(q.arr, _view_arr_leg(q, leg); inc=inc))
@@ -2238,6 +2328,198 @@ function setitag(q::TLArrayView, legs::LegList, tags::AbstractString)
 end
 function setitag(q::TLArrayView, pred::Function, tags::AbstractString)
     return _view_rewrap(q, setitag(q.arr, _view_arr_legs(q, findlegs(q, pred)), tags))
+end
+
+function _contraction_rewrap(q::TLArrayContraction{T, QD, N, RD, QT, PS, M, RMT},
+                             inds::NTuple{QD, TLIndex}) where {T, QD, N, RD, QT, PS, M, RMT}
+    return TLArrayContraction{T, QD, N, RD, QT, PS, M, RMT}(
+        q.qlabels, q.wmatdata, q.wmatinfo, q.RMTs, q.isdefined, q.iszero,
+        inds, q.spaces, q.arr1, q.arr2, q.work_items, q.factors, q.perm1,
+        q.perm2, q.rmt_sizes, q.lock, q.reference_depth)
+end
+
+_contraction_rewrap(q::TLArrayContraction, ref::AbstractTLArray) =
+    _contraction_rewrap(q, inds(ref))
+
+function _modify_lock(q::TLArrayContraction{T, QD}, legs, modify_fn::Function) where {T, QD}
+    new_inds = collect(q.inds)
+    for i in legs
+        idx = new_inds[i]
+        new_inds[i] = TLIndex(idx.itags, idx.dir, idx.plev, modify_fn(idx.lock), idx.dual)
+    end
+    return _contraction_rewrap(q, Tuple(new_inds))
+end
+
+function _modify_plev(q::TLArrayContraction{T, QD}, legs, modify_fn::Function) where {T, QD}
+    new_inds = collect(q.inds)
+    for i in legs
+        idx = new_inds[i]
+        new_inds[i] = TLIndex(idx.itags, idx.dir, modify_fn(idx.plev), idx.lock, idx.dual)
+    end
+    return _contraction_rewrap(q, Tuple(new_inds))
+end
+
+function _modify_itag(q::TLArrayContraction{T, QD}, legs, modify_fn::Function) where {T, QD}
+    new_inds = collect(q.inds)
+    for i in legs
+        idx = new_inds[i]
+        new_inds[i] = TLIndex(modify_fn(idx.itags), idx.dir, idx.plev, idx.lock, idx.dual)
+    end
+    return _contraction_rewrap(q, Tuple(new_inds))
+end
+
+Base.lock(q::TLArrayContraction, leg::Integer; inc::Int=1) =
+    _modify_lock(q, (leg,), lk -> _lock_inc(lk, inc))
+Base.lock(q::TLArrayContraction, legs::LegList; inc::Int=1) =
+    _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
+Base.lock(q::TLArrayContraction, pred::Function; inc::Int=1) =
+    _modify_lock(q, findlegs(q, pred), lk -> _lock_inc(lk, inc))
+function Base.lock(q::TLArrayContraction; inc::Int=1, dir=nothing, itag=nothing,
+                   plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
+end
+
+lockp(q::TLArrayContraction, leg::Integer) = _modify_lock(q, (leg,), _ -> -1)
+lockp(q::TLArrayContraction, legs::LegList) = _modify_lock(q, legs, _ -> -1)
+lockp(q::TLArrayContraction, pred::Function) =
+    _modify_lock(q, findlegs(q, pred), _ -> -1)
+function lockp(q::TLArrayContraction; dir=nothing, itag=nothing, plev=nothing,
+               lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_lock(q, legs, _ -> -1)
+end
+
+Base.unlock(q::TLArrayContraction, leg::Integer) = _modify_lock(q, (leg,), _ -> 0)
+Base.unlock(q::TLArrayContraction, legs::LegList) = _modify_lock(q, legs, _ -> 0)
+Base.unlock(q::TLArrayContraction, pred::Function) =
+    _modify_lock(q, findlegs(q, pred), _ -> 0)
+function Base.unlock(q::TLArrayContraction; dir=nothing, itag=nothing, plev=nothing,
+                     lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_lock(q, legs, _ -> 0)
+end
+
+function prime(q::TLArrayContraction; inc::Int=1, dir=nothing, itag=nothing,
+               plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_plev(q, legs, p -> max(0, p + inc))
+end
+prime(q::TLArrayContraction, leg::Integer; inc::Int=1) =
+    _modify_plev(q, (leg,), p -> max(0, p + inc))
+prime(q::TLArrayContraction, legs::LegList; inc::Int=1) =
+    _modify_plev(q, legs, p -> max(0, p + inc))
+prime(q::TLArrayContraction, pred::Function; inc::Int=1) =
+    _modify_plev(q, findlegs(q, pred), p -> max(0, p + inc))
+
+function setprime(q::TLArrayContraction, n::Int; dir=nothing, itag=nothing,
+                  plev=nothing, lock=nothing, rev::Bool=false)
+    n >= 0 || throw(ArgumentError("prime level must be non-negative, got $n"))
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_plev(q, legs, _ -> n)
+end
+function setprime(q::TLArrayContraction, leg::Integer, n::Int)
+    n >= 0 || throw(ArgumentError("prime level must be non-negative, got $n"))
+    return _modify_plev(q, (leg,), _ -> n)
+end
+function setprime(q::TLArrayContraction, legs, n::Int)
+    n >= 0 || throw(ArgumentError("prime level must be non-negative, got $n"))
+    return _modify_plev(q, legs, _ -> n)
+end
+
+function noprime(q::TLArrayContraction; dir=nothing, itag=nothing, plev=nothing,
+                 lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_plev(q, legs, _ -> 0)
+end
+noprime(q::TLArrayContraction, leg::Integer) = _modify_plev(q, (leg,), _ -> 0)
+noprime(q::TLArrayContraction, legs::LegList) = _modify_plev(q, legs, _ -> 0)
+noprime(q::TLArrayContraction, pred::Function) =
+    _modify_plev(q, findlegs(q, pred), _ -> 0)
+
+function additag(q::TLArrayContraction, newtags::AbstractString; dir=nothing,
+                 itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _add_itag(base, newtags))
+end
+additag(q::TLArrayContraction, leg::Integer, newtags::AbstractString) =
+    _modify_itag(q, (leg,), base -> _add_itag(base, newtags))
+additag(q::TLArrayContraction, legs::LegList, newtags::AbstractString) =
+    _modify_itag(q, legs, base -> _add_itag(base, newtags))
+additag(q::TLArrayContraction, pred::Function, newtags::AbstractString) =
+    _modify_itag(q, findlegs(q, pred), base -> _add_itag(base, newtags))
+
+function removeitag(q::TLArrayContraction, tags::ITagQuerySpec; dir=nothing,
+                    itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _remove_itag(base, tags))
+end
+removeitag(q::TLArrayContraction, leg::Integer, tags::ITagQuerySpec) =
+    _modify_itag(q, (leg,), base -> _remove_itag(base, tags))
+removeitag(q::TLArrayContraction, legs::LegList, tags::ITagQuerySpec) =
+    _modify_itag(q, legs, base -> _remove_itag(base, tags))
+removeitag(q::TLArrayContraction, pred::Function, tags::ITagQuerySpec) =
+    _modify_itag(q, findlegs(q, pred), base -> _remove_itag(base, tags))
+
+function replaceitag(q::TLArrayContraction, replacements::ITagReplacementPair...;
+                     dir=nothing, itag=nothing, plev=nothing, lock=nothing,
+                     rev::Bool=false)
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+function replaceitag(q::TLArrayContraction, replacements::ITagReplacementDict;
+                     dir=nothing, itag=nothing, plev=nothing, lock=nothing,
+                     rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+function replaceitag(q::TLArrayContraction, leg::Integer,
+                     replacements::ITagReplacementPair...)
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    return _modify_itag(q, (leg,), base -> _replace_itag(base, replacements))
+end
+replaceitag(q::TLArrayContraction, leg::Integer,
+            replacements::ITagReplacementDict) =
+    _modify_itag(q, (leg,), base -> _replace_itag(base, replacements))
+function replaceitag(q::TLArrayContraction, legs::LegList,
+                     replacements::ITagReplacementPair...)
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+replaceitag(q::TLArrayContraction, legs::LegList,
+            replacements::ITagReplacementDict) =
+    _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+function replaceitag(q::TLArrayContraction, pred::Function,
+                     replacements::ITagReplacementPair...)
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    return _modify_itag(q, findlegs(q, pred), base -> _replace_itag(base, replacements))
+end
+replaceitag(q::TLArrayContraction, pred::Function,
+            replacements::ITagReplacementDict) =
+    _modify_itag(q, findlegs(q, pred), base -> _replace_itag(base, replacements))
+
+function setitag(q::TLArrayContraction, tags::AbstractString; dir=nothing,
+                 itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, legs, _ -> norm)
+end
+function setitag(q::TLArrayContraction, leg::Integer, tags::AbstractString)
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, (leg,), _ -> norm)
+end
+function setitag(q::TLArrayContraction, legs::LegList, tags::AbstractString)
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, legs, _ -> norm)
+end
+function setitag(q::TLArrayContraction, pred::Function, tags::AbstractString)
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, findlegs(q, pred), _ -> norm)
 end
 
 # ─── Pretty-printing for TLArray ──────────────────────────────────────────────
@@ -2468,6 +2750,15 @@ function LinearAlgebra.norm(q::TLArray{T, QD, N}) where {T, QD, N}
 end
 
 LinearAlgebra.norm(q::TLArrayView) = abs(q.scale) * norm(q.arr)
+
+function LinearAlgebra.norm(q::TLArrayContraction)
+    s = zero(Float64)
+    for sector_index in sector_slots(q)
+        q.iszero[sector_index] && continue
+        s += sum(abs2, sector_rmt(q, sector_index))
+    end
+    return sqrt(s)
+end
 
 function _normalize_oplus_dims(dimensions, QD::Int; sort_dims::Bool=true)
     dims = dimensions isa Integer ? (Int(dimensions),) : Tuple(Int(d) for d in dimensions)
@@ -2937,6 +3228,8 @@ Base.conj(q::AbstractTLArray) = _view_conj(q)
 Base.adjoint(q::AbstractTLArray) = conj(q)
 
 getsub(q::TLArray, selector) = TLArray(q, selector)
+getsub(q::TLArrayContraction, args...; kwargs...) =
+    getsub(materialize(q), args...; kwargs...)
 
 function _normalize_getsub_index(i::Int, dim::Int, sector, leg::Int)
     i == 0 && throw(ArgumentError(
@@ -3483,6 +3776,13 @@ function addSingleton(q::TLArrayView{T, QD}, legs;
     end
     return _normalize_tlarray_view(new_arr, q.conj, q.scale, Tuple(new_perm))
 end
+
+addSingleton(q::TLArrayContraction; nlegs::Integer=1,
+             itag="", plev=0, lock=0, dir='+') =
+    addSingleton(materialize(q); nlegs=nlegs, itag=itag, plev=plev, lock=lock, dir=dir)
+
+addSingleton(q::TLArrayContraction, legs; itag="", plev=0, lock=0, dir='+') =
+    addSingleton(materialize(q), legs; itag=itag, plev=plev, lock=lock, dir=dir)
 
 """
     getvac(q::TLArray, itags::Tuple{Vararg{AbstractString, 2}}=("", "")) -> TLArray

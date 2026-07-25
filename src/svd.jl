@@ -2036,6 +2036,8 @@ function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
 end
 
 svd_cgtsvd(q::TLArray, args...; kwargs...) = svd(q, args...; kwargs...)
+svd_cgtsvd(q::TLArrayContraction, args...; kwargs...) =
+    svd(_eager_tlarray(q), args...; kwargs...)
 
 function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
                     left_tag::AbstractString = "svdL",
@@ -2053,6 +2055,8 @@ function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
 end
 
 LinearAlgebra.svd(q::TLArrayView, args...; kwargs...) =
+    svd(_eager_tlarray(q), args...; kwargs...)
+LinearAlgebra.svd(q::TLArrayContraction, args...; kwargs...) =
     svd(_eager_tlarray(q), args...; kwargs...)
 
 function _normalize_svd_left_legs(left_legs, rank::Int)

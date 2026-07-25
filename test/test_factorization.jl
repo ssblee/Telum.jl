@@ -119,6 +119,17 @@ end
     end
 end
 
+@testset "factorizations accept lazy contraction input" begin
+    q = getLocalSpace(SpinOptions(:SU2, 1))
+    left = TLArray(q.I, ("left", "bond"))
+    right = TLArray(q.S, ("bond", "bond", "right"))
+    lazy = contract(left, (2,), right, (1,))
+
+    @test lazy isa TLArrayContraction
+    @test svd(lazy, (1,)).U isa TLArray
+    @test qr(lazy, (1,)).Q isa TLArray
+end
+
 @testset "qr reconstruction" begin
     q0 = getLocalSpace(SpinOptions(nothing, 1))
     _test_qr_reconstructs(q0.Sz, (1,))
