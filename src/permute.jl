@@ -86,7 +86,7 @@ end
 function _permute_sector_rmt(q::TLArray{T, QD, N, RD}, sector_index::Int,
                              perm::NTuple{QD, Int}) where {T, QD, N, RD}
     rmt_perm = (perm..., ntuple(n -> QD + n, N)...)
-    return permutedims(sector_rmt(q, sector_index), rmt_perm)
+    return first(sector_rmt_permuted(q, sector_index, rmt_perm))
 end
 
 function _permute_wmat_storage(q::TLArray{T, QD, N, RD, QT, PS, M},

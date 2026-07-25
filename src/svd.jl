@@ -1381,7 +1381,7 @@ function _svd_sector_class_matrix!(dest::AbstractMatrix{Tbuf},
                                    right_legs::NTuple{NR, Int},
                                    product_buffer::Matrix{Tbuf},
                                    permute_buffer::Matrix{Tbuf}) where {T, QD, N, RD, QT, PS, NL, NR, Tbuf}
-    rmt = sector_rmt(q, sector_index)
+    rmt = sector_rmt_data(q, sector_index)
     rmt_size = size(rmt)
     phys_dim = prod(rmt_size[i] for i in 1:QD)
     om_dim = prod(rmt_size[QD + n] for n in 1:N)
@@ -1446,7 +1446,7 @@ function _svd_class_side_infos(q::TLArray{T, QD, N, RD, QT, PS},
         row = rows[row_index]
         sig = _svd_row_signature(row, side)
         ri = row.sector_index
-        rmt_size = size(sector_rmt(q, ri))
+        rmt_size = sector_rmt_dim(q, ri)
         phys_dims = ntuple(i -> rmt_size[legs[i]], L)
         om_dims = ntuple(Val(N)) do n
             side === Val(:left) ?
@@ -2036,8 +2036,8 @@ function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
 end
 
 svd_cgtsvd(q::TLArray, args...; kwargs...) = svd(q, args...; kwargs...)
-svd_cgtsvd(q::TLArrayContraction, args...; kwargs...) =
-    svd(_eager_tlarray(q), args...; kwargs...)
+svd_cgtsvd(q::AbstractTLArray, args...; kwargs...) =
+    svd(_dense_work_tlarray(q), args...; kwargs...)
 
 function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
                     left_tag::AbstractString = "svdL",
@@ -2054,10 +2054,8 @@ function LinearAlgebra.svd(q::TLArray{T, QD, N, RD},
     return svd(q, left_legs, left_tag, right_tag; cutoff=cutoff, Nkeep=Nkeep, get_lists=get_lists)
 end
 
-LinearAlgebra.svd(q::TLArrayView, args...; kwargs...) =
-    svd(_eager_tlarray(q), args...; kwargs...)
-LinearAlgebra.svd(q::TLArrayContraction, args...; kwargs...) =
-    svd(_eager_tlarray(q), args...; kwargs...)
+LinearAlgebra.svd(q::AbstractTLArray, args...; kwargs...) =
+    svd(_dense_work_tlarray(q), args...; kwargs...)
 
 function _normalize_svd_left_legs(left_legs, rank::Int)
     legs = collect(Int, left_legs)

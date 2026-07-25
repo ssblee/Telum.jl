@@ -44,7 +44,7 @@ end
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
     contracted = contract(left, (2,), right, (1,); lazy=false)
-    @test Telum.sector_rmt(contracted, 1) ≈ Telum.sector_rmt(q.I, 1) * Telum.sector_rmt(q.Sz, 1)
+    @test Telum.sector_rmt_data(contracted, 1) ≈ Telum.sector_rmt_data(q.I, 1) * Telum.sector_rmt_data(q.Sz, 1)
 
     summed = q.Sz + q.Sz
     @test norm(summed - 2 * q.Sz) < 1e-12
@@ -61,13 +61,17 @@ end
 
     @test lazy isa TLArrayContraction
     @test !Telum.is_sector_defined(lazy, 1)
-    @test Telum.sector_rmt_axis_dim(lazy, 1, 1) == size(Telum.sector_rmt(eager, 1), 1)
+    @test Telum.sector_rmt_axis_dim(lazy, 1, 1) == size(Telum.sector_rmt_data(eager, 1), 1)
+    @test_throws ArgumentError Telum.sector_rmt(lazy, 1)
     @test !Telum.is_sector_defined(lazy, 1)
 
-    materialized = convert(TLArray, lazy)
-    @test materialized isa TLArray
+    materialized = Telum.materialize(lazy)
+    @test materialized === lazy
     @test Telum.is_sector_defined(lazy, 1)
-    @test Telum.sector_rmt(materialized, 1) ≈ Telum.sector_rmt(eager, 1)
+    @test Telum.sector_rmt_data(materialized, 1) ≈ Telum.sector_rmt_data(eager, 1)
+    concrete = copy(lazy)
+    @test concrete isa TLArray
+    @test Telum.sector_rmt_data(concrete, 1) ≈ Telum.sector_rmt_data(eager, 1)
 end
 
 test_contract_tlarrayview_inputs()

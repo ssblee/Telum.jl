@@ -177,7 +177,7 @@ end
     orig_full_rows = rows_for_sector(q, sector_full)
     @test length(full_rows) == length(orig_full_rows)
     for (full_idx, orig_full_idx) in zip(full_rows, orig_full_rows)
-        @test Telum.sector_rmt(q_pred_pairs, full_idx) == Telum.sector_rmt(q, orig_full_idx)
+        @test Telum.sector_rmt_data(q_pred_pairs, full_idx) == Telum.sector_rmt_data(q, orig_full_idx)
     end
 
     # Tuple selectors are applied in the requested order to the selected RMT axis.
@@ -186,9 +186,9 @@ end
     @test length(reorder_rows) == length(orig_reorder_rows)
     reorder_inds = [dim_reorder, 1]
     for (reorder_idx, orig_reorder_idx) in zip(reorder_rows, orig_reorder_rows)
-        orig_rmt = Telum.sector_rmt(q, orig_reorder_idx)
+        orig_rmt = Telum.sector_rmt_data(q, orig_reorder_idx)
         reorder_selector = ntuple(d -> d == leg ? reorder_inds : Colon(), ndims(orig_rmt))
-        @test Telum.sector_rmt(q_pred_pairs, reorder_idx) == orig_rmt[reorder_selector...]
+        @test Telum.sector_rmt_data(q_pred_pairs, reorder_idx) == orig_rmt[reorder_selector...]
     end
 
     # Range selectors are normalized to the same explicit RMT-axis selection.
@@ -197,9 +197,9 @@ end
     range_rows = rows_for_sector(q_range, sector_reorder)
     @test length(range_rows) == length(orig_reorder_rows)
     for (range_idx, orig_reorder_idx) in zip(range_rows, orig_reorder_rows)
-        orig_rmt = Telum.sector_rmt(q, orig_reorder_idx)
+        orig_rmt = Telum.sector_rmt_data(q, orig_reorder_idx)
         range_selector = ntuple(d -> d == leg ? [1, 2] : Colon(), ndims(orig_rmt))
-        @test Telum.sector_rmt(q_range, range_idx) == orig_rmt[range_selector...]
+        @test Telum.sector_rmt_data(q_range, range_idx) == orig_rmt[range_selector...]
     end
 
     # Negative indices follow Julia indexing from the end of the multiplicity axis.
@@ -208,9 +208,9 @@ end
     @test q_negative.spaces[leg] == [(sector_reorder, 1)]
     @test length(negative_rows) == length(orig_reorder_rows)
     for (negative_idx, orig_reorder_idx) in zip(negative_rows, orig_reorder_rows)
-        orig_rmt = Telum.sector_rmt(q, orig_reorder_idx)
+        orig_rmt = Telum.sector_rmt_data(q, orig_reorder_idx)
         negative_selector = ntuple(d -> d == leg ? [dim_reorder] : Colon(), ndims(orig_rmt))
-        @test Telum.sector_rmt(q_negative, negative_idx) == orig_rmt[negative_selector...]
+        @test Telum.sector_rmt_data(q_negative, negative_idx) == orig_rmt[negative_selector...]
     end
 
     # Mixed negative and positive selectors should preserve the explicit order.
@@ -219,9 +219,9 @@ end
     @test q_mixed.spaces[leg] == [(sector_reorder, 2)]
     @test length(mixed_rows) == length(orig_reorder_rows)
     for (mixed_idx, orig_reorder_idx) in zip(mixed_rows, orig_reorder_rows)
-        orig_rmt = Telum.sector_rmt(q, orig_reorder_idx)
+        orig_rmt = Telum.sector_rmt_data(q, orig_reorder_idx)
         mixed_selector = ntuple(d -> d == leg ? [dim_reorder, 1] : Colon(), ndims(orig_rmt))
-        @test Telum.sector_rmt(q_mixed, mixed_idx) == orig_rmt[mixed_selector...]
+        @test Telum.sector_rmt_data(q_mixed, mixed_idx) == orig_rmt[mixed_selector...]
     end
 
     # Returning nothing for every sector drops all payloads and clears only the
@@ -334,9 +334,9 @@ end
     end
     @test length(_test_defined_sector_indices(q_multi_sliced)) == length(expected_rows)
     for (sliced_idx, orig_idx) in zip(_test_defined_sector_indices(q_multi_sliced), expected_rows)
-        orig_rmt = Telum.sector_rmt(q, orig_idx)
+        orig_rmt = Telum.sector_rmt_data(q, orig_idx)
         slice_selector = ntuple(d -> d in legs ? [1] : Colon(), ndims(orig_rmt))
-        @test Telum.sector_rmt(q_multi_sliced, sliced_idx) == orig_rmt[slice_selector...]
+        @test Telum.sector_rmt_data(q_multi_sliced, sliced_idx) == orig_rmt[slice_selector...]
     end
 
     q_multi_preserved = Telum.getsub(q, legs, pred; preserve_space=true)

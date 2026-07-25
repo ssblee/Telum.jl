@@ -59,7 +59,7 @@ function _assert_zero_sector_constructor_state(q::TLArray)
     RMTs = Vector{eltype(q.RMTs)}(undef, Telum.sector_count(q) + 1)
     for sector_index in Telum.sector_slots(q)
         q.iszero[sector_index] && continue
-        RMTs[sector_index] = deepcopy(Telum.sector_rmt(q, sector_index))
+        RMTs[sector_index] = deepcopy(Telum.sector_rmt_data(q, sector_index))
     end
 
     with_zero = TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, q.spaces)
@@ -72,7 +72,7 @@ function _assert_zero_sector_constructor_state(q::TLArray)
     wmatinfo_with_extra = copy(q.wmatinfo)
     _append_sector_wmat_info!(wmatdata_with_extra, wmatinfo_with_extra, q, 1)
     RMTs_bad = copy(RMTs)
-    zero_rmt = deepcopy(Telum.sector_rmt(q, 1))
+    zero_rmt = deepcopy(Telum.sector_rmt_data(q, 1))
     fill!(zero_rmt, zero(eltype(zero_rmt)))
     RMTs_bad[end] = zero_rmt
     with_zero_rmt = TLArray(symm(q), qlabels, wmatdata_with_extra, wmatinfo_with_extra,
@@ -154,7 +154,7 @@ end
         sorted = Telum.sort_sectors(q)
         _assert_qlabel_storage(sorted)
         @test sorted !== q
-        @test Telum.sector_rmt(sorted, 1) !== Telum.sector_rmt(q, 1)
+        @test Telum.sector_rmt_data(sorted, 1) !== Telum.sector_rmt_data(q, 1)
     end
 
     @testset "internal TLArrayView materialization" begin
@@ -163,20 +163,20 @@ end
 
         vp = Telum._view_permutedims(q, (2, 1, 3))
         @test vp isa TLArrayView
-        @test Telum.materialize(vp) === q
+        @test Telum.materialize(vp) === vp
         @test norm(copy(vp) - permutedims(q, (2, 1, 3))) < 1e-10
 
         vc = Telum._view_conj(q)
         @test vc isa TLArrayView
-        @test Telum.materialize(vc) === q
+        @test Telum.materialize(vc) === vc
         @test norm(copy(vc) - conj(q)) < 1e-10
 
         vs = Telum._view_scale(q, 2.0)
         @test vs isa TLArrayView
-        rmt, alpha = Telum.sector_rmt_with_scale(vs, active)
-        @test rmt === Telum.sector_rmt(q, active)
+        rmt, alpha = Telum.sector_rmt(vs, active)
+        @test rmt === Telum.sector_rmt_data(q, active)
         @test alpha == 2.0
-        @test Telum.materialize(vs) === q
+        @test Telum.materialize(vs) === vs
         @test norm(copy(vs) - q * 2.0) < 1e-10
 
         z = Telum._view_scale(q, 0.0)

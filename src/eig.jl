@@ -187,7 +187,7 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT, PS, M, RMT},
         isempty(idxs) && continue
 
         idxs_sorted = sort(idxs)
-        rmt = sector_rmt(template, sector_index)
+        rmt = sector_rmt_data(template, sector_index)
         s1, s2 = size(rmt, 1), size(rmt, 2)
         rmt_new = if mode == :diag
             if rmt isa DiagRMT
@@ -334,7 +334,7 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
             for n in 1:N)
         cgt_scale = sqrt(Float64(cgt_dim))
 
-        rmt = sector_rmt(q, sector_index)
+        rmt = sector_rmt_data(q, sector_index)
         sL, sR = size(rmt, 1), size(rmt, 2)
         @assert sL == sR "eigen: RMT must be square for eigendecomposition, got ($sL, $sR)"
 
@@ -418,7 +418,7 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
             for n in 1:N)
         cgt_scale = sqrt(Float64(cgt_dim))
 
-        rmt = sector_rmt(q, sector_index)
+        rmt = sector_rmt_data(q, sector_index)
         sL, sR = size(rmt, 1), size(rmt, 2)
         @assert sL == sR "eigen_general: RMT must be square"
 
@@ -497,10 +497,8 @@ function LinearAlgebra.eigen(q::TLArray{T, 2, N, RD},
     return use_hermitian ? _eigen_hermitian(q_work, eig_tag) : _eigen_general(q_work, eig_tag)
 end
 
-LinearAlgebra.eigen(q::TLArrayView, args...; kwargs...) =
-    eigen(_eager_tlarray(q), args...; kwargs...)
-LinearAlgebra.eigen(q::TLArrayContraction, args...; kwargs...) =
-    eigen(_eager_tlarray(q), args...; kwargs...)
+LinearAlgebra.eigen(q::AbstractTLArray, args...; kwargs...) =
+    eigen(_dense_work_tlarray(q), args...; kwargs...)
 
 """
     discard_eigen(result::EigenResult, Nkeep, tol, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))

@@ -925,7 +925,7 @@ function _qr_class_side_infos(q::TLArray{T, QD, N, RD, QT, PS},
         row = rows[row_index]
         sig = _qr_row_signature(row, side)
         ri = row.sector_index
-        rmt_size = size(sector_rmt(q, ri))
+        rmt_size = sector_rmt_dim(q, ri)
         phys_dims = ntuple(i -> rmt_size[legs[i]], L)
         om_dims = ntuple(Val(N)) do n
             side === Val(:left) ?
@@ -997,7 +997,7 @@ function _qr_sector_class_matrix!(dest::AbstractMatrix{Tbuf},
                                   right_legs::NTuple{NR, Int},
                                   product_buffer::Matrix{Tbuf},
                                   permute_buffer::Matrix{Tbuf}) where {T, QD, N, RD, QT, PS, NL, NR, Tbuf}
-    rmt = sector_rmt(q, sector_index)
+    rmt = sector_rmt_data(q, sector_index)
     rmt_size = size(rmt)
     phys_dim = prod(rmt_size[i] for i in 1:QD)
     om_dim = prod(rmt_size[QD + n] for n in 1:N; init=1)
@@ -1352,7 +1352,5 @@ function LinearAlgebra.qr(q::TLArray{T, QD, N, RD},
     return qr(q, left_legs, bond_tag)
 end
 
-LinearAlgebra.qr(q::TLArrayView, args...; kwargs...) =
-    qr(_eager_tlarray(q), args...; kwargs...)
-LinearAlgebra.qr(q::TLArrayContraction, args...; kwargs...) =
-    qr(_eager_tlarray(q), args...; kwargs...)
+LinearAlgebra.qr(q::AbstractTLArray, args...; kwargs...) =
+    qr(_dense_work_tlarray(q), args...; kwargs...)

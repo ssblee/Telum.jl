@@ -290,7 +290,7 @@ function prepared_sector_rmt(q::TLArray{T},
                              ::Val{NF},
                              ::Val{CN},
                              ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt_with_scale(q, idx)
+    rmt, alpha = sector_rmt(q, idx)
     return _permuted_rmt_data(rmt, perm, Val(NF), Val(CN), Val(N)), alpha
 end
 
@@ -300,7 +300,7 @@ function prepared_sector_rmt(q::TLArrayContraction{T},
                              ::Val{NF},
                              ::Val{CN},
                              ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt_with_scale(q, idx)
+    rmt, alpha = sector_rmt(q, idx)
     return _permuted_rmt_data(rmt, perm, Val(NF), Val(CN), Val(N)), alpha
 end
 
@@ -329,9 +329,9 @@ end
     return ntuple(pos -> perm[pos] <= QD ? q.perm[perm[pos]] : perm[pos], Val(RD))
 end
 
-@inline _layout_source_rmt(q::TLArray, sector::Int) = sector_rmt(q, sector)
-@inline _layout_source_rmt(q::TLArrayContraction, sector::Int) = sector_rmt(q, sector)
-@inline _layout_source_rmt(q::TLArrayView, sector::Int) = sector_rmt(q.arr, sector)
+@inline _layout_source_rmt(q::TLArray, sector::Int) = sector_rmt_data(q, sector)
+@inline _layout_source_rmt(q::TLArrayContraction, sector::Int) = sector_rmt_data(q, sector)
+@inline _layout_source_rmt(q::TLArrayView, sector::Int) = sector_rmt_data(q.arr, sector)
 
 @inline _stream_conj_requires_buffer(q::TLArray{T}) where {T} = false
 @inline _stream_conj_requires_buffer(q::TLArrayContraction{T}) where {T} = false
@@ -388,11 +388,10 @@ function _prepared_rmt_storage_size(q::AbstractTLArray{T, QD, N, RD},
 end
 
 @inline _sector_rmt_size(q::TLArray{T, QD, N, RD}, sector::Int) where {T, QD, N, RD} =
-    size(sector_rmt(q, sector))::NTuple{RD, Int}
+    sector_rmt_dim(q, sector)::NTuple{RD, Int}
 
 @inline function _sector_rmt_size(q::TLArrayView{T, QD, N, RD}, sector::Int) where {T, QD, N, RD}
-    source_size = _sector_rmt_size(q.arr, sector)
-    return ntuple(i -> i <= QD ? source_size[q.perm[i]] : source_size[i], Val(RD))
+    return sector_rmt_dim(q, sector)::NTuple{RD, Int}
 end
 
 @inline _sector_rmt_size(q::TLArrayContraction{T, QD, N, RD}, sector::Int) where {T, QD, N, RD} =
@@ -436,7 +435,7 @@ function _prepare_sector_rmt_into!(buffer::Vector{T},
                                    ::Val{NF},
                                    ::Val{CN},
                                    ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt_with_scale(q, idx)
+    rmt, alpha = sector_rmt(q, idx)
     kept_sizes, contracted_sizes, om_sizes =
         _rmt_layout_sizes(rmt, perm, Val(NF), Val(CN), Val(N))
     out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
@@ -457,7 +456,7 @@ function _prepare_sector_rmt_into!(buffer::Vector{T},
                                    ::Val{NF},
                                    ::Val{CN},
                                    ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt_with_scale(q, idx)
+    rmt, alpha = sector_rmt(q, idx)
     kept_sizes, contracted_sizes, om_sizes =
         _rmt_layout_sizes(rmt, perm, Val(NF), Val(CN), Val(N))
     out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
@@ -479,7 +478,7 @@ function _prepare_sector_rmt_into!(buffer::Vector{T},
                                    ::Val{CN},
                                    ::Val{N}) where {T, QD, RD, NF, CN, N}
     source_perm = _effective_rmt_perm(q, perm, Val(RD))
-    rmt, alpha = sector_rmt_with_scale(q.arr, idx)
+    rmt, alpha = sector_rmt(q.arr, idx)
     kept_sizes, contracted_sizes, om_sizes =
         _rmt_layout_sizes(rmt, source_perm, Val(NF), Val(CN), Val(N))
     out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
@@ -2016,7 +2015,11 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
     q = _contract_lazy(q1, legs1, q2, legs2;
                        reduce_lock=reduce_lock,
                        verify_legs=verify_legs)
-    return lazy ? q : materialize(q)
+    if lazy
+        return q
+    end
+    compute_sectors(q, sector_slots(q))
+    return TLArray(symm(q), q.qlabels, q.wmatdata, q.wmatinfo, q.RMTs, q.inds, q.spaces)
 end
 
 # ── Main lazy-contraction constructor ─────────────────────────────────────────

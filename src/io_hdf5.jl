@@ -246,7 +246,7 @@ function _read_wmat_storage(parent, sector_count::Int, ::Val{M}) where {M}
     return Vector{Float64}(read(g["data"])), _decode_wmatinfo(read(g["info"]), sector_count, Val(M))
 end
 
-function _validate_eager_tlarray_for_hdf5(q::TLArray)
+function _validate_concrete_tlarray_for_hdf5(q::TLArray)
     sector_count = length(q.qlabels)
     length(q.RMTs) == sector_count && length(q.isdefined) == sector_count &&
         length(q.iszero) == sector_count ||
@@ -415,7 +415,7 @@ function _read_sector_metadata(parent, symmetries, ::Val{QD}) where {QD}
 end
 
 function _write_tlarray_group!(h5, name::AbstractString, q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) where {T, QD, N, RD, QT, PS, M, RMT}
-    _validate_eager_tlarray_for_hdf5(q)
+    _validate_concrete_tlarray_for_hdf5(q)
     haskey(h5, name) && throw(ArgumentError("HDF5 object $name already exists"))
 
     _h5_set_attr!(h5, "telum_hdf5_schema_version", _TLARRAY_HDF5_SCHEMA_VERSION)
@@ -454,12 +454,8 @@ end
 save_tlarray(h5, name::AbstractString, q::TLArray) =
     _write_tlarray_group!(h5, name, q)
 
-_hdf5_concrete_tlarray(q::TLArray) = q
-_hdf5_concrete_tlarray(q::TLArrayView) = _eager_tlarray(q)
-_hdf5_concrete_tlarray(q::AbstractTLArray) = _eager_tlarray(materialize(q))
-
 function save_tlarray(h5, name::AbstractString, q::AbstractTLArray)
-    concrete = _hdf5_concrete_tlarray(q)
+    concrete = to_concrete(q)
     return save_tlarray(h5, name, concrete)
 end
 

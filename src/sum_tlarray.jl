@@ -120,7 +120,7 @@ end
 @inline _sum_scale(::Type{T}, alpha) where {T} = convert(T, alpha)
 
 @inline function _sum_processed_rmt_dims(q::TLArray, sector::Int, ::Val{RD}) where {RD}
-    return size(sector_rmt_materialized(q, sector))
+    return sector_rmt_dim(q, sector)
 end
 
 @inline function _sum_processed_rmt_dims(q::TLArrayContraction, sector::Int, ::Val{RD}) where {RD}
@@ -128,19 +128,18 @@ end
 end
 
 function _sum_processed_rmt_dims(q::TLArrayView{T, QD}, sector::Int, ::Val{RD}) where {T, QD, RD}
-    source_dims = size(sector_rmt_materialized(q.arr, sector))
-    return ntuple(d -> d <= QD ? source_dims[q.perm[d]] : source_dims[d], Val(RD))
+    return sector_rmt_dim(q, sector)
 end
 
 @inline function _sum_reference_safe(q::TLArray{T, QD, N, RD}, sector::Int, ::Type{T}) where {T, QD, N, RD}
-    rmt = sector_rmt_materialized(q, sector)
+    rmt = sector_rmt_data(q, sector)
     return rmt isa Array{T, RD} || rmt isa DiagRMT
 end
 
 @inline _sum_reference_safe(q::TLArray, sector::Int, ::Type{T}) where {T} = false
 
 @inline function _sum_reference_safe(q::TLArrayContraction{T, QD, N, RD}, sector::Int, ::Type{T}) where {T, QD, N, RD}
-    rmt = sector_rmt_materialized(q, sector)
+    rmt = sector_rmt_data(q, sector)
     return rmt isa Array{T, RD}
 end
 
@@ -247,7 +246,7 @@ function _sum_copy_scaled!(dest::Array{T, RD}, source::AbstractArray, scale) whe
 end
 
 function _sum_copy_processed_unscaled!(dest, q::TLArray, sector::Int, ::Type{T}) where {T}
-    source = sector_rmt_materialized(q, sector)
+    source = sector_rmt_data(q, sector)
     @inbounds for I in CartesianIndices(dest)
         dest[I] = source[I]
     end
@@ -255,14 +254,7 @@ function _sum_copy_processed_unscaled!(dest, q::TLArray, sector::Int, ::Type{T})
 end
 
 function _sum_copy_processed_unscaled!(dest, q::TLArrayView{T, QD, N, RD}, sector::Int, ::Type{RT}) where {T, QD, N, RD, RT}
-    source, _ = sector_rmt_with_scale(q.arr, sector)
-    invperm = _phys_to_stored_order(q.perm)
-    @inbounds for I in CartesianIndices(dest)
-        source_I = ntuple(d -> d <= QD ? I[invperm[d]] : I[d], Val(RD))
-        value = source[source_I...]
-        q.conj && (value = conj(value))
-        dest[I] = value
-    end
+    sector_rmt_permuted!(dest, q, sector, _identity_rmt_perm(Val(RD)))
     return dest
 end
 
@@ -271,7 +263,7 @@ function _sum_sector_scale(q::TLArray{T}, sector::Int, ::Type{RT}) where {T, RT}
 end
 
 function _sum_sector_scale(q::TLArrayView, sector::Int, ::Type{RT}) where {RT}
-    _, alpha = sector_rmt_with_scale(q.arr, sector)
+    _, alpha = sector_rmt(q.arr, sector)
     scale = alpha * q.scale
     q.conj && (scale = conj(scale))
     return _sum_scale(RT, scale)
@@ -285,7 +277,7 @@ function _sum_prepare_sector_rmt!(buffers::Vector{Vector{T}},
                                   ::Type{T},
                                   ::Val{RD}) where {T, RD}
     if !_sum_needs_buffer(q, sector, T)
-        rmt, alpha = sector_rmt_with_scale(q, sector)
+        rmt, alpha = sector_rmt(q, sector)
         return rmt, _sum_scale(T, alpha), false
     end
 
@@ -295,7 +287,7 @@ function _sum_prepare_sector_rmt!(buffers::Vector{Vector{T}},
     @assert len <= length(buffers[input_index])
     workspace = reshape(view(buffers[input_index], 1:len), dims)
     _sum_copy_processed_unscaled!(workspace, q, sector, T)
-    return workspace, _sum_sector_scale(q, sector, T), true
+    return workspace, q isa TLArrayView ? one(T) : _sum_sector_scale(q, sector, T), true
 end
 
 function _sum_single_contribution!(result_keys::Vector{NTuple{QD, QT}},
@@ -618,6 +610,14 @@ end
 function _sum_tlarrays_aligned(qs, ::Type{T}, ::Val{QD}, ::Val{N}, ::Type{QT}, ::Type{PS},
                                ::Val{M}, ::Val{RD}) where {T, QD, N, RD, QT, PS, M}
     table, unique_count = _sum_sector_table(qs, QT, Val(QD))
+    requested = [Int[] for _ in eachindex(qs)]
+    for (_, input_index, sector_index) in table
+        push!(requested[input_index], sector_index)
+    end
+    for input_index in eachindex(qs)
+        isempty(requested[input_index]) && continue
+        compute_sectors(qs[input_index], requested[input_index])
+    end
     result_keys = Vector{NTuple{QD, QT}}()
     result_wmatdata = Vector{Float64}(undef, _sum_wmat_arena_size_upper_bound(qs, table, Val(M)))
     result_wmatinfo = Vector{WMatInfo{M}}()

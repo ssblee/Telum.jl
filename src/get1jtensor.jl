@@ -1,4 +1,4 @@
-get1jtensor(q::TLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
+get1jtensor(q::AbstractTLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD} =
 get1jtensor(leginfo(q, leg))
 
 function _resolve_unique_leg(q::AbstractTLArray; dir=nothing, itag=nothing, plev=nothing,
@@ -31,7 +31,7 @@ function _normalize_legflip_legs(q::AbstractTLArray{T, QD}, legs) where {T, QD}
     return positions
 end
 
-function get1jtensor(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
+function get1jtensor(q::AbstractTLArray; dir=nothing, itag=nothing, plev=nothing,
                      lock=nothing, rev::Bool=false)
     leg = _resolve_unique_leg(q; dir=dir, itag=itag, plev=plev, lock=lock,
                               rev=rev, opname="get1jtensor")
@@ -79,7 +79,13 @@ function legflip(q::TLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
     return permutedims(q_flip, perm)
 end
 
-legflip(q::TLArrayContraction, leg::Int) = legflip(materialize(q), leg)
+function legflip(q::TLArrayContraction{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
+    1 <= leg <= QD || throw(BoundsError(q, leg))
+    j = get1jtensor(q, leg)
+    q_flip = contract(q, (leg,), j, (1,); reduce_lock=false)
+    perm = (ntuple(i -> i, leg - 1)..., QD, ntuple(i -> leg - 1 + i, QD - leg)...)
+    return permutedims(q_flip, perm)
+end
 
 function legflip(q::TLArrayContraction, legs::LegList)
     q_flip = q

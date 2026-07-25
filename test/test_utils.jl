@@ -205,7 +205,7 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
         # RMT shape: (s_1, ..., s_QD, M_1, ..., M_N)  →  (s_1, ..., s_QD, chi)
         # Julia column-major reshape: M_1 varies fastest, consistent with how
         # _leg_kron built up the bond dimension in cgt_block.
-        rmt = Array(Telum.sector_rmt(q, sector_index))
+        rmt = Array(Telum.sector_rmt_data(q, sector_index))
         rmt_merged = reshape(rmt, size(rmt)[1:QD]..., chi)
 
         # ── Step 3b: Σ_i kron(CGT[:,...,:,i], RMT[:,...,:,i]) ────────────────
@@ -228,10 +228,10 @@ end
 to_sparse_array(q::TLArray) = to_sparse_array(q, eltype(q))
 
 to_sparse_array(q::TLArrayView, ::Type{FT} = Float64) where {FT} =
-    to_sparse_array(Telum._eager_tlarray(q), FT)
+    to_sparse_array(Telum.to_concrete(q), FT)
 to_sparse_array(q::TLArrayView) = to_sparse_array(q, eltype(q))
 to_sparse_array(q::TLArrayContraction, ::Type{FT} = Float64) where {FT} =
-    to_sparse_array(Telum._eager_tlarray(q), FT)
+    to_sparse_array(Telum.to_concrete(q), FT)
 to_sparse_array(q::TLArrayContraction) = to_sparse_array(q, eltype(q))
 
 function _test_contract_matches_sparse_and_preserves_inputs(a::TLArray,
@@ -449,7 +449,7 @@ function _test_tlarrays_same_sector_storage(a::TLArray, b::TLArray)
     @test a.spaces == b.spaces
     for sector_index in intersect(Telum.sector_slots(a), Telum.sector_slots(b))
         (a.iszero[sector_index] || b.iszero[sector_index]) && continue
-        @test Array(Telum.sector_rmt(a, sector_index)) ≈ Array(Telum.sector_rmt(b, sector_index))
+        @test Array(Telum.sector_rmt_data(a, sector_index)) ≈ Array(Telum.sector_rmt_data(b, sector_index))
         for n in 1:length(symm(a))
             @test Telum.sector_wmat(a, sector_index, n) ≈ Telum.sector_wmat(b, sector_index, n)
         end
@@ -457,7 +457,7 @@ function _test_tlarrays_same_sector_storage(a::TLArray, b::TLArray)
 end
 
 function _test_tlarrays_same_sector_storage(a::AbstractTLArray, b::AbstractTLArray)
-    return _test_tlarrays_same_sector_storage(Telum._eager_tlarray(a), Telum._eager_tlarray(b))
+    return _test_tlarrays_same_sector_storage(Telum.to_concrete(a), Telum.to_concrete(b))
 end
 
 function _test_tlarrays_same_sector_payloads(a::TLArray, b::TLArray)
@@ -466,7 +466,7 @@ function _test_tlarrays_same_sector_payloads(a::TLArray, b::TLArray)
     @test a.isdefined == b.isdefined
     for sector_index in intersect(Telum.sector_slots(a), Telum.sector_slots(b))
         (a.iszero[sector_index] || b.iszero[sector_index]) && continue
-        @test Array(Telum.sector_rmt(a, sector_index)) ≈ Array(Telum.sector_rmt(b, sector_index))
+        @test Array(Telum.sector_rmt_data(a, sector_index)) ≈ Array(Telum.sector_rmt_data(b, sector_index))
         for n in 1:length(symm(a))
             @test Telum.sector_wmat(a, sector_index, n) ≈ Telum.sector_wmat(b, sector_index, n)
         end

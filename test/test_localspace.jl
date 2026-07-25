@@ -58,29 +58,29 @@ end
     @test typeof(spin.I).parameters[6] === ProductSymm{Tuple{}}
     @test spin.I.qlabels == [((), ())]
     @test spin.I.spaces == ([(() , 2)], [(() , 2)])
-    @test Telum.sector_rmt(spin.I, 1) ≈ Matrix{Float64}(I, 2, 2)
-    @test Telum.sector_rmt(spin.Sz, 1) ≈ [0.5 0.0; 0.0 -0.5]
-    @test Telum.sector_rmt(spin.Sp, 1) ≈ (-1 / sqrt(2)) * [0.0 1.0; 0.0 0.0]
-    @test Telum.sector_rmt(spin.Sm, 1) ≈ (1 / sqrt(2)) * [0.0 0.0; 1.0 0.0]
+    @test Telum.sector_rmt_data(spin.I, 1) ≈ Matrix{Float64}(I, 2, 2)
+    @test Telum.sector_rmt_data(spin.Sz, 1) ≈ [0.5 0.0; 0.0 -0.5]
+    @test Telum.sector_rmt_data(spin.Sp, 1) ≈ (-1 / sqrt(2)) * [0.0 1.0; 0.0 0.0]
+    @test Telum.sector_rmt_data(spin.Sm, 1) ≈ (1 / sqrt(2)) * [0.0 0.0; 1.0 0.0]
 
     fermion = getLocalSpace(FermionOptions(1, nothing, nothing))
     @test symm(fermion.I) == ()
     @test typeof(fermion.I).parameters[6] === ProductSymm{Tuple{}}
     @test fermion.I.qlabels == [((), ())]
     @test fermion.I.spaces == ([(() , 2)], [(() , 2)])
-    @test Telum.sector_rmt(fermion.I, 1) ≈ Matrix{Float64}(I, 2, 2)
-    @test size(Telum.sector_rmt(fermion.F, 1)) == (2, 2)
-    @test size(Telum.sector_rmt(fermion.Z, 1)) == (2, 2)
+    @test Telum.sector_rmt_data(fermion.I, 1) ≈ Matrix{Float64}(I, 2, 2)
+    @test size(Telum.sector_rmt_data(fermion.F, 1)) == (2, 2)
+    @test size(Telum.sector_rmt_data(fermion.Z, 1)) == (2, 2)
 
     spinful = getLocalSpace(FermionSOptions(1, nothing, nothing, nothing))
     @test symm(spinful.I) == ()
     @test typeof(spinful.I).parameters[6] === ProductSymm{Tuple{}}
     @test spinful.I.qlabels == [((), ())]
     @test spinful.I.spaces == ([(() , 4)], [(() , 4)])
-    @test Telum.sector_rmt(spinful.I, 1) ≈ Matrix{Float64}(I, 4, 4)
-    @test size(Telum.sector_rmt(spinful.Fu, 1)) == (4, 4)
-    @test size(Telum.sector_rmt(spinful.Fd, 1)) == (4, 4)
-    @test size(Telum.sector_rmt(spinful.Z, 1)) == (4, 4)
+    @test Telum.sector_rmt_data(spinful.I, 1) ≈ Matrix{Float64}(I, 4, 4)
+    @test size(Telum.sector_rmt_data(spinful.Fu, 1)) == (4, 4)
+    @test size(Telum.sector_rmt_data(spinful.Fd, 1)) == (4, 4)
+    @test size(Telum.sector_rmt_data(spinful.Z, 1)) == (4, 4)
 end
 
 struct NonCommutingSymmetryOptions <: LocalSpaceOptions end
