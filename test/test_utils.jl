@@ -4,6 +4,11 @@ using Test
 const change_dir = Telum.change_dir
 ⊗(a, b) = kron(b, a)
 
+function _test_sector_rmt(q::AbstractTLArray, sector::Int)
+    rmt, scale = Telum.sector_rmt(q, sector)
+    scale == one(typeof(scale)) && return rmt
+    return scale .* rmt
+end
 
 
 # ─── _leg_kron ────────────────────────────────────────────────────────────────
@@ -205,7 +210,7 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
         # RMT shape: (s_1, ..., s_QD, M_1, ..., M_N)  →  (s_1, ..., s_QD, chi)
         # Julia column-major reshape: M_1 varies fastest, consistent with how
         # _leg_kron built up the bond dimension in cgt_block.
-        rmt = Array(Telum.sector_rmt_data(q, sector_index))
+        rmt = Array(_test_sector_rmt(q, sector_index))
         rmt_merged = reshape(rmt, size(rmt)[1:QD]..., chi)
 
         # ── Step 3b: Σ_i kron(CGT[:,...,:,i], RMT[:,...,:,i]) ────────────────
@@ -449,7 +454,7 @@ function _test_tlarrays_same_sector_storage(a::TLArray, b::TLArray)
     @test a.spaces == b.spaces
     for sector_index in intersect(Telum.sector_slots(a), Telum.sector_slots(b))
         (a.iszero[sector_index] || b.iszero[sector_index]) && continue
-        @test Array(Telum.sector_rmt_data(a, sector_index)) ≈ Array(Telum.sector_rmt_data(b, sector_index))
+        @test Array(_test_sector_rmt(a, sector_index)) ≈ Array(_test_sector_rmt(b, sector_index))
         for n in 1:length(symm(a))
             @test Telum.sector_wmat(a, sector_index, n) ≈ Telum.sector_wmat(b, sector_index, n)
         end
@@ -466,7 +471,7 @@ function _test_tlarrays_same_sector_payloads(a::TLArray, b::TLArray)
     @test a.isdefined == b.isdefined
     for sector_index in intersect(Telum.sector_slots(a), Telum.sector_slots(b))
         (a.iszero[sector_index] || b.iszero[sector_index]) && continue
-        @test Array(Telum.sector_rmt_data(a, sector_index)) ≈ Array(Telum.sector_rmt_data(b, sector_index))
+        @test Array(_test_sector_rmt(a, sector_index)) ≈ Array(_test_sector_rmt(b, sector_index))
         for n in 1:length(symm(a))
             @test Telum.sector_wmat(a, sector_index, n) ≈ Telum.sector_wmat(b, sector_index, n)
         end

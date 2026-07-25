@@ -95,7 +95,7 @@ end
 
 function _qr_symmetry_stored_leg_order(
     ::Type{QT},
-    q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+    q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
     sector_index::Int,
     ::Val{n},
 ) where {T, QD, N, RD, QT, PS, M, RMT, n}
@@ -125,13 +125,13 @@ function _qr_symmetry_stored_leg_order(
 end
 
 @inline _qr_physical_qlabel_key(::Type{QT},
-                                q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                 sector_index::Int,
                                 ::Val{n}) where {T, QD, N, RD, QT, PS, M, RMT, n} =
     ntuple(leg -> sector_qlabel(QT, q, sector_index, leg)[n], Val(QD))
 
 @inline _qr_physical_product_key(::Type{QT},
-                                 q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                 q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                  sector_index::Int) where {T, QD, N, RD, QT, PS, M, RMT} =
     ntuple(leg -> sector_qlabel(QT, q, sector_index, leg), Val(QD))
 
@@ -240,7 +240,7 @@ end
 
 @generated function _qr_cgtqr_row_keys(::Type{PS},
                                        ::Type{QT},
-                                       q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                       q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                        sector_index::Int,
                                        ::Val{M}) where {T, QD, N, RD, QT, PS<:ProductSymm, M, RMT}
     exprs = Expr[]
@@ -307,7 +307,7 @@ end
     return Expr(:tuple, exprs...)
 end
 
-_new_qr_irrepdim_caches(::TLArray{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
+_new_qr_irrepdim_caches(::AbstractTLArray{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
     _new_qr_irrepdim_caches(PS, QT)
 
 function _qr_irrep_dimension(::Type{S}, qlabel, cache) where {S<:NonabelianSymm}
@@ -408,7 +408,7 @@ end
     return Expr(:tuple, exprs...)
 end
 
-_new_cgtqr_caches(::TLArray{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
+_new_cgtqr_caches(::AbstractTLArray{T, QD, N, RD, QT, PS}) where {T, QD, N, RD, QT, PS} =
     _new_cgtqr_caches(PS, QT, Val(QD))
 
 @inline _qr_cgtqr_split_count(cgtqr::LurCGT.CGTQR) = length(cgtqr.bond_sps)
@@ -455,7 +455,7 @@ function _get_qr_cgt_split_blocks(S, qlabels::NTuple{QD}, wmat::AbstractMatrix{F
     return blocks
 end
 
-function _count_qr_symmetry_splits(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function _count_qr_symmetry_splits(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                    sector_index::Int,
                                    left_legs::NTuple{L, Int},
                                    cgtqr_caches::CT,
@@ -470,7 +470,7 @@ function _count_qr_symmetry_splits(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     return _qr_cgtqr_split_count(cgtqr)
 end
 
-function _count_qr_sector_product_splits(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function _count_qr_sector_product_splits(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                          sector_index::Int,
                                          left_legs::NTuple{L, Int},
                                          cgtqr_caches::CT,
@@ -483,12 +483,12 @@ function _count_qr_sector_product_splits(q::TLArray{T, QD, N, RD, QT, PS, M, RMT
     return count
 end
 
-function _prepare_qr_counted_preassembly(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function _prepare_qr_counted_preassembly(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                          left_legs::NTuple{L, Int},
                                          ::Val{N}) where {T, QD, N, RD, QT, PS, M, RMT, L}
     cgtqr_caches = _new_cgtqr_caches(q)
     KeyTuple = _qr_cgtqr_key_tuple_type(PS, QT, Val(QD))
-    nactive = count(sector_index -> !q.iszero[sector_index], sector_slots(q))
+    nactive = count(sector_index -> !is_sector_zero(q, sector_index), sector_slots(q))
     active_sector_indices = Vector{Int}(undef, nactive)
     keys_by_row = Vector{KeyTuple}(undef, nactive)
     sector_row_ranges = Vector{UnitRange{Int}}(undef, nactive)
@@ -496,7 +496,7 @@ function _prepare_qr_counted_preassembly(q::TLArray{T, QD, N, RD, QT, PS, M, RMT
     total_rows = 0
     active_position = 0
     for sector_index in sector_slots(q)
-        q.iszero[sector_index] && continue
+        is_sector_zero(q, sector_index) && continue
         active_position += 1
         active_sector_indices[active_position] = sector_index
         keys_by_row[active_position] = _qr_cgtqr_row_keys(PS, QT, q, sector_index, Val(M))
@@ -509,7 +509,7 @@ function _prepare_qr_counted_preassembly(q::TLArray{T, QD, N, RD, QT, PS, M, RMT
     return cgtqr_caches, active_sector_indices, keys_by_row, sector_row_ranges, total_rows
 end
 
-function _get_qr_symmetry_splits(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function _get_qr_symmetry_splits(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                  sector_index::Int,
                                  active_position::Int,
                                  keys_by_row,
@@ -540,7 +540,7 @@ function _get_qr_symmetry_splits(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     return splits
 end
 
-function _get_qr_cgt_split_sectors(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function _get_qr_cgt_split_sectors(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                    active_sector_indices::Vector{Int},
                                    keys_by_row,
                                    cgtqr_caches::CT,
@@ -605,7 +605,7 @@ function _compact_qr_rows_by_valid!(rows::Vector{Row},
     return rows, left_isos, right_isos, cores
 end
 
-function _get_qr_split_rows(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function _get_qr_split_rows(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                             splits_by_symm::Tuple{Vararg{AbstractVector, N}},
                             sector_indices::Vector{Int},
                             sector_row_ranges::Vector{UnitRange{Int}},
@@ -780,7 +780,7 @@ function _normalize_qr_left_legs(left_legs, rank::Int)
     return collect(sort(legs))
 end
 
-function _select_qr_left_legs(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
+function _select_qr_left_legs(q::AbstractTLArray; dir=nothing, itag=nothing, plev=nothing,
                               lock=nothing, rev::Bool=false)
     if isnothing(dir) && isnothing(itag) && isnothing(plev) && isnothing(lock)
         throw(ArgumentError("keyword-based qr requires at least one of dir, itag, plev, or lock"))
@@ -907,7 +907,7 @@ function _qr_ordered_unique_split_rows(rows::Vector{Row},
     return ordered
 end
 
-function _qr_class_side_infos(q::TLArray{T, QD, N, RD, QT, PS},
+function _qr_class_side_infos(q::AbstractTLArray{T, QD, N, RD, QT, PS},
                               rows::Vector{Row},
                               class_row_indices::UnitRange{Int},
                               left_payloads,
@@ -942,7 +942,7 @@ function _qr_class_side_infos(q::TLArray{T, QD, N, RD, QT, PS},
     return infos, ranges, offset
 end
 
-function _qr_cgt_class_metadata(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function _qr_cgt_class_metadata(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                 rows::Vector{Row},
                                 class_row_indices::UnitRange{Int},
                                 left_payloads,
@@ -962,7 +962,7 @@ function _qr_cgt_class_metadata(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
 end
 
 function _qr_cgt_class_metadata(
-    q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+    q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
     rows::Vector{Row},
     class_ranges::Vector{UnitRange{Int}},
     left_payloads,
@@ -988,7 +988,7 @@ function _qr_cgt_class_metadata(
 end
 
 function _qr_sector_class_matrix!(dest::AbstractMatrix{Tbuf},
-                                  q::TLArray{T, QD, N, RD, QT, PS},
+                                  q::AbstractTLArray{T, QD, N, RD, QT, PS},
                                   sector_index::Int,
                                   left_payload,
                                   right_payload,
@@ -997,8 +997,8 @@ function _qr_sector_class_matrix!(dest::AbstractMatrix{Tbuf},
                                   right_legs::NTuple{NR, Int},
                                   product_buffer::Matrix{Tbuf},
                                   permute_buffer::Matrix{Tbuf}) where {T, QD, N, RD, QT, PS, NL, NR, Tbuf}
-    rmt = sector_rmt_data(q, sector_index)
-    rmt_size = size(rmt)
+    rmt, rmt_scale = sector_rmt(q, sector_index)
+    rmt_size = sector_rmt_dim(q, sector_index)
     phys_dim = prod(rmt_size[i] for i in 1:QD)
     om_dim = prod(rmt_size[QD + n] for n in 1:N; init=1)
     cores = _qr_core_tuple(core_payload, PS, Val(N))
@@ -1009,7 +1009,7 @@ function _qr_sector_class_matrix!(dest::AbstractMatrix{Tbuf},
     product_size = phys_dim * expanded_om_dim
     @assert length(product_buffer) >= product_size
     product_mat = reshape(view(product_buffer, 1:product_size), phys_dim, expanded_om_dim)
-    mul!(product_mat, reshape(rmt, phys_dim, om_dim), transpose(core_mat), one(Tbuf), zero(Tbuf))
+    mul!(product_mat, reshape(rmt, phys_dim, om_dim), transpose(core_mat), Tbuf(rmt_scale), zero(Tbuf))
 
     expanded_dims = _qr_expanded_core_dims(rmt_size, cores, Val(QD), Val(N))
     perm = _qr_expanded_class_perm(left_legs, right_legs, Val(QD), Val(N))
@@ -1023,7 +1023,7 @@ function _qr_sector_class_matrix!(dest::AbstractMatrix{Tbuf},
     return dest
 end
 
-function _build_qr_cgt_class(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function _build_qr_cgt_class(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                 class_metadata::Meta,
                                 rows::Vector{Row},
                                 left_payloads,
@@ -1066,7 +1066,7 @@ function _build_qr_cgt_class(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
         Matrix(F.Q[:, 1:k]) .* scale, Matrix(F.R[1:k, :]))
 end
 
-function _build_qr_cgt_classes(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function _build_qr_cgt_classes(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                   class_metadata::Vector{Meta},
                                   max_left::Int,
                                   max_right::Int,
@@ -1167,9 +1167,10 @@ function _qr_build_side_cgt_metadata(source_qlabels::NTuple{QD},
     return (qlabels = qlabels, wmat = wmat, cgp = final_cgp, legdir = legdir)
 end
 
-function qr_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+function qr_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                 left_legs::NTuple{L, Int},
                 bond_tag::AbstractString = "qr") where {T, QD, N, RD, QT, PS, M, RMT, L}
+    materialize(q)
     @assert issorted(left_legs)
     @assert length(unique(left_legs)) == length(left_legs)
 
@@ -1334,14 +1335,14 @@ function qr_std(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
     return QRResult(Q, Rfac)
 end
 
-function LinearAlgebra.qr(q::TLArray{T, QD, N, RD},
+function LinearAlgebra.qr(q::AbstractTLArray{T, QD, N, RD},
                           left_legs,
                           bond_tag::AbstractString = "qr") where {T, QD, N, RD}
     left_legs_ = Tuple(_normalize_qr_left_legs(left_legs, QD))
     return qr_std(q, left_legs_, bond_tag)
 end
 
-function LinearAlgebra.qr(q::TLArray{T, QD, N, RD},
+function LinearAlgebra.qr(q::AbstractTLArray{T, QD, N, RD},
                           bond_tag::AbstractString = "qr";
                           dir=nothing,
                           itag=nothing,
@@ -1351,6 +1352,3 @@ function LinearAlgebra.qr(q::TLArray{T, QD, N, RD},
     left_legs = _select_qr_left_legs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
     return qr(q, left_legs, bond_tag)
 end
-
-LinearAlgebra.qr(q::AbstractTLArray, args...; kwargs...) =
-    qr(_dense_work_tlarray(q), args...; kwargs...)

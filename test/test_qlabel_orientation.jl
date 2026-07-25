@@ -59,7 +59,7 @@ function _assert_zero_sector_constructor_state(q::TLArray)
     RMTs = Vector{eltype(q.RMTs)}(undef, Telum.sector_count(q) + 1)
     for sector_index in Telum.sector_slots(q)
         q.iszero[sector_index] && continue
-        RMTs[sector_index] = deepcopy(Telum.sector_rmt_data(q, sector_index))
+        RMTs[sector_index] = deepcopy(_test_sector_rmt(q, sector_index))
     end
 
     with_zero = TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, q.spaces)
@@ -72,13 +72,27 @@ function _assert_zero_sector_constructor_state(q::TLArray)
     wmatinfo_with_extra = copy(q.wmatinfo)
     _append_sector_wmat_info!(wmatdata_with_extra, wmatinfo_with_extra, q, 1)
     RMTs_bad = copy(RMTs)
-    zero_rmt = deepcopy(Telum.sector_rmt_data(q, 1))
+    zero_rmt = deepcopy(_test_sector_rmt(q, 1))
     fill!(zero_rmt, zero(eltype(zero_rmt)))
     RMTs_bad[end] = zero_rmt
     with_zero_rmt = TLArray(symm(q), qlabels, wmatdata_with_extra, wmatinfo_with_extra,
                             RMTs_bad, q.inds, q.spaces)
     @test with_zero_rmt.isdefined[end] == true
     @test with_zero_rmt.iszero[end] == true
+end
+
+function _test_sort_sectors(q::TLArray{T, QD, N}) where {T, QD, N}
+    sector_indices = collect(Telum.sector_slots(q))
+    perm = sortperm(sector_indices; by = sector_index -> Tuple(
+            Telum.sector_qlabel(q, sector_index, l)
+        for l in QD:-1:1)
+    )
+    sorted_indices = sector_indices[perm]
+    qlabels = copy(q.qlabels[sorted_indices])
+    wmatdata, wmatinfo = Telum._copy_wmat_storage(q, sorted_indices; deep=true)
+    RMTs = Telum._copy_sector_RMTs(q, sorted_indices; deep=true)
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds,
+                   Telum._copy_spaces_tuple(q.spaces))
 end
 
 @testset "wmat slot mappings infer" begin
@@ -151,10 +165,10 @@ end
         _assert_qlabel_storage(from_permuted_only)
         @test norm(from_permuted_only - q) < 1e-10
 
-        sorted = Telum.sort_sectors(q)
+        sorted = _test_sort_sectors(q)
         _assert_qlabel_storage(sorted)
         @test sorted !== q
-        @test Telum.sector_rmt_data(sorted, 1) !== Telum.sector_rmt_data(q, 1)
+        @test _test_sector_rmt(sorted, 1) !== _test_sector_rmt(q, 1)
     end
 
     @testset "internal TLArrayView materialization" begin
@@ -174,7 +188,7 @@ end
         vs = Telum._view_scale(q, 2.0)
         @test vs isa TLArrayView
         rmt, alpha = Telum.sector_rmt(vs, active)
-        @test rmt === Telum.sector_rmt_data(q, active)
+        @test rmt === _test_sector_rmt(q, active)
         @test alpha == 2.0
         @test Telum.materialize(vs) === vs
         @test norm(copy(vs) - q * 2.0) < 1e-10

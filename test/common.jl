@@ -4,7 +4,6 @@ using SparseArrays
 using Test
 using LurCGT
 using Telum
-import Telum: _compute_spaces
 
 include("test_utils.jl")
 

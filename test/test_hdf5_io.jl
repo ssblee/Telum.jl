@@ -31,7 +31,7 @@ function _with_zero_sector(q::TLArray)
     RMTs = similar(q.RMTs, length(q.RMTs) + 1)
     for sector in Telum.sector_slots(q)
         q.iszero[sector] && continue
-        RMTs[sector] = deepcopy(Telum.sector_rmt_data(q, sector))
+        RMTs[sector] = deepcopy(_test_sector_rmt(q, sector))
     end
 
     return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, q.spaces)
@@ -63,9 +63,9 @@ function _with_defined_zero_sector(q::TLArray)
     RMTs = similar(q.RMTs, length(q.RMTs) + 1)
     for sector in Telum.sector_slots(q)
         q.isdefined[sector] || continue
-        RMTs[sector] = deepcopy(Telum.sector_rmt_data(q, sector))
+        RMTs[sector] = deepcopy(_test_sector_rmt(q, sector))
     end
-    zero_rmt = deepcopy(Telum.sector_rmt_data(q, source_sector))
+    zero_rmt = deepcopy(_test_sector_rmt(q, source_sector))
     fill!(zero_rmt, zero(eltype(zero_rmt)))
     RMTs[end] = zero_rmt
 
@@ -116,15 +116,15 @@ end
         _assert_tlarray_roundtrip(q_defined_zero, loaded)
         @test loaded.iszero[end]
         @test loaded.isdefined[end]
-        @test iszero(sum(abs2, Telum.sector_rmt_data(loaded, length(loaded.RMTs))))
+        @test iszero(sum(abs2, _test_sector_rmt(loaded, length(loaded.RMTs))))
     end
 
     first_active = first(sector for sector in Telum.sector_slots(q) if !q.iszero[sector])
-    complex_RMT_type = Array{ComplexF64, ndims(Telum.sector_rmt_data(q, first_active))}
+    complex_RMT_type = Array{ComplexF64, ndims(_test_sector_rmt(q, first_active))}
     complex_RMTs = Vector{complex_RMT_type}(undef, length(q.RMTs))
     for sector in Telum.sector_slots(q)
         q.iszero[sector] && continue
-        complex_RMTs[sector] = ComplexF64.(Telum.sector_rmt_data(q, sector))
+        complex_RMTs[sector] = ComplexF64.(_test_sector_rmt(q, sector))
     end
     q_complex = TLArray(symm(q), copy(q.qlabels), copy(q.wmatdata), copy(q.wmatinfo),
                         complex_RMTs, q.inds, q.spaces)

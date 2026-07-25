@@ -25,7 +25,7 @@
 #
 # ─────────────────────────────────────────────────────────────────────────────
 
-_eig_sector_qlabels(q::TLArray{T, 2, N}, sector_index::Int) where {T, N} =
+_eig_sector_qlabels(q::AbstractTLArray{T, 2, N}, sector_index::Int) where {T, N} =
     ntuple(n -> sector_qlabel(q, sector_index, 1)[n], Val(N))
 
 _eig_sort_value(ev::Real, hermitian::Bool) = hermitian ? real(ev) : abs(ev)
@@ -134,19 +134,21 @@ function _retag_eigen_result(result::EigenResult, eig_tag::AbstractString)
     return EigenResult(V, D, V_inv, result.eig_list)
 end
 
-function _prepare_eigen_input(q::TLArray{T, 2, N, RD},
+function _prepare_eigen_input(q::AbstractTLArray{T, 2, N, RD},
                               opname::AbstractString) where {T, N, RD}
-    dirs = (q.inds[1].dir, q.inds[2].dir)
+    qinds = inds(q)
+    dirs = (qinds[1].dir, qinds[2].dir)
     @assert (dirs == ('+', '-') || dirs == ('-', '+')) "$opname requires one incoming ('+') and one outgoing ('-') leg"
 
-    q_work = dirs == ('+', '-') ? q : copy(permutedims(q, (2, 1)))
-    @assert q_work.spaces[1] == q_work.spaces[2] "$opname: both legs of input TLArray must have the same space list (same sectors and dimensions)"
+    q_work = dirs == ('+', '-') ? q : permutedims(q, (2, 1))
+    qspaces = spaces(q_work)
+    @assert qspaces[1] == qspaces[2] "$opname: both legs of input TLArray must have the same space list (same sectors and dimensions)"
     return q_work
 end
 
-function _check_hermitian_eigen_legs(q::TLArray,
+function _check_hermitian_eigen_legs(q::AbstractTLArray,
                                      opname::AbstractString)
-    idx1, idx2 = q.inds
+    idx1, idx2 = inds(q)
     @assert idx1.itags == idx2.itags "$opname: Hermitian eigendecomposition requires both legs to have the same itag"
     @assert idx1.plev == idx2.plev "$opname: Hermitian eigendecomposition requires both legs to have the same plev"
     @assert idx1.lock == idx2.lock "$opname: Hermitian eigendecomposition requires both legs to have the same lock"
@@ -154,12 +156,35 @@ function _check_hermitian_eigen_legs(q::TLArray,
     return nothing
 end
 
-function _hermiticity_ratio(q::TLArray{T, 2, N, RD}) where {T, N, RD}
-    q_adj = permutedims(q', (2, 1))
-    q_adj = TLArray(q_adj, q.inds)
+function _eig_scaled_matrix(q::AbstractTLArray, sector_index::Int)
+    rmt, scale = sector_rmt(q, sector_index)
+    rmt_size = sector_rmt_dim(q, sector_index)
+    sL, sR = rmt_size[1], rmt_size[2]
+    mat = Matrix(reshape(rmt, sL, sR))
+    scale != one(typeof(scale)) && (mat .*= scale)
+    return mat, sL, sR
+end
 
-    qnorm = norm(q)
-    diffnorm = norm(q - q_adj)
+function _hermiticity_ratio(q::AbstractTLArray{T, 2, N, RD}) where {T, N, RD}
+    idx1, idx2 = inds(q)
+    if !(idx1.itags == idx2.itags &&
+         idx1.plev == idx2.plev &&
+         idx1.lock == idx2.lock &&
+         idx1.dual == idx2.dual)
+        return Inf
+    end
+
+    qnorm2 = 0.0
+    diffnorm2 = 0.0
+    for sector_index in sector_slots(q)
+        is_sector_zero(q, sector_index) && continue
+        mat, sL, sR = _eig_scaled_matrix(q, sector_index)
+        sL == sR || return Inf
+        qnorm2 += sum(abs2, mat)
+        diffnorm2 += sum(abs2, mat - adjoint(mat))
+    end
+    qnorm = sqrt(qnorm2)
+    diffnorm = sqrt(diffnorm2)
     if iszero(qnorm)
         return iszero(diffnorm) ? 0.0 : Inf
     end
@@ -187,20 +212,23 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT, PS, M, RMT},
         isempty(idxs) && continue
 
         idxs_sorted = sort(idxs)
-        rmt = sector_rmt_data(template, sector_index)
-        s1, s2 = size(rmt, 1), size(rmt, 2)
+        rmt, scale = sector_rmt(template, sector_index)
+        s1, s2 = sector_rmt_axis_dim(template, sector_index, 1), sector_rmt_axis_dim(template, sector_index, 2)
         rmt_new = if mode == :diag
             if rmt isa DiagRMT
-                DiagRMT(T[rmt.diag[i] for i in idxs_sorted], Val(RD), (1, 2))
+                DiagRMT(T[scale * rmt.diag[i] for i in idxs_sorted], Val(RD), (1, 2))
             else
-                mat = reshape(rmt, s1, s2)
+                mat = Matrix(reshape(rmt, s1, s2))
+                scale != one(typeof(scale)) && (mat .*= scale)
                 reshape(mat[idxs_sorted, idxs_sorted], length(idxs_sorted), length(idxs_sorted), ones(Int, N)...)
             end
         elseif mode == :cols
-            mat = reshape(rmt, s1, s2)
+            mat = Matrix(reshape(rmt, s1, s2))
+            scale != one(typeof(scale)) && (mat .*= scale)
             reshape(mat[:, idxs_sorted], s1, length(idxs_sorted), ones(Int, N)...)
         elseif mode == :firstdim
-            mat = reshape(rmt, s1, s2)
+            mat = Matrix(reshape(rmt, s1, s2))
+            scale != one(typeof(scale)) && (mat .*= scale)
             reshape(mat[idxs_sorted, :], length(idxs_sorted), s2, ones(Int, N)...)
         else
             error("Unknown eig sector selection mode: $mode")
@@ -305,13 +333,15 @@ function _split_eigen_result(result::EigenResult,
     return kept, discarded
 end
 
-function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
+function _eigen_hermitian(q::AbstractTLArray{T, 2, N, RD, QT},
                           eig_tag::AbstractString = "eig") where {T, N, RD, QT}
 
     _check_hermitian_eigen_legs(q, "eigen")
 
     symmetries = symm(q)
-    dirs = (q.inds[1].dir, q.inds[2].dir)
+    qinds = inds(q)
+    qspaces = spaces(q)
+    dirs = (qinds[1].dir, qinds[2].dir)
     out_leg = 2
     cgp = (1, 2)
 
@@ -325,7 +355,7 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     eig_list = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
     for sector_index in sector_slots(q)
-        q.iszero[sector_index] && continue
+        is_sector_zero(q, sector_index) && continue
         sector_qlabels = _eig_sector_qlabels(q, sector_index)
 
         # Degeneracy = product of irrep dims across all symmetries for this sector
@@ -334,11 +364,10 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
             for n in 1:N)
         cgt_scale = sqrt(Float64(cgt_dim))
 
-        rmt = sector_rmt_data(q, sector_index)
-        sL, sR = size(rmt, 1), size(rmt, 2)
+        rmt_mat, sL, sR = _eig_scaled_matrix(q, sector_index)
         @assert sL == sR "eigen: RMT must be square for eigendecomposition, got ($sL, $sR)"
 
-        mat = reshape(rmt, sL, sR) ./ cgt_scale
+        mat = rmt_mat ./ cgt_scale
 
         F = eigen(Hermitian(mat))
         eigenvalues  = T_out.(F.values)
@@ -359,8 +388,8 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
         push!(RMTs_V, rmt_V)
     end
 
-    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in sector_slots(q) if !q.iszero[sector_index])
-    _append_missing_eig_sectors!(symmetries, q.spaces[1], covered,
+    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in sector_slots(q) if !is_sector_zero(q, sector_index))
+    _append_missing_eig_sectors!(symmetries, qspaces[1], covered,
         qlabels_D, RMTs_D,
         qlabels_V, RMTs_V,
         nothing, nothing,
@@ -370,13 +399,13 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     sort!(eig_list; by = x -> _eig_sort_value(x[1], true))
 
     # ── Inherit spaces from original q ──────────────────────────────────────
-    spaces_D = (q.spaces[1], q.spaces[1])
-    spaces_V = (q.spaces[1], q.spaces[1])
+    spaces_D = (qspaces[1], qspaces[1])
+    spaces_V = (qspaces[1], qspaces[1])
 
     # ── Build output TLIndex tuples ───────────────────────────────────────────
     inds_D = (TLIndex(eig_tag, dirs[1]), TLIndex(eig_tag, dirs[2]))
 
-    orig_out_ind = q.inds[out_leg]
+    orig_out_ind = qinds[out_leg]
     inds_V = (TLIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
               TLIndex(eig_tag, dirs[2]))
 
@@ -390,11 +419,13 @@ function _eigen_hermitian(q::TLArray{T, 2, N, RD, QT},
     return EigenResult(V, D, nothing, eig_list)
 end
 
-function _eigen_general(q::TLArray{T, 2, N, RD, QT},
+function _eigen_general(q::AbstractTLArray{T, 2, N, RD, QT},
                         eig_tag::AbstractString = "eig") where {T, N, RD, QT}
 
     symmetries = symm(q)
-    dirs = (q.inds[1].dir, q.inds[2].dir)
+    qinds = inds(q)
+    qspaces = spaces(q)
+    dirs = (qinds[1].dir, qinds[2].dir)
     cgp = (1, 2)
 
     in_leg  = 1
@@ -410,7 +441,7 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     eig_list  = Tuple{T_out, Int, NTuple{N, Tuple{Vararg{Int}}}, Int}[]
 
     for sector_index in sector_slots(q)
-        q.iszero[sector_index] && continue
+        is_sector_zero(q, sector_index) && continue
         sector_qlabels = _eig_sector_qlabels(q, sector_index)
 
         cgt_dim = prod(
@@ -418,11 +449,10 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
             for n in 1:N)
         cgt_scale = sqrt(Float64(cgt_dim))
 
-        rmt = sector_rmt_data(q, sector_index)
-        sL, sR = size(rmt, 1), size(rmt, 2)
+        rmt_mat, sL, sR = _eig_scaled_matrix(q, sector_index)
         @assert sL == sR "eigen_general: RMT must be square"
 
-        mat = reshape(rmt, sL, sR) ./ cgt_scale
+        mat = rmt_mat ./ cgt_scale
 
         F = eigen(mat)
         eigenvalues      = T_out.(F.values)
@@ -448,8 +478,8 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
         push!(RMTs_Vinv, rmt_Vinv)
     end
 
-    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in sector_slots(q) if !q.iszero[sector_index])
-    _append_missing_eig_sectors!(symmetries, q.spaces[1], covered,
+    covered = Set(_eig_sector_qlabels(q, sector_index) for sector_index in sector_slots(q) if !is_sector_zero(q, sector_index))
+    _append_missing_eig_sectors!(symmetries, qspaces[1], covered,
         qlabels_D, RMTs_D,
         qlabels_V, RMTs_V,
         qlabels_Vinv, RMTs_Vinv,
@@ -457,17 +487,17 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
 
     sort!(eig_list; by = x -> _eig_sort_value(x[1], false))
 
-    spaces_D    = (q.spaces[1], q.spaces[1])
-    spaces_V    = (q.spaces[1], q.spaces[1])
-    spaces_Vinv = (q.spaces[1], q.spaces[1])
+    spaces_D    = (qspaces[1], qspaces[1])
+    spaces_V    = (qspaces[1], qspaces[1])
+    spaces_Vinv = (qspaces[1], qspaces[1])
 
     inds_D = (TLIndex(eig_tag, dirs[1]), TLIndex(eig_tag, dirs[2]))
 
-    orig_out_ind = q.inds[out_leg]
+    orig_out_ind = qinds[out_leg]
     inds_V = (TLIndex(orig_out_ind.itags, dirs[1], orig_out_ind.plev, orig_out_ind.lock, orig_out_ind.dual),
               TLIndex(eig_tag, dirs[2]))
 
-    orig_in_ind = q.inds[in_leg]
+    orig_in_ind = qinds[in_leg]
     inds_Vinv = (TLIndex(eig_tag, dirs[1]),
                  TLIndex(orig_in_ind.itags, dirs[2], orig_in_ind.plev, orig_in_ind.lock, orig_in_ind.dual))
 
@@ -484,10 +514,11 @@ function _eigen_general(q::TLArray{T, 2, N, RD, QT},
     return EigenResult(V, D, Vinv, eig_list)
 end
 
-function LinearAlgebra.eigen(q::TLArray{T, 2, N, RD},
+function LinearAlgebra.eigen(q::AbstractTLArray{T, 2, N, RD},
                              eig_tag::AbstractString = "eig";
                              hermitian::Bool = false) where {T, N, RD}
     q_work = _prepare_eigen_input(q, "eigen")
+    materialize(q_work)
 
     use_hermitian = hermitian
     if !use_hermitian
@@ -496,9 +527,6 @@ function LinearAlgebra.eigen(q::TLArray{T, 2, N, RD},
 
     return use_hermitian ? _eigen_hermitian(q_work, eig_tag) : _eigen_general(q_work, eig_tag)
 end
-
-LinearAlgebra.eigen(q::AbstractTLArray, args...; kwargs...) =
-    eigen(_dense_work_tlarray(q), args...; kwargs...)
 
 """
     discard_eigen(result::EigenResult, Nkeep, tol, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))

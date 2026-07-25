@@ -132,14 +132,14 @@ function _sum_processed_rmt_dims(q::TLArrayView{T, QD}, sector::Int, ::Val{RD}) 
 end
 
 @inline function _sum_reference_safe(q::TLArray{T, QD, N, RD}, sector::Int, ::Type{T}) where {T, QD, N, RD}
-    rmt = sector_rmt_data(q, sector)
+    rmt, _ = sector_rmt(q, sector)
     return rmt isa Array{T, RD} || rmt isa DiagRMT
 end
 
 @inline _sum_reference_safe(q::TLArray, sector::Int, ::Type{T}) where {T} = false
 
 @inline function _sum_reference_safe(q::TLArrayContraction{T, QD, N, RD}, sector::Int, ::Type{T}) where {T, QD, N, RD}
-    rmt = sector_rmt_data(q, sector)
+    rmt, _ = sector_rmt(q, sector)
     return rmt isa Array{T, RD}
 end
 
@@ -246,7 +246,7 @@ function _sum_copy_scaled!(dest::Array{T, RD}, source::AbstractArray, scale) whe
 end
 
 function _sum_copy_processed_unscaled!(dest, q::TLArray, sector::Int, ::Type{T}) where {T}
-    source = sector_rmt_data(q, sector)
+    source, _ = sector_rmt(q, sector)
     @inbounds for I in CartesianIndices(dest)
         dest[I] = source[I]
     end

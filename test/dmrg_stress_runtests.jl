@@ -19,7 +19,7 @@ function _largest_rmt_length(q::TLArray)
     lengths = Int[]
     for sector in Telum.sector_slots(q)
         q.iszero[sector] && continue
-        push!(lengths, length(Telum.sector_rmt_data(q, sector)))
+        push!(lengths, length(_test_sector_rmt(q, sector)))
     end
     return isempty(lengths) ? 0 : maximum(lengths)
 end

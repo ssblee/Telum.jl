@@ -329,9 +329,14 @@ end
     return ntuple(pos -> perm[pos] <= QD ? q.perm[perm[pos]] : perm[pos], Val(RD))
 end
 
-@inline _layout_source_rmt(q::TLArray, sector::Int) = sector_rmt_data(q, sector)
-@inline _layout_source_rmt(q::TLArrayContraction, sector::Int) = sector_rmt_data(q, sector)
-@inline _layout_source_rmt(q::TLArrayView, sector::Int) = sector_rmt_data(q.arr, sector)
+@inline function _layout_source_rmt(q::Union{TLArray, TLArrayContraction}, sector::Int)
+    rmt, _ = sector_rmt(q, sector)
+    return rmt
+end
+@inline function _layout_source_rmt(q::TLArrayView, sector::Int)
+    rmt, _ = sector_rmt(q.arr, sector)
+    return rmt
+end
 
 @inline _stream_conj_requires_buffer(q::TLArray{T}) where {T} = false
 @inline _stream_conj_requires_buffer(q::TLArrayContraction{T}) where {T} = false
