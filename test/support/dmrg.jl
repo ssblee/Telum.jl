@@ -144,7 +144,7 @@ end
 
 # Lanczos algorithm for the local DMRG effective problem.
 function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov, time_blocks=true)
-    As = Vector{AbstractTLArray}(undef, nKrylov)
+    As = Vector{TLArray}(undef, nKrylov)
     As[1] = M / norm(M)
     αs = zeros(nKrylov)
     βs = zeros(nKrylov - 1)
@@ -190,7 +190,7 @@ end
 
 function getHrl(MPO, MPS)
     N = length(MPS)
-    Hrl = Vector{AbstractTLArray}(undef, N + 2)
+    Hrl = Vector{TLArray}(undef, N + 2)
 
     li = findleg(MPS[1]; itag="SLeft")
     left_id = getIdentity((MPS[1]', li); itag="SLeft")

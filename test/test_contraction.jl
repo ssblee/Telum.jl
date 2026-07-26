@@ -74,6 +74,38 @@ end
     @test _test_sector_rmt(concrete, 1) ≈ _test_sector_rmt(eager, 1)
 end
 
+@testset "lazy getsub on contraction" begin
+    q = getLocalSpace(SpinOptions(nothing, 1))
+    left = TLArray(q.I, ("left", "bond"))
+    right = TLArray(q.Sz, ("bond", "right"))
+
+    lazy_full = contract(left, (2,), right, (1,))
+    sub_full = Telum.getsub(lazy_full, 1, _ -> Colon())
+
+    @test sub_full isa Telum.SubTLArray
+    @test !Telum.is_sector_defined(lazy_full, 1)
+    @test sub_full.source_sectors == [1]
+    @test_throws ArgumentError Telum.sector_rmt(sub_full, 1)
+
+    Telum.compute_sectors(sub_full, [1])
+    @test Telum.is_sector_defined(lazy_full, 1)
+    @test Telum.is_sector_defined(sub_full, 1)
+    @test sub_full.RMTs[1] === lazy_full.RMTs[1]
+
+    lazy_slice = contract(left, (2,), right, (1,))
+    sub_slice = Telum.getsub(lazy_slice, 1, _ -> 1)
+    Telum.compute_sectors(sub_slice, [1])
+    slice_selector = ntuple(d -> d == 1 ? [1] : Colon(), ndims(lazy_slice.RMTs[1]))
+    @test sub_slice.RMTs[1] == lazy_slice.RMTs[1][slice_selector...]
+    @test sub_slice.RMTs[1] !== lazy_slice.RMTs[1]
+
+    lazy_view = 2 * contract(left, (2,), right, (1,))
+    sub_view = Telum.getsub(lazy_view, 1, _ -> Colon())
+    @test sub_view isa TLArrayView
+    @test sub_view.arr isa Telum.SubTLArray
+    @test sub_view.scale == 2
+end
+
 test_contract_tlarrayview_inputs()
 
 @testset "Generating 1jtensor of TLArray test" begin

@@ -560,6 +560,28 @@ struct TLArrayContraction{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArr
     reference_depth::Int
 end
 
+const GetSubSelector = Union{Colon, Vector{Int}}
+
+struct SubTLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} <:
+       AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
+    qlabels::Vector{NTuple{QD, QT}}
+    wmatdata::Vector{Float64}
+    wmatinfo::Vector{WMatInfo{M}}
+    RMTs::Vector{RMT}
+    isdefined::BitVector
+    iszero::BitVector
+    inds::NTuple{QD, TLIndex}
+    spaces::NTuple{QD, Vector{Tuple{QT, Int}}}
+
+    arr::AbstractTLArray{T, QD, N, RD, QT, PS, M}
+    source_sectors::Vector{Int}
+    saved_indices::Vector{NTuple{RD, GetSubSelector}}
+    affected_legs::Vector{Int}
+    rmt_sizes::Vector{NTuple{RD, Int}}
+    lock::ReentrantLock
+    reference_depth::Int
+end
+
 function _qlabel_vector(qlabels::AbstractMatrix{QT}, ::Val{QD}) where {QT, QD}
     size(qlabels, 1) == QD ||
         throw(ArgumentError("qlabels row count must equal number of TLArray legs"))
@@ -609,6 +631,10 @@ Base.propertynames(q::TLArrayView, private::Bool=false) =
 Base.propertynames(q::TLArrayContraction, private::Bool=false) =
     (:qlabels, :wmatdata, :wmatinfo, :RMTs, :isdefined, :iszero, :inds, :spaces,
      :arr1, :arr2, :work_items, :factors, :perm1, :perm2, :rmt_sizes, :lock,
+     :reference_depth)
+Base.propertynames(q::SubTLArray, private::Bool=false) =
+    (:qlabels, :wmatdata, :wmatinfo, :RMTs, :isdefined, :iszero, :inds, :spaces,
+     :arr, :source_sectors, :saved_indices, :affected_legs, :rmt_sizes, :lock,
      :reference_depth)
 
 function Base.getproperty(q::TLArrayView, name::Symbol)
@@ -695,6 +721,40 @@ end
     return q.RMTs[sector]
 end
 @inline sector_rmt(q::TLArrayContraction{T}, sector::Int) where {T} =
+    (_defined_sector_rmt(q, sector), one(T))
+
+@inline inds(q::SubTLArray) = q.inds
+@inline spaces(q::SubTLArray) = q.spaces
+@inline sector_count(q::SubTLArray) = length(q.qlabels)
+@inline sector_slots(q::SubTLArray) = eachindex(q.qlabels)
+@inline source_sector(q::SubTLArray, sector::Int) = q.source_sectors[sector]
+@inline nsectors(q::SubTLArray) = count(!, q.iszero)
+@inline is_sector_defined(q::SubTLArray, sector::Int) = q.isdefined[sector]
+@inline is_sector_zero(q::SubTLArray, sector::Int) = q.iszero[sector]
+@inline is_sector_active(q::SubTLArray, sector::Int) = !q.iszero[sector]
+@inline sector_qlabel(q::SubTLArray, sector::Int, leg::Int) = q.qlabels[sector][leg]
+@inline sector_qlabel(::Type{QT}, q::SubTLArray, sector::Int, leg::Int) where {QT} =
+    q.qlabels[sector][leg]::QT
+@inline function sector_wmat(q::SubTLArray{T, QD, N, RD, QT, PS, M, RMT}, sector::Int, n::Int) where {T, QD, N, RD, QT, PS, M, RMT}
+    isabelian(symm(q)[n]) && return _trivial_wmat()
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, nonabelian_wmat_slot(PS, n))
+end
+@inline function sector_wmat(q::SubTLArray{T, QD, N, RD, QT, PS, M, RMT}, sector::Int, ::Val{n}) where {T, QD, N, RD, QT, PS, M, RMT, n}
+    is_stored_wmat_symmetry(PS, Val(n)) || return _trivial_wmat()
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, nonabelian_wmat_slot(PS, Val(n)))
+end
+@inline function sector_wmat_slot(q::SubTLArray, sector::Int, slot::Int)
+    return _wmat_from_storage(q.wmatdata, q.wmatinfo, sector, slot)
+end
+@inline function sector_rmt_axis_dim(q::SubTLArray, sector::Int, leg::Int)
+    return q.rmt_sizes[sector][leg]
+end
+@inline sector_rmt_dim(q::SubTLArray, sector::Int) = q.rmt_sizes[sector]
+@inline function _defined_sector_rmt(q::SubTLArray, sector::Int)
+    q.isdefined[sector] || throw(ArgumentError("sector $sector is not evaluated"))
+    return q.RMTs[sector]
+end
+@inline sector_rmt(q::SubTLArray{T}, sector::Int) where {T} =
     (_defined_sector_rmt(q, sector), one(T))
 
 @inline _identity_phys_perm(::Val{QD}) where {QD} = ntuple(identity, Val(QD))
@@ -883,6 +943,11 @@ function materialize(q::TLArrayView)
 end
 
 function materialize(q::TLArrayContraction)
+    compute_sectors(q, sector_slots(q))
+    return q
+end
+
+function materialize(q::SubTLArray)
     compute_sectors(q, sector_slots(q))
     return q
 end

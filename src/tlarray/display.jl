@@ -24,6 +24,11 @@ function Base.show(io::IO, qs::TLArrayView)
     show(io, concrete)
     return concrete
 end
+function Base.show(io::IO, qs::SubTLArray)
+    concrete = to_concrete(qs)
+    show(io, concrete)
+    return concrete
+end
 
 _qindex_plev_string(plev::Int) =
     plev == 0 ? "" : "p$(plev)"
