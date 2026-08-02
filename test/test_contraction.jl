@@ -106,6 +106,30 @@ end
     @test sub_view.scale == 2
 end
 
+@testset "TLArray conversion aliases materialized contraction storage" begin
+    q = getLocalSpace(SpinOptions(nothing, 1))
+    left = TLArray(q.I, ("left", "bond"))
+    right = TLArray(q.Sz, ("bond", "right"))
+    lazy = contract(left, (2,), right, (1,))
+
+    converted = TLArray(lazy)
+
+    @test converted isa TLArray
+    @test Telum.is_sector_defined(lazy, 1)
+    @test converted.qlabels === lazy.qlabels
+    @test converted.wmatdata === lazy.wmatdata
+    @test converted.wmatinfo === lazy.wmatinfo
+    @test converted.RMTs === lazy.RMTs
+    @test converted.isdefined === lazy.isdefined
+    @test converted.iszero === lazy.iszero
+    @test converted.RMTs[1] === lazy.RMTs[1]
+
+    copied = Telum.to_concrete(lazy)
+    @test copied.RMTs !== lazy.RMTs
+    @test copied.RMTs[1] !== lazy.RMTs[1]
+    @test _test_sector_rmt(converted, 1) ≈ _test_sector_rmt(copied, 1)
+end
+
 test_contract_tlarrayview_inputs()
 
 @testset "Generating 1jtensor of TLArray test" begin

@@ -58,14 +58,7 @@ function _needs_sum_alignment(ref::AbstractTLArray, q::AbstractTLArray)
     return inds(ref) != inds(q) || spaces(ref) != spaces(q)
 end
 
-function _align_sum_inputs(qs::Tuple{AbstractTLArray, Vararg{AbstractTLArray}})
-    isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
-    ref = qs[1]
-    any(q -> _needs_sum_alignment(ref, q), qs) || return qs
-    return ntuple(i -> _align_sum_input(ref, qs[i]), Val(length(qs)))
-end
-
-function _align_sum_inputs(qs::AbstractVector{<:AbstractTLArray})
+function _align_sum_inputs(qs::Vector{AbstractTLArray})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
     ref = qs[1]
     if !any(q -> _needs_sum_alignment(ref, q), qs)
@@ -85,7 +78,9 @@ end
 function _sum_sector_table(qs, ::Type{QT}, ::Val{QD}) where {QT, QD}
     total = 0
     for q in qs
-        total += nsectors(q)
+        for sector_index in sector_slots(q)
+            is_sector_zero(q, sector_index) || (total += 1)
+        end
     end
 
     table = Vector{Tuple{NTuple{QD, QT}, Int, Int}}(undef, total)
@@ -678,17 +673,19 @@ function _sum_tlarrays_aligned(qs, ::Type{T}, ::Val{QD}, ::Val{N}, ::Type{QT}, :
                    inds(ref), spaces(ref))
 end
 
-function _sum_tlarrays(qs::Tuple{})
-    isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
-end
+@inline _sum_rmt_rank(::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, RD} = RD
+@inline _sum_wmat_width(::AbstractTLArray{T, QD, N, RD, QT, PS, M}) where {T, QD, N, RD, QT, PS, M} = M
 
-function _sum_tlarrays_from_ref(ref::AbstractTLArray{TR, QD, N, RD, QT, PS, M, RMTR}, qs) where {TR, QD, N, RD, QT, PS, M, RMTR}
+_sum_input_vector(qs::Vector{AbstractTLArray}) = qs
+_sum_input_vector(qs) = collect(AbstractTLArray, qs)
+
+function _sum_tlarrays_from_ref(ref::AbstractTLArray{TR, QD, N, RD, QT, PS, M, RMTR},
+                                qs::Vector{AbstractTLArray}) where {TR, QD, N, RD, QT, PS, M, RMTR}
     for q in qs
-        q isa AbstractTLArray || throw(ArgumentError("TLArray sum entries must all be AbstractTLArray objects"))
         q isa AbstractTLArray{<:Number} || throw(ArgumentError("TLArray sum entries must have numeric RMT element types"))
-        ndims(q) == QD && nsymms(q) == N && typeof(q).parameters[4] == RD &&
+        ndims(q) == QD && nsymms(q) == N && _sum_rmt_rank(q) == RD &&
             qlabeltype(q) == QT && productsymm(q) === PS &&
-            typeof(q).parameters[7] == M || throw(ArgumentError(
+            _sum_wmat_width(q) == M || throw(ArgumentError(
             "TLArray sum requires matching QD, N, RD, qlabel type, product symmetry, " *
             "and w-matrix tuple width; only RMT element/storage may differ"))
     end
@@ -697,8 +694,7 @@ function _sum_tlarrays_from_ref(ref::AbstractTLArray{TR, QD, N, RD, QT, PS, M, R
     return _sum_tlarrays_aligned(aligned, T, Val(QD), Val(N), QT, PS, Val(M), Val(RD))
 end
 
-function _sum_tlarrays(qs::Union{Tuple{AbstractTLArray, Vararg{AbstractTLArray}},
-                                 AbstractVector{<:AbstractTLArray}})
+function _sum_tlarrays(qs::Vector{AbstractTLArray})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
     return _sum_tlarrays_from_ref(qs[begin], qs)
 end
@@ -706,15 +702,15 @@ end
 # Keep tuple overloads anchored on concrete tensor containers. A broad
 # Tuple{<:AbstractTLArray,...} sum method invalidates Julia's REPL hint path.
 Base.sum(qs::Tuple{TLArray, Vararg{AbstractTLArray}}) =
-    _sum_tlarrays(qs)
+    _sum_tlarrays(_sum_input_vector(qs))
 Base.sum(qs::Tuple{TLArrayView, Vararg{AbstractTLArray}}) =
-    _sum_tlarrays(qs)
+    _sum_tlarrays(_sum_input_vector(qs))
 Base.sum(qs::AbstractVector{<:AbstractTLArray}) =
-    _sum_tlarrays(qs)
+    _sum_tlarrays(_sum_input_vector(qs))
 
 function Base.:+(qs1::TLArray{T1, QD, N, RD, QT, PS}, 
     qs2::TLArray{T2, QD, N, RD, QT, PS}) where {T1, T2, QD, N, RD, QT, PS}
-    return _sum_tlarrays((qs1, qs2))
+    return _sum_tlarrays(AbstractTLArray[qs1, qs2])
 end
 
 Base.:-(qs1::TLArray, qs2::TLArray) = qs1 + (-1 * qs2)
@@ -722,7 +718,7 @@ Base.:+(q::TLArray, x::Number) = q + x * _identity_on_tlarray(q)
 Base.:+(x::Number, q::TLArray) = q + x
 Base.:-(q::TLArray, x::Number) = q + (-x) * _identity_on_tlarray(q)
 Base.:-(x::Number, q::TLArray) = x * _identity_on_tlarray(q) + (-q)
-Base.:+(qs1::AbstractTLArray, qs2::AbstractTLArray) = _sum_tlarrays((qs1, qs2))
+Base.:+(qs1::AbstractTLArray, qs2::AbstractTLArray) = _sum_tlarrays(AbstractTLArray[qs1, qs2])
 Base.:-(qs1::AbstractTLArray, qs2::AbstractTLArray) = qs1 + (-1 * qs2)
 Base.:+(q::AbstractTLArray, x::Number) = q + x * _identity_on_tlarray(q)
 Base.:+(x::Number, q::AbstractTLArray) = q + x

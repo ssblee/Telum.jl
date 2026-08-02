@@ -111,3 +111,27 @@ end
     @test Telum.is_sector_defined(lazy, 1)
     @test sub2.RMTs[1] === sub1.RMTs[1]
 end
+
+@testset "TLArray conversion aliases materialized lazy getsub storage" begin
+    q = getLocalSpace(SpinOptions(nothing, 1))
+    left = TLArray(q.I, ("left", "bond"))
+    right = TLArray(q.Sz, ("bond", "right"))
+    lazy = contract(left, (2,), right, (1,))
+    sub = Telum.getsub(lazy, 1, _ -> Colon())
+
+    converted = TLArray(sub)
+
+    @test converted isa TLArray
+    @test Telum.is_sector_defined(sub, 1)
+    @test converted.qlabels === sub.qlabels
+    @test converted.wmatdata === sub.wmatdata
+    @test converted.wmatinfo === sub.wmatinfo
+    @test converted.RMTs === sub.RMTs
+    @test converted.isdefined === sub.isdefined
+    @test converted.iszero === sub.iszero
+    @test converted.RMTs[1] === sub.RMTs[1]
+
+    copied = Telum.to_concrete(sub)
+    @test copied.RMTs !== sub.RMTs
+    @test copied.RMTs[1] !== sub.RMTs[1]
+end

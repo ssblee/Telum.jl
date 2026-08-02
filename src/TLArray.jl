@@ -505,8 +505,49 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} 
             typed_qlabels, wmatdata, wmatinfo, RMTs, sector_isdefined, sector_iszero, inds, typed_spaces)
         _check_unique_inds(q.inds)
         _check_empty_tag_lock(q.inds)
-        _normalize_wmats!(q)
-        _orient_wmats!(q)
+        return q
+    end
+
+    function TLArray(::Val{:alias_storage},
+        symm::NTuple{N, Any},
+        qlabels::Vector{NTuple{QD, QT}},
+        wmatdata::Vector{Float64},
+        wmatinfo::Vector{WMatInfo{M}},
+        RMTs::Vector{RMT},
+        isdefined::BitVector,
+        iszero::BitVector,
+        inds::NTuple{QD, TLIndex},
+        spaces::NTuple{QD, Vector{Tuple{QT, Int}}}) where {
+            N, QD, QT, M, T, RD, RMT<:AbstractArray{T, RD}}
+
+        RD == QD + N ||
+            throw(ArgumentError("RMT rank must equal tensor rank plus number of symmetries"))
+
+        PS = productsymm(symm)
+        QT == qlabeltype(symm) ||
+            throw(ArgumentError("qlabel type does not match symmetry tuple"))
+        M == n_nonabelian_symmetries(PS) ||
+            throw(ArgumentError("w-matrix tuple width must equal the number of non-Abelian symmetries"))
+        length(qlabels) == length(RMTs) ||
+            throw(ArgumentError("qlabels length must equal number of sector slots"))
+        length(isdefined) == length(RMTs) && length(iszero) == length(RMTs) ||
+            throw(ArgumentError("sector-state lengths must equal number of sector slots"))
+        _validate_wmat_storage(wmatdata, wmatinfo, length(RMTs))
+
+        for sector_index in eachindex(RMTs)
+            if isdefined[sector_index]
+                isassigned(RMTs, sector_index) ||
+                    throw(ArgumentError("defined sector $sector_index has no RMT payload"))
+                _check_tlarray_rmt_storage(RMTs[sector_index], Val(QD))
+            elseif !iszero[sector_index]
+                throw(ArgumentError("nonzero sector $sector_index must be defined before aliasing"))
+            end
+        end
+
+        q = new{T, QD, N, RD, QT, PS, M, RMT}(
+            qlabels, wmatdata, wmatinfo, RMTs, isdefined, iszero, inds, spaces)
+        _check_unique_inds(q.inds)
+        _check_empty_tag_lock(q.inds)
         return q
     end
 end
@@ -1066,8 +1107,6 @@ function to_concrete(q::AbstractTLArray{T, QD, N, RD, QT}) where {T, QD, N, RD, 
     result = TLArray(symm(q), qlabels,
                      copy(q.wmatdata), copy(q.wmatinfo), RMTs,
                      inds(q), _copy_spaces_tuple(spaces(q)))
-    _normalize_wmats!(result)
-    _orient_wmats!(result)
     return result
 end
 
@@ -1360,14 +1399,52 @@ TLArray(q::TLArrayView{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) 
     TLArray(to_concrete(q), itags)
 
 TLArray(q::TLArrayContraction{T, QD, N, RD}, inds::NTuple{QD, TLIndex}) where {T, QD, N, RD} =
-    TLArray(to_concrete(q), inds)
+    TLArray(TLArray(q), inds)
 
 TLArray(q::TLArrayContraction{T, QD, N, RD}, itags::Tuple{Vararg{AbstractString, QD}}) where {T, QD, N, RD} =
-    TLArray(to_concrete(q), itags)
+    TLArray(TLArray(q), itags)
 
-Base.convert(::Type{TLArray}, q::AbstractTLArray) = q isa TLArray ? q : to_concrete(q)
-Base.convert(::Type{T}, q::AbstractTLArray) where {T<:TLArray} =
-    q isa T ? q : convert(T, to_concrete(q))
+TLArray(q::TLArray) = q
+TLArray(q::TLArrayView) = to_concrete(q)
+
+function _tlarray_alias_materialized_storage(q::Union{TLArrayContraction{T, QD, N, RD, QT, PS, M, RMT},
+                                                      SubTLArray{T, QD, N, RD, QT, PS, M, RMT}}) where {T, QD, N, RD, QT, PS, M, RMT}
+    materialize(q)
+    return TLArray(Val(:alias_storage), symm(q), q.qlabels, q.wmatdata, q.wmatinfo,
+                   q.RMTs, q.isdefined, q.iszero, q.inds, q.spaces)
+end
+
+function _tlarray_alias_singleton_storage(q::Union{AddSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                                   DeleteSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT}}) where {T, QD, N, RD, QT, PS, M, RMT}
+    materialize(q)
+    RMTs = Vector{RMT}(undef, sector_count(q))
+    isdefined = falses(sector_count(q))
+    iszero = falses(sector_count(q))
+    for sector in sector_slots(q)
+        if is_sector_zero(q, sector)
+            iszero[sector] = true
+            continue
+        end
+        rmt, scale = sector_rmt(q, sector)
+        data = scale == one(typeof(scale)) ? rmt : rmt * scale
+        RMTs[sector] = data::RMT
+        isdefined[sector] = true
+        iszero[sector] = _rmt_iszero(data)
+    end
+    return TLArray(Val(:alias_storage), symm(q), q.qlabels, q.wmatdata, q.wmatinfo,
+                   RMTs, isdefined, iszero, q.inds, q.spaces)
+end
+
+TLArray(q::Union{TLArrayContraction, SubTLArray}) = _tlarray_alias_materialized_storage(q)
+TLArray(q::SingletonTLArray) = _tlarray_alias_singleton_storage(q)
+
+Base.convert(::Type{TLArray}, q::AbstractTLArray) = TLArray(q)
+function Base.convert(::Type{TLA}, q::AbstractTLArray) where {TLA<:TLArray}
+    q isa TLA && return q
+    result = TLArray(q)
+    result isa TLA && return result
+    throw(ArgumentError("cannot convert $(typeof(q)) to requested TLArray type $TLA without changing storage type"))
+end
 
 Base.getindex(q::TLArray, i::Int) = TLArray(q, i)
 Base.firstindex(q::AbstractTLArray) = 1
