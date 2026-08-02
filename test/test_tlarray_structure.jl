@@ -507,6 +507,116 @@ end
     @test_logs (:warn, r"no singleton legs matched") deleteSingleton(q_two; itag="ain")
 end
 
+@testset "lazy add/deleteSingleton" begin
+    q0 = getLocalSpace(SpinOptions(nothing, 1))
+    left = TLArray(q0.I, ("left", "bond"))
+    right = TLArray(q0.Sz, ("bond", "right"))
+    eager = contract(left, (2,), right, (1,); lazy=false)
+
+    lazy_add_source = contract(left, (2,), right, (1,))
+    add_lazy = addSingleton(lazy_add_source, 1; itag="aux", dir='+')
+    @test add_lazy isa Telum.AddSingletonTLArray
+    @test Telum.reference_depth(add_lazy) == Telum.reference_depth(lazy_add_source)
+    @test !Telum.is_sector_defined(lazy_add_source, 1)
+    @test Telum.sector_rmt_dim(add_lazy, 1) == (1, Telum.sector_rmt_dim(lazy_add_source, 1)...)
+    @test_throws ArgumentError Telum.sector_rmt(add_lazy, 1)
+    Telum.compute_sectors(add_lazy, [1])
+    @test Telum.is_sector_defined(lazy_add_source, 1)
+    rmt_add, add_scale = Telum.sector_rmt(add_lazy, 1)
+    @test add_scale == 1
+    @test rmt_add == reshape(Telum.sector_rmt(lazy_add_source, 1)[1], size(rmt_add))
+    sum_add = add_lazy + add_lazy
+    @test sum_add isa TLArray
+    @test Telum.sector_rmt(sum_add, 1)[1] == 2 .* rmt_add
+
+    add_locked = lock(add_lazy, 1)
+    @test add_locked isa Telum.AddSingletonTLArray
+    @test add_locked.arr === add_lazy.arr
+    @test add_locked.inds[1].lock == add_lazy.inds[1].lock + 1
+    add_primed = prime(add_lazy, 1; inc=2)
+    @test add_primed isa Telum.AddSingletonTLArray
+    @test add_primed.arr === add_lazy.arr
+    @test add_primed.inds[1].plev == add_lazy.inds[1].plev + 2
+    add_tagged = additag(add_lazy, 1, "marked")
+    @test add_tagged isa Telum.AddSingletonTLArray
+    @test add_tagged.arr === add_lazy.arr
+    @test occursin("marked", String(add_tagged.inds[1].itags))
+
+    aux = TLArray((), [((),)], Float64[], [Telum._empty_wmat_info(Val(0))],
+                  [reshape([1.0], 1)], (TLIndex("aux", '-'),), ([((), 1)],))
+    contracted_add = contract(addSingleton(contract(left, (2,), right, (1,)),
+                                          1; itag="aux", dir='+'),
+                              (1,), aux, (1,); lazy=false)
+    @test Telum.sector_rmt(contracted_add, 1)[1] == Telum.sector_rmt(eager, 1)[1]
+
+    lazy_delete_source = contract(left, (2,), right, (1,))
+    add_for_delete = addSingleton(lazy_delete_source, 1; itag="aux", dir='+')
+    delete_lazy = deleteSingleton(add_for_delete, 1)
+    @test delete_lazy isa Telum.DeleteSingletonTLArray
+    @test Telum.reference_depth(delete_lazy) == Telum.reference_depth(lazy_delete_source)
+    @test !Telum.is_sector_defined(lazy_delete_source, 1)
+    @test Telum.sector_rmt_dim(delete_lazy, 1) == Telum.sector_rmt_dim(lazy_delete_source, 1)
+    Telum.compute_sectors(delete_lazy, [1])
+    @test Telum.is_sector_defined(lazy_delete_source, 1)
+    @test Telum.sector_rmt(delete_lazy, 1)[1] == Telum.sector_rmt(eager, 1)[1]
+    sum_delete = delete_lazy + delete_lazy
+    @test sum_delete isa TLArray
+    @test Telum.sector_rmt(sum_delete, 1)[1] == 2 .* Telum.sector_rmt(eager, 1)[1]
+
+    delete_lockp = lockp(delete_lazy, 1)
+    @test delete_lockp isa Telum.DeleteSingletonTLArray
+    @test delete_lockp.arr === delete_lazy.arr
+    @test delete_lockp.inds[1].lock == -1
+    delete_unlocked = unlock(delete_lockp, 1)
+    @test delete_unlocked isa Telum.DeleteSingletonTLArray
+    @test delete_unlocked.arr === delete_lazy.arr
+    @test delete_unlocked.inds[1].lock == 0
+    delete_setprime = setprime(delete_lazy, 1, 3)
+    @test delete_setprime isa Telum.DeleteSingletonTLArray
+    @test delete_setprime.arr === delete_lazy.arr
+    @test delete_setprime.inds[1].plev == 3
+    delete_noprime = noprime(delete_setprime, 1)
+    @test delete_noprime isa Telum.DeleteSingletonTLArray
+    @test delete_noprime.inds[1].plev == 0
+    delete_retagged = replaceitag(additag(delete_lazy, 1, "old"), 1, "old"=>"new")
+    @test delete_retagged isa Telum.DeleteSingletonTLArray
+    @test occursin("new", String(delete_retagged.inds[1].itags))
+    delete_cleared = removeitag(delete_retagged, 1, "new")
+    @test delete_cleared isa Telum.DeleteSingletonTLArray
+    @test !occursin("new", String(delete_cleared.inds[1].itags))
+    delete_settag = setitag(delete_lazy, 1, "only")
+    @test delete_settag isa Telum.DeleteSingletonTLArray
+    @test String(delete_settag.inds[1].itags) == "only"
+
+    lazy_view_source = contract(left, (2,), right, (1,))
+    view = 2 * permutedims(addSingleton(lazy_view_source, 3; itag="aux", dir='+'), (2, 1, 3))
+    delete_view = deleteSingleton(view, 3)
+    @test delete_view isa TLArrayView
+    @test delete_view.arr isa Telum.DeleteSingletonTLArray
+    @test delete_view.scale == 2
+    view_ref = 2 * permutedims(eager, (2, 1))
+    Telum.compute_sectors(delete_view, [1])
+    delete_view_rmt, delete_view_scale = Telum.sector_rmt(delete_view, 1)
+    view_ref_rmt, view_ref_scale = Telum.sector_rmt(view_ref, 1)
+    @test delete_view_scale .* delete_view_rmt ≈ view_ref_scale .* view_ref_rmt
+end
+
+@testset "deleteSingleton densifies singleton diagonal axis" begin
+    symm = (U1,)
+    trivial = ((0,),)
+    qlabels = [(trivial, trivial)]
+    wmatdata = Float64[]
+    wmatinfo = [Telum._empty_wmat_info(Val(0))]
+    spaces = ([(trivial, 1)], [(trivial, 1)])
+    qdiag = TLArray(symm, qlabels, wmatdata, wmatinfo,
+                    [DiagRMT([2.0], Val(3), (1, 2))],
+                    (TLIndex("x", '+'), TLIndex("y", '-')), spaces)
+
+    deleted = deleteSingleton(qdiag, 1)
+    @test deleted.RMTs[1] isa Array{Float64, 2}
+    @test deleted.RMTs[1] == reshape([2.0], 1, 1)
+end
+
 @testset "TLArray tensor product" begin
     option = FermionSOptions(1, :U1, :SU2, nothing)
     q0 = getLocalSpace(option)

@@ -314,6 +314,16 @@ function prepared_sector_rmt(q::SubTLArray{T},
     return _permuted_rmt_data(rmt, perm, Val(NF), Val(CN), Val(N)), alpha
 end
 
+function prepared_sector_rmt(q::SingletonTLArray,
+                             idx::Int,
+                             perm::NTuple{RD, Int},
+                             ::Val{NF},
+                             ::Val{CN},
+                             ::Val{N}) where {RD, NF, CN, N}
+    rmt, alpha = sector_rmt(q, idx)
+    return _permuted_rmt_data(rmt, perm, Val(NF), Val(CN), Val(N)), alpha
+end
+
 function prepared_sector_rmt(q::TLArrayView{T, QD},
                              idx::Int,
                              perm::NTuple{RD, Int},
@@ -333,6 +343,7 @@ end
 @inline _effective_rmt_perm(q::TLArray, perm::NTuple{RD, Int}, ::Val{RD}) where {RD} = perm
 @inline _effective_rmt_perm(q::TLArrayContraction, perm::NTuple{RD, Int}, ::Val{RD}) where {RD} = perm
 @inline _effective_rmt_perm(q::SubTLArray, perm::NTuple{RD, Int}, ::Val{RD}) where {RD} = perm
+@inline _effective_rmt_perm(q::SingletonTLArray, perm::NTuple{RD, Int}, ::Val{RD}) where {RD} = perm
 
 @inline function _effective_rmt_perm(q::TLArrayView{T, QD},
                                      perm::NTuple{RD, Int},
@@ -340,7 +351,7 @@ end
     return ntuple(pos -> perm[pos] <= QD ? q.perm[perm[pos]] : perm[pos], Val(RD))
 end
 
-@inline function _layout_source_rmt(q::Union{TLArray, TLArrayContraction, SubTLArray}, sector::Int)
+@inline function _layout_source_rmt(q::Union{TLArray, TLArrayContraction, SubTLArray, SingletonTLArray}, sector::Int)
     rmt, _ = sector_rmt(q, sector)
     return rmt
 end
@@ -352,6 +363,7 @@ end
 @inline _stream_conj_requires_buffer(q::TLArray{T}) where {T} = false
 @inline _stream_conj_requires_buffer(q::TLArrayContraction{T}) where {T} = false
 @inline _stream_conj_requires_buffer(q::SubTLArray{T}) where {T} = false
+@inline _stream_conj_requires_buffer(q::Union{AddSingletonTLArray{T}, DeleteSingletonTLArray{T}}) where {T} = false
 @inline _stream_conj_requires_buffer(q::TLArrayView{T}) where {T} = q.conj && !(T <: Real)
 
 function _can_stream_prepared_rmt(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
@@ -415,6 +427,8 @@ end
     q.rmt_sizes[sector]
 @inline _sector_rmt_size(q::SubTLArray{T, QD, N, RD}, sector::Int) where {T, QD, N, RD} =
     q.rmt_sizes[sector]
+@inline _sector_rmt_size(q::Union{AddSingletonTLArray{T, QD, N, RD}, DeleteSingletonTLArray{T, QD, N, RD}}, sector::Int) where {T, QD, N, RD} =
+    sector_rmt_dim(q, sector)::NTuple{RD, Int}
 
 function _prepared_rmt_dims_from_size(dims::NTuple{RD, Int},
                                       perm::NTuple{RD, Int},
@@ -470,6 +484,27 @@ end
 
 function _prepare_sector_rmt_into!(buffer::Vector{T},
                                    q::TLArrayContraction{T},
+                                   idx::Int,
+                                   perm::NTuple{RD, Int},
+                                   ::Val{NF},
+                                   ::Val{CN},
+                                   ::Val{N}) where {T, RD, NF, CN, N}
+    rmt, alpha = sector_rmt(q, idx)
+    kept_sizes, contracted_sizes, om_sizes =
+        _rmt_layout_sizes(rmt, perm, Val(NF), Val(CN), Val(N))
+    out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
+    len = prod(out_dims; init=1)
+    @assert length(buffer) >= len
+    dest = reshape(view(buffer, 1:len), out_dims)
+    _hptt_permutedims!(dest, _rmt_array_data(rmt), perm)
+    return reshape(view(buffer, 1:len),
+                   prod(kept_sizes; init=1),
+                   prod(contracted_sizes; init=1),
+                   prod(om_sizes; init=1)), alpha
+end
+
+function _prepare_sector_rmt_into!(buffer::Vector{T},
+                                   q::Union{AddSingletonTLArray{T}, DeleteSingletonTLArray{T}},
                                    idx::Int,
                                    perm::NTuple{RD, Int},
                                    ::Val{NF},
@@ -1082,11 +1117,16 @@ end
 compute_sectors(q::TLArray, sector_inds::AbstractVector{<:Integer}) = q
 compute_sectors(q::TLArrayView, sector_inds::AbstractVector{<:Integer}) =
     compute_sectors(q.arr, sector_inds)
+function compute_sectors(q::SingletonTLArray, sector_inds::AbstractVector{<:Integer})
+    compute_sectors(q.arr, sector_inds)
+    return q
+end
 
 @inline reference_depth(q::TLArray) = 0
 @inline reference_depth(q::TLArrayView) = reference_depth(q.arr)
 @inline reference_depth(q::TLArrayContraction) = q.reference_depth
 @inline reference_depth(q::SubTLArray) = q.reference_depth
+@inline reference_depth(q::SingletonTLArray) = reference_depth(q.arr)
 
 function _unique_requested_sectors!(out::Vector{Int},
                                     seen::BitVector,

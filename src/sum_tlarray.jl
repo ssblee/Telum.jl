@@ -131,6 +131,10 @@ function _sum_processed_rmt_dims(q::TLArrayView{T, QD}, sector::Int, ::Val{RD}) 
     return sector_rmt_dim(q, sector)
 end
 
+function _sum_processed_rmt_dims(q::SingletonTLArray, sector::Int, ::Val{RD}) where {RD}
+    return sector_rmt_dim(q, sector)
+end
+
 @inline function _sum_reference_safe(q::TLArray{T, QD, N, RD}, sector::Int, ::Type{T}) where {T, QD, N, RD}
     rmt, _ = sector_rmt(q, sector)
     return rmt isa Array{T, RD} || rmt isa DiagRMT
@@ -150,6 +154,8 @@ end
     (!q.conj || T <: Real) || return false
     return _sum_reference_safe(q.arr, sector, RT)
 end
+
+@inline _sum_reference_safe(q::SingletonTLArray, sector::Int, ::Type{T}) where {T} = false
 
 @inline _sum_needs_buffer(q::AbstractTLArray, sector::Int, ::Type{T}) where {T} =
     !_sum_reference_safe(q, sector, T)
@@ -258,6 +264,14 @@ function _sum_copy_processed_unscaled!(dest, q::TLArrayView{T, QD, N, RD}, secto
     return dest
 end
 
+function _sum_copy_processed_unscaled!(dest, q::SingletonTLArray, sector::Int, ::Type{T}) where {T}
+    source, _ = sector_rmt(q, sector)
+    @inbounds for I in CartesianIndices(dest)
+        dest[I] = source[I]
+    end
+    return dest
+end
+
 function _sum_sector_scale(q::TLArray{T}, sector::Int, ::Type{RT}) where {T, RT}
     return one(RT)
 end
@@ -267,6 +281,11 @@ function _sum_sector_scale(q::TLArrayView, sector::Int, ::Type{RT}) where {RT}
     scale = alpha * q.scale
     q.conj && (scale = conj(scale))
     return _sum_scale(RT, scale)
+end
+
+function _sum_sector_scale(q::SingletonTLArray, sector::Int, ::Type{RT}) where {RT}
+    _, alpha = sector_rmt(q, sector)
+    return _sum_scale(RT, alpha)
 end
 
 function _sum_prepare_sector_rmt!(buffers::Vector{Vector{T}},

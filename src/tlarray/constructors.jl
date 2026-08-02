@@ -66,16 +66,17 @@ function zero_qlabels(symm::NTuple{N, Any}) where {N}
     return ntuple(n -> Tuple(0 for _ in 1:nzops(symm[n])), N)
 end
 
-zero_qlabels(q::TLArray) = zero_qlabels(symm(q))
+zero_qlabels(q::AbstractTLArray) = zero_qlabels(symm(q))
 
-function _is_singleton_leg(q::TLArray{T, QD, N}, leg::Int) where {T, QD, N}
+function _is_singleton_leg(q::AbstractTLArray{T, QD, N}, leg::Int) where {T, QD, N}
     1 <= leg <= QD || throw(ArgumentError("leg must lie in 1:$QD, got $leg"))
-    return length(q.spaces[leg]) == 1 && only(q.spaces[leg]) == (zero_qlabels(q), 1)
+    leg_spaces = spaces(q)[leg]
+    return length(leg_spaces) == 1 && only(leg_spaces) == (zero_qlabels(q), 1)
 end
 
-_singleton_legs(q::TLArray{T, QD}) where {T, QD} = [leg for leg in 1:QD if _is_singleton_leg(q, leg)]
+_singleton_legs(q::AbstractTLArray{T, QD}) where {T, QD} = [leg for leg in 1:QD if _is_singleton_leg(q, leg)]
 
-function _normalize_delete_singleton_legs(q::TLArray{T, QD}, legs) where {T, QD}
+function _normalize_delete_singleton_legs(q::AbstractTLArray{T, QD}, legs) where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[i for i in legs]
     isempty(positions) && throw(ArgumentError("at least one deletion leg must be specified"))
     all(1 <= leg <= QD for leg in positions) || throw(ArgumentError(
@@ -103,11 +104,31 @@ function _delete_singleton_rmt(rmt::AbstractArray{T, RD}, positions, qd::Int, n_
 end
 
 function _delete_singleton_rmt(rmt::DiagRMT{T, RD}, positions, qd::Int, n_symm::Int) where {T, RD}
-    any(pos -> pos == rmt.axis[1] || pos == rmt.axis[2], positions) && throw(ArgumentError(
-        "cannot preserve DiagRMT when deleting a diagonal axis"))
+    if any(pos -> pos == rmt.axis[1] || pos == rmt.axis[2], positions)
+        return _delete_singleton_rmt(Array{T, RD}(rmt), positions, qd, n_symm)
+    end
     shift_axis(axis) = axis - count(pos -> pos < axis, positions)
     return DiagRMT{T,RD - length(positions)}(rmt.diag, (shift_axis(rmt.axis[1]), shift_axis(rmt.axis[2])))
 end
+
+function _delete_singleton_preserves_diag(q::AbstractTLArray, positions)
+    axes = _diag_rmt_axes_if_valid(spaces(q))
+    isnothing(axes) && return false
+    return !any(pos -> pos == axes[1] || pos == axes[2], positions)
+end
+
+@inline _delete_singleton_rmt_type(::Type{Array{T, RD}}, new_rd::Int, q, positions) where {T, RD} =
+    Array{T, new_rd}
+@inline _delete_singleton_rmt_type(::Type{<:DiagRMT{T, RD}}, new_rd::Int, q, positions) where {T, RD} =
+    _delete_singleton_preserves_diag(q, positions) ? DiagRMT{T, new_rd} : Array{T, new_rd}
+@inline _delete_singleton_rmt_type(::Type{<:AbstractArray{T, RD}}, new_rd::Int, q, positions) where {T, RD} =
+    Array{T, new_rd}
+@inline _insert_singleton_rmt_type(::Type{Array{T, RD}}, new_rd::Int) where {T, RD} =
+    Array{T, new_rd}
+@inline _insert_singleton_rmt_type(::Type{<:DiagRMT{T, RD}}, new_rd::Int) where {T, RD} =
+    DiagRMT{T, new_rd}
+@inline _insert_singleton_rmt_type(::Type{<:AbstractArray{T, RD}}, new_rd::Int) where {T, RD} =
+    Array{T, new_rd}
 
 function _delete_singleton_impl(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, positions) where {T, QD, N, RD, QT, PS, M, RMT}
     new_qd = QD - length(positions)
@@ -118,8 +139,8 @@ function _delete_singleton_impl(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, positi
 
     qlabels = Matrix{QT}(undef, new_qd, sector_count(q))
     wmatdata, wmatinfo = _copy_wmat_storage(q; deep=true)
-    RMTs = RMT <: DiagRMT ? Vector{DiagRMT{T, new_rd}}(undef, sector_count(q)) :
-                             Vector{Array{T, new_rd}}(undef, sector_count(q))
+    RMTout = _delete_singleton_rmt_type(RMT, new_rd, q, positions)
+    RMTs = Vector{RMTout}(undef, sector_count(q))
     keep_legs = [leg for leg in 1:QD if leg ∉ positions]
     for sector_index in sector_slots(q)
         for (new_leg, old_leg) in enumerate(keep_legs)
@@ -178,6 +199,80 @@ function deleteSingleton(q::TLArray{T, QD}, legs::LegList) where {T, QD}
     isempty(bad) || throw(ArgumentError(
         "deleteSingleton requires singleton legs, but legs $bad are not singleton"))
     return _delete_singleton_impl(q, positions)
+end
+
+function deleteSingleton(q::AbstractTLArray{T, QD}; dir=nothing, itag=nothing, plev=nothing) where {T, QD}
+    singleton_legs = if isnothing(dir) && isnothing(itag) && isnothing(plev)
+        _singleton_legs(q)
+    else
+        candidate_legs = findlegs(q; dir=dir, itag=itag, plev=plev)
+        [leg for leg in candidate_legs if _is_singleton_leg(q, leg)]
+    end
+
+    if isempty(singleton_legs)
+        if isnothing(dir) && isnothing(itag) && isnothing(plev)
+            @warn "deleteSingleton: no singleton legs found"
+        else
+            @warn "deleteSingleton: no singleton legs matched the requested criteria"
+        end
+        return q
+    end
+    return deleteSingleton(q, singleton_legs)
+end
+
+function deleteSingleton(q::AbstractTLArray, leg::Integer)
+    return deleteSingleton(q, (leg,))
+end
+
+function deleteSingleton(q::AbstractTLArray{T, QD}, legs::LegList) where {T, QD}
+    positions = _normalize_delete_singleton_legs(q, legs)
+    bad = [leg for leg in positions if !_is_singleton_leg(q, leg)]
+    isempty(bad) || throw(ArgumentError(
+        "deleteSingleton requires singleton legs, but legs $bad are not singleton"))
+    return _delete_singleton_lazy(q, positions)
+end
+
+function deleteSingleton(q::TLArrayView{T, QD}; dir=nothing, itag=nothing, plev=nothing) where {T, QD}
+    singleton_legs = if isnothing(dir) && isnothing(itag) && isnothing(plev)
+        _singleton_legs(q)
+    else
+        candidate_legs = findlegs(q; dir=dir, itag=itag, plev=plev)
+        [leg for leg in candidate_legs if _is_singleton_leg(q, leg)]
+    end
+
+    if isempty(singleton_legs)
+        if isnothing(dir) && isnothing(itag) && isnothing(plev)
+            @warn "deleteSingleton: no singleton legs found"
+        else
+            @warn "deleteSingleton: no singleton legs matched the requested criteria"
+        end
+        return q
+    end
+    return deleteSingleton(q, singleton_legs)
+end
+
+function deleteSingleton(q::TLArrayView{T, QD}, leg::Integer) where {T, QD}
+    return deleteSingleton(q, (leg,))
+end
+
+function deleteSingleton(q::TLArrayView{T, QD}, legs::LegList) where {T, QD}
+    positions = _normalize_delete_singleton_legs(q, legs)
+    bad = [leg for leg in positions if !_is_singleton_leg(q, leg)]
+    isempty(bad) || throw(ArgumentError(
+        "deleteSingleton requires singleton legs, but legs $bad are not singleton"))
+
+    source_positions = sort!(_view_arr_legs(q, positions))
+    new_arr = deleteSingleton(q.arr, source_positions)
+    deleted_visible = Set(positions)
+
+    new_perm = Int[]
+    sizehint!(new_perm, QD - length(positions))
+    for old_visible_leg in 1:QD
+        old_visible_leg in deleted_visible && continue
+        old_source_leg = q.perm[old_visible_leg]
+        push!(new_perm, old_source_leg - count(pos -> pos < old_source_leg, source_positions))
+    end
+    return _normalize_tlarray_view(new_arr, q.conj, q.scale, Tuple(new_perm))
 end
 
 function _expand_singleton_kw(values, count::Int, name::AbstractString)
@@ -255,6 +350,103 @@ function _insert_singleton_rmt(rmt::DiagRMT{T, RD},
     return DiagRMT{T,RD + length(positions)}(rmt.diag, (shift_axis(rmt.axis[1]), shift_axis(rmt.axis[2])))
 end
 
+function _add_singleton_leg_maps(qd::Int, positions)
+    new_qd = qd + length(positions)
+    source_to_result = Vector{Int}(undef, qd)
+    result_to_source = zeros(Int, new_qd)
+    old_leg = 1
+    insert_idx = 1
+    for new_leg in 1:new_qd
+        if insert_idx <= length(positions) && positions[insert_idx] == new_leg
+            insert_idx += 1
+        else
+            source_to_result[old_leg] = new_leg
+            result_to_source[new_leg] = old_leg
+            old_leg += 1
+        end
+    end
+    return source_to_result, result_to_source
+end
+
+function _delete_singleton_leg_maps(qd::Int, positions)
+    new_qd = qd - length(positions)
+    source_to_result = zeros(Int, qd)
+    result_to_source = Vector{Int}(undef, new_qd)
+    new_leg = 1
+    delete_idx = 1
+    for old_leg in 1:qd
+        if delete_idx <= length(positions) && positions[delete_idx] == old_leg
+            delete_idx += 1
+        else
+            source_to_result[old_leg] = new_leg
+            result_to_source[new_leg] = old_leg
+            new_leg += 1
+        end
+    end
+    return source_to_result, result_to_source
+end
+
+function _add_singleton_lazy(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}, positions,
+                             itag_vec, plev_vec, lock_vec, dir_vec) where {T, QD, N, RD, QT, PS, M, RMT}
+    new_qd = QD + length(positions)
+    new_rd = RD + length(positions)
+    trivial_qlabels = zero_qlabels(q)
+    source_to_result, result_to_source = _add_singleton_leg_maps(QD, positions)
+
+    source_inds = inds(q)
+    source_spaces = spaces(q)
+    new_inds = Vector{TLIndex}(undef, new_qd)
+    new_spaces = Vector{Vector{Tuple{QT, Int}}}(undef, new_qd)
+    singleton_space = [(trivial_qlabels, 1)]
+    insert_idx = 1
+    for new_leg in 1:new_qd
+        source_leg = result_to_source[new_leg]
+        if source_leg == 0
+            new_inds[new_leg] = TLIndex(String(itag_vec[insert_idx]), dir_vec[insert_idx],
+                                       plev_vec[insert_idx], lock_vec[insert_idx])
+            new_spaces[new_leg] = copy(singleton_space)
+            insert_idx += 1
+        else
+            new_inds[new_leg] = source_inds[source_leg]
+            new_spaces[new_leg] = source_spaces[source_leg]
+        end
+    end
+
+    qlabels = Vector{NTuple{new_qd, QT}}(undef, sector_count(q))
+    for sector in sector_slots(q)
+        qlabels[sector] = ntuple(Val(new_qd)) do new_leg
+            source_leg = result_to_source[new_leg]
+            source_leg == 0 ? trivial_qlabels : sector_qlabel(QT, q, sector, source_leg)
+        end
+    end
+
+    RMTout = _insert_singleton_rmt_type(RMT, new_rd)
+    return AddSingletonTLArray{T, new_qd, N, new_rd, QT, PS, M, RMTout}(
+        qlabels, Tuple(new_inds), Tuple(new_spaces), q, positions,
+        source_to_result, result_to_source)
+end
+
+function _delete_singleton_lazy(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}, positions) where {T, QD, N, RD, QT, PS, M, RMT}
+    new_qd = QD - length(positions)
+    new_rd = RD - length(positions)
+    source_to_result, result_to_source = _delete_singleton_leg_maps(QD, positions)
+
+    source_inds = inds(q)
+    source_spaces = spaces(q)
+    new_inds = [source_inds[old_leg] for old_leg in result_to_source]
+    new_spaces = [source_spaces[old_leg] for old_leg in result_to_source]
+
+    qlabels = Vector{NTuple{new_qd, QT}}(undef, sector_count(q))
+    for sector in sector_slots(q)
+        qlabels[sector] = ntuple(new_leg -> sector_qlabel(QT, q, sector, result_to_source[new_leg]), Val(new_qd))
+    end
+
+    RMTout = _delete_singleton_rmt_type(RMT, new_rd, q, positions)
+    return DeleteSingletonTLArray{T, new_qd, N, new_rd, QT, PS, M, RMTout}(
+        qlabels, Tuple(new_inds), Tuple(new_spaces), q, positions,
+        source_to_result, result_to_source)
+end
+
 """
     addSingleton(q::TLArray; nlegs=1, itag="", plev=0, lock=0, dir='+')
 
@@ -315,8 +507,8 @@ function addSingleton(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
 
     qlabels = Matrix{QT}(undef, new_qd, sector_count(q))
     wmatdata, wmatinfo = _copy_wmat_storage(q; deep=true)
-    RMTs = RMT <: DiagRMT ? Vector{DiagRMT{T, new_rd}}(undef, sector_count(q)) :
-                             Vector{Array{T, new_rd}}(undef, sector_count(q))
+    RMTout = _insert_singleton_rmt_type(RMT, new_rd)
+    RMTs = Vector{RMTout}(undef, sector_count(q))
     for sector_index in sector_slots(q)
         old_leg = 1
         insert_idx = 1
@@ -334,6 +526,21 @@ function addSingleton(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
     end
 
     return TLArray(product_symms(PS), qlabels, wmatdata, wmatinfo, RMTs, Tuple(new_inds), Tuple(new_spaces))
+end
+
+function addSingleton(q::AbstractTLArray{T, QD}; nlegs::Integer=1,
+                      itag="", plev=0, lock=0, dir='+') where {T, QD}
+    count = Int(nlegs)
+    count >= 1 || throw(ArgumentError("nlegs must be at least 1, got $nlegs"))
+    positions = (QD + 1):(QD + count)
+    return addSingleton(q, positions; itag=itag, plev=plev, lock=lock, dir=dir)
+end
+
+function addSingleton(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
+                      itag="", plev=0, lock=0, dir='+') where {T, QD, N, RD, QT, PS, M, RMT}
+    positions, itag_vec, plev_vec, lock_vec, dir_vec =
+        _singleton_insert_spec(q, legs; itag=itag, plev=plev, lock=lock, dir=dir)
+    return _add_singleton_lazy(q, positions, itag_vec, plev_vec, lock_vec, dir_vec)
 end
 
 function addSingleton(q::TLArrayView{T, QD}; nlegs::Integer=1,
@@ -367,13 +574,6 @@ function addSingleton(q::TLArrayView{T, QD}, legs;
     end
     return _normalize_tlarray_view(new_arr, q.conj, q.scale, Tuple(new_perm))
 end
-
-addSingleton(q::TLArrayContraction; nlegs::Integer=1,
-             itag="", plev=0, lock=0, dir='+') =
-    addSingleton(to_concrete(q); nlegs=nlegs, itag=itag, plev=plev, lock=lock, dir=dir)
-
-addSingleton(q::TLArrayContraction, legs; itag="", plev=0, lock=0, dir='+') =
-    addSingleton(to_concrete(q), legs; itag=itag, plev=plev, lock=lock, dir=dir)
 
 """
     getvac(q::TLArray, itags::Tuple{Vararg{AbstractString, 2}}=("", "")) -> TLArray

@@ -582,6 +582,30 @@ struct SubTLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD
     reference_depth::Int
 end
 
+struct AddSingletonTLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} <:
+       AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
+    qlabels::Vector{NTuple{QD, QT}}
+    inds::NTuple{QD, TLIndex}
+    spaces::NTuple{QD, Vector{Tuple{QT, Int}}}
+
+    arr::AbstractTLArray
+    inserted_legs::Vector{Int}
+    source_to_result_legs::Vector{Int}
+    result_to_source_legs::Vector{Int}
+end
+
+struct DeleteSingletonTLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{T, RD}} <:
+       AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}
+    qlabels::Vector{NTuple{QD, QT}}
+    inds::NTuple{QD, TLIndex}
+    spaces::NTuple{QD, Vector{Tuple{QT, Int}}}
+
+    arr::AbstractTLArray
+    deleted_legs::Vector{Int}
+    source_to_result_legs::Vector{Int}
+    result_to_source_legs::Vector{Int}
+end
+
 function _qlabel_vector(qlabels::AbstractMatrix{QT}, ::Val{QD}) where {QT, QD}
     size(qlabels, 1) == QD ||
         throw(ArgumentError("qlabels row count must equal number of TLArray legs"))
@@ -636,10 +660,22 @@ Base.propertynames(q::SubTLArray, private::Bool=false) =
     (:qlabels, :wmatdata, :wmatinfo, :RMTs, :isdefined, :iszero, :inds, :spaces,
      :arr, :source_sectors, :saved_indices, :affected_legs, :rmt_sizes, :lock,
      :reference_depth)
+Base.propertynames(q::AddSingletonTLArray, private::Bool=false) =
+    (:qlabels, :wmatdata, :wmatinfo, :inds, :spaces, :arr, :inserted_legs,
+     :source_to_result_legs, :result_to_source_legs)
+Base.propertynames(q::DeleteSingletonTLArray, private::Bool=false) =
+    (:qlabels, :wmatdata, :wmatinfo, :inds, :spaces, :arr, :deleted_legs,
+     :source_to_result_legs, :result_to_source_legs)
 
 function Base.getproperty(q::TLArrayView, name::Symbol)
     name === :inds && return inds(q)
     name === :spaces && return spaces(q)
+    return getfield(q, name)
+end
+
+function Base.getproperty(q::Union{AddSingletonTLArray, DeleteSingletonTLArray}, name::Symbol)
+    name === :wmatdata && return getproperty(getfield(q, :arr), :wmatdata)
+    name === :wmatinfo && return getproperty(getfield(q, :arr), :wmatinfo)
     return getfield(q, name)
 end
 
@@ -756,6 +792,63 @@ end
 end
 @inline sector_rmt(q::SubTLArray{T}, sector::Int) where {T} =
     (_defined_sector_rmt(q, sector), one(T))
+
+const SingletonTLArray = Union{AddSingletonTLArray, DeleteSingletonTLArray}
+
+@inline inds(q::SingletonTLArray) = q.inds
+@inline spaces(q::SingletonTLArray) = q.spaces
+@inline sector_count(q::SingletonTLArray) = sector_count(q.arr)
+@inline sector_slots(q::SingletonTLArray) = sector_slots(q.arr)
+@inline nsectors(q::SingletonTLArray) = nsectors(q.arr)
+@inline is_sector_defined(q::SingletonTLArray, sector::Int) = is_sector_defined(q.arr, sector)
+@inline is_sector_zero(q::SingletonTLArray, sector::Int) = is_sector_zero(q.arr, sector)
+@inline is_sector_active(q::SingletonTLArray, sector::Int) = is_sector_active(q.arr, sector)
+@inline sector_qlabel(q::SingletonTLArray, sector::Int, leg::Int) = q.qlabels[sector][leg]
+@inline sector_qlabel(::Type{QT}, q::SingletonTLArray, sector::Int, leg::Int) where {QT} =
+    q.qlabels[sector][leg]::QT
+@inline sector_wmat(q::SingletonTLArray, sector::Int, n::Int) =
+    sector_wmat(q.arr, sector, n)
+@inline sector_wmat(q::SingletonTLArray, sector::Int, ::Val{n}) where {n} =
+    sector_wmat(q.arr, sector, Val(n))
+@inline sector_wmat_slot(q::SingletonTLArray, sector::Int, slot::Int) =
+    sector_wmat_slot(q.arr, sector, slot)
+
+@inline function sector_rmt_dim(q::AddSingletonTLArray{T, QD, N, RD}, sector::Int) where {T, QD, N, RD}
+    source_dims = sector_rmt_dim(q.arr, sector)
+    ninsert = length(q.inserted_legs)
+    return ntuple(Val(RD)) do axis
+        if axis <= QD
+            source_axis = q.result_to_source_legs[axis]
+            source_axis == 0 ? 1 : source_dims[source_axis]
+        else
+            source_dims[axis - ninsert]
+        end
+    end::NTuple{RD, Int}
+end
+
+@inline function sector_rmt_dim(q::DeleteSingletonTLArray{T, QD, N, RD}, sector::Int) where {T, QD, N, RD}
+    source_dims = sector_rmt_dim(q.arr, sector)
+    ndelete = length(q.deleted_legs)
+    return ntuple(Val(RD)) do axis
+        axis <= QD ? source_dims[q.result_to_source_legs[axis]] :
+                     source_dims[axis + ndelete]
+    end::NTuple{RD, Int}
+end
+
+@inline sector_rmt_axis_dim(q::SingletonTLArray, sector::Int, leg::Int) =
+    sector_rmt_dim(q, sector)[leg]
+
+@inline function sector_rmt(q::AddSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT}, sector::Int) where {T, QD, N, RD, QT, PS, M, RMT}
+    rmt, scale = sector_rmt(q.arr, sector)
+    data = _insert_singleton_rmt(rmt, q.inserted_legs, QD - length(q.inserted_legs), N)
+    return data::RMT, scale::T
+end
+
+@inline function sector_rmt(q::DeleteSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT}, sector::Int) where {T, QD, N, RD, QT, PS, M, RMT}
+    rmt, scale = sector_rmt(q.arr, sector)
+    data = _delete_singleton_rmt(rmt, q.deleted_legs, QD + length(q.deleted_legs), N)
+    return data::RMT, scale::T
+end
 
 @inline _identity_phys_perm(::Val{QD}) where {QD} = ntuple(identity, Val(QD))
 @inline _identity_rmt_perm(::Val{RD}) where {RD} = ntuple(identity, Val(RD))
@@ -949,6 +1042,11 @@ end
 
 function materialize(q::SubTLArray)
     compute_sectors(q, sector_slots(q))
+    return q
+end
+
+function materialize(q::SingletonTLArray)
+    materialize(q.arr)
     return q
 end
 
@@ -2592,6 +2690,201 @@ function setitag(q::TLArrayContraction, legs::LegList, tags::AbstractString)
     return _modify_itag(q, legs, _ -> norm)
 end
 function setitag(q::TLArrayContraction, pred::Function, tags::AbstractString)
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, findlegs(q, pred), _ -> norm)
+end
+
+function _singleton_rewrap(q::AddSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT},
+                           inds::NTuple{QD, TLIndex}) where {T, QD, N, RD, QT, PS, M, RMT}
+    return AddSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT}(
+        q.qlabels, inds, q.spaces, q.arr, q.inserted_legs,
+        q.source_to_result_legs, q.result_to_source_legs)
+end
+
+function _singleton_rewrap(q::DeleteSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT},
+                           inds::NTuple{QD, TLIndex}) where {T, QD, N, RD, QT, PS, M, RMT}
+    return DeleteSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT}(
+        q.qlabels, inds, q.spaces, q.arr, q.deleted_legs,
+        q.source_to_result_legs, q.result_to_source_legs)
+end
+
+function _modify_lock(q::SingletonTLArray, legs, modify_fn::Function)
+    new_inds = collect(q.inds)
+    for i in legs
+        idx = new_inds[i]
+        new_inds[i] = TLIndex(idx.itags, idx.dir, idx.plev, modify_fn(idx.lock), idx.dual)
+    end
+    return _singleton_rewrap(q, Tuple(new_inds))
+end
+
+function _modify_plev(q::SingletonTLArray, legs, modify_fn::Function)
+    new_inds = collect(q.inds)
+    for i in legs
+        idx = new_inds[i]
+        new_inds[i] = TLIndex(idx.itags, idx.dir, modify_fn(idx.plev), idx.lock, idx.dual)
+    end
+    return _singleton_rewrap(q, Tuple(new_inds))
+end
+
+function _modify_itag(q::SingletonTLArray, legs, modify_fn::Function)
+    new_inds = collect(q.inds)
+    for i in legs
+        idx = new_inds[i]
+        new_inds[i] = TLIndex(modify_fn(idx.itags), idx.dir, idx.plev, idx.lock, idx.dual)
+    end
+    return _singleton_rewrap(q, Tuple(new_inds))
+end
+
+Base.lock(q::SingletonTLArray, leg::Integer; inc::Int=1) =
+    _modify_lock(q, (leg,), lk -> _lock_inc(lk, inc))
+Base.lock(q::SingletonTLArray, legs::LegList; inc::Int=1) =
+    _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
+Base.lock(q::SingletonTLArray, pred::Function; inc::Int=1) =
+    _modify_lock(q, findlegs(q, pred), lk -> _lock_inc(lk, inc))
+function Base.lock(q::SingletonTLArray; inc::Int=1, dir=nothing, itag=nothing,
+                   plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_lock(q, legs, lk -> _lock_inc(lk, inc))
+end
+
+lockp(q::SingletonTLArray, leg::Integer) = _modify_lock(q, (leg,), _ -> -1)
+lockp(q::SingletonTLArray, legs::LegList) = _modify_lock(q, legs, _ -> -1)
+lockp(q::SingletonTLArray, pred::Function) =
+    _modify_lock(q, findlegs(q, pred), _ -> -1)
+function lockp(q::SingletonTLArray; dir=nothing, itag=nothing, plev=nothing,
+               lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_lock(q, legs, _ -> -1)
+end
+
+Base.unlock(q::SingletonTLArray, leg::Integer) = _modify_lock(q, (leg,), _ -> 0)
+Base.unlock(q::SingletonTLArray, legs::LegList) = _modify_lock(q, legs, _ -> 0)
+Base.unlock(q::SingletonTLArray, pred::Function) =
+    _modify_lock(q, findlegs(q, pred), _ -> 0)
+function Base.unlock(q::SingletonTLArray; dir=nothing, itag=nothing, plev=nothing,
+                     lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_lock(q, legs, _ -> 0)
+end
+
+function prime(q::SingletonTLArray; inc::Int=1, dir=nothing, itag=nothing,
+               plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_plev(q, legs, p -> max(0, p + inc))
+end
+prime(q::SingletonTLArray, leg::Integer; inc::Int=1) =
+    _modify_plev(q, (leg,), p -> max(0, p + inc))
+prime(q::SingletonTLArray, legs::LegList; inc::Int=1) =
+    _modify_plev(q, legs, p -> max(0, p + inc))
+prime(q::SingletonTLArray, pred::Function; inc::Int=1) =
+    _modify_plev(q, findlegs(q, pred), p -> max(0, p + inc))
+
+function setprime(q::SingletonTLArray, n::Int; dir=nothing, itag=nothing,
+                  plev=nothing, lock=nothing, rev::Bool=false)
+    n >= 0 || throw(ArgumentError("prime level must be non-negative, got $n"))
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_plev(q, legs, _ -> n)
+end
+function setprime(q::SingletonTLArray, leg::Integer, n::Int)
+    n >= 0 || throw(ArgumentError("prime level must be non-negative, got $n"))
+    return _modify_plev(q, (leg,), _ -> n)
+end
+function setprime(q::SingletonTLArray, legs, n::Int)
+    n >= 0 || throw(ArgumentError("prime level must be non-negative, got $n"))
+    return _modify_plev(q, legs, _ -> n)
+end
+
+function noprime(q::SingletonTLArray; dir=nothing, itag=nothing, plev=nothing,
+                 lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_plev(q, legs, _ -> 0)
+end
+noprime(q::SingletonTLArray, leg::Integer) = _modify_plev(q, (leg,), _ -> 0)
+noprime(q::SingletonTLArray, legs::LegList) = _modify_plev(q, legs, _ -> 0)
+noprime(q::SingletonTLArray, pred::Function) =
+    _modify_plev(q, findlegs(q, pred), _ -> 0)
+
+function additag(q::SingletonTLArray, newtags::AbstractString; dir=nothing,
+                 itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _add_itag(base, newtags))
+end
+additag(q::SingletonTLArray, leg::Integer, newtags::AbstractString) =
+    _modify_itag(q, (leg,), base -> _add_itag(base, newtags))
+additag(q::SingletonTLArray, legs::LegList, newtags::AbstractString) =
+    _modify_itag(q, legs, base -> _add_itag(base, newtags))
+additag(q::SingletonTLArray, pred::Function, newtags::AbstractString) =
+    _modify_itag(q, findlegs(q, pred), base -> _add_itag(base, newtags))
+
+function removeitag(q::SingletonTLArray, tags::ITagQuerySpec; dir=nothing,
+                    itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _remove_itag(base, tags))
+end
+removeitag(q::SingletonTLArray, leg::Integer, tags::ITagQuerySpec) =
+    _modify_itag(q, (leg,), base -> _remove_itag(base, tags))
+removeitag(q::SingletonTLArray, legs::LegList, tags::ITagQuerySpec) =
+    _modify_itag(q, legs, base -> _remove_itag(base, tags))
+removeitag(q::SingletonTLArray, pred::Function, tags::ITagQuerySpec) =
+    _modify_itag(q, findlegs(q, pred), base -> _remove_itag(base, tags))
+
+function replaceitag(q::SingletonTLArray, replacements::ITagReplacementPair...;
+                     dir=nothing, itag=nothing, plev=nothing, lock=nothing,
+                     rev::Bool=false)
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+function replaceitag(q::SingletonTLArray, replacements::ITagReplacementDict;
+                     dir=nothing, itag=nothing, plev=nothing, lock=nothing,
+                     rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+function replaceitag(q::SingletonTLArray, leg::Integer,
+                     replacements::ITagReplacementPair...)
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    return _modify_itag(q, (leg,), base -> _replace_itag(base, replacements))
+end
+replaceitag(q::SingletonTLArray, leg::Integer,
+            replacements::ITagReplacementDict) =
+    _modify_itag(q, (leg,), base -> _replace_itag(base, replacements))
+function replaceitag(q::SingletonTLArray, legs::LegList,
+                     replacements::ITagReplacementPair...)
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    return _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+end
+replaceitag(q::SingletonTLArray, legs::LegList,
+            replacements::ITagReplacementDict) =
+    _modify_itag(q, legs, base -> _replace_itag(base, replacements))
+function replaceitag(q::SingletonTLArray, pred::Function,
+                     replacements::ITagReplacementPair...)
+    isempty(replacements) &&
+        throw(ArgumentError("replaceitag requires at least one replacement pair"))
+    return _modify_itag(q, findlegs(q, pred), base -> _replace_itag(base, replacements))
+end
+replaceitag(q::SingletonTLArray, pred::Function,
+            replacements::ITagReplacementDict) =
+    _modify_itag(q, findlegs(q, pred), base -> _replace_itag(base, replacements))
+
+function setitag(q::SingletonTLArray, tags::AbstractString; dir=nothing,
+                 itag=nothing, plev=nothing, lock=nothing, rev::Bool=false)
+    legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, legs, _ -> norm)
+end
+function setitag(q::SingletonTLArray, leg::Integer, tags::AbstractString)
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, (leg,), _ -> norm)
+end
+function setitag(q::SingletonTLArray, legs::LegList, tags::AbstractString)
+    norm = _normalize_itag(tags)
+    return _modify_itag(q, legs, _ -> norm)
+end
+function setitag(q::SingletonTLArray, pred::Function, tags::AbstractString)
     norm = _normalize_itag(tags)
     return _modify_itag(q, findlegs(q, pred), _ -> norm)
 end
