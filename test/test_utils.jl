@@ -123,7 +123,7 @@ end
 
 # ─── to_sparse_array ───────────────────────────────────────────────────────────
 # Convert a TLArray to a sparse array using its spaces field for offset computation.
-function to_sparse_array(q::TLArray{T, QD, N, RD},
+function _test_to_sparse_array(q::TLArray{T, QD, N, RD},
     ::Type{FT}) where {T, QD, N, RD, FT}
 
     symmetries = symm(q)
@@ -230,14 +230,14 @@ function to_sparse_array(q::TLArray{T, QD, N, RD},
     return result
 end
 
-to_sparse_array(q::TLArray) = to_sparse_array(q, eltype(q))
+_test_to_sparse_array(q::TLArray) = _test_to_sparse_array(q, eltype(q))
 
-to_sparse_array(q::TLArrayView, ::Type{FT} = Float64) where {FT} =
-    to_sparse_array(Telum.to_concrete(q), FT)
-to_sparse_array(q::TLArrayView) = to_sparse_array(q, eltype(q))
-to_sparse_array(q::TLArrayContraction, ::Type{FT} = Float64) where {FT} =
-    to_sparse_array(Telum.to_concrete(q), FT)
-to_sparse_array(q::TLArrayContraction) = to_sparse_array(q, eltype(q))
+_test_to_sparse_array(q::TLArrayView, ::Type{FT} = Float64) where {FT} =
+    _test_to_sparse_array(Telum.to_concrete(q), FT)
+_test_to_sparse_array(q::TLArrayView) = _test_to_sparse_array(q, eltype(q))
+_test_to_sparse_array(q::TLArrayContraction, ::Type{FT} = Float64) where {FT} =
+    _test_to_sparse_array(Telum.to_concrete(q), FT)
+_test_to_sparse_array(q::TLArrayContraction) = _test_to_sparse_array(q, eltype(q))
 
 function _test_contract_matches_sparse_and_preserves_inputs(a::TLArray,
                                                             legs_a::Tuple,

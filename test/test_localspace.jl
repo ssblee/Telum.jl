@@ -45,6 +45,7 @@ end
     @test hasproperty(q1, :I)
     @test !hasproperty(q1, :F1)
     @test size(to_sparse_array(q1.I)) == (2, 2)
+    @test Array(to_sparse_array(q1.I)) == Array(_test_to_sparse_array(q1.I))
 
     q3 = getLocalSpace(FermionOptions(3, :U1, :SU3))
     @test hasproperty(q3, :F)

@@ -4,6 +4,7 @@ using MKL
 using HPTT_jll
 using LinearAlgebra
 using SparseArrays
+using SparseArrayKit
 using HDF5
 
 import Base: lock, unlock
@@ -50,6 +51,7 @@ function read_reset_costs!()
 end
 
 include("TLArray.jl")
+include("sparse_array.jl")
 include("io_hdf5.jl")
 
 export AbstractTLArray, TLArray, TLArrayView, TLArrayContraction, TLIndex, Itag, DiagRMT
@@ -64,6 +66,7 @@ export addSingleton, deleteSingleton, ⊗
 export oplus, getsub
 export complete_oplus_matrix
 export printmeta, to_concrete
+export to_sparse_array
 export findlegs, findleg, matchings, matching, unmatchings, unmatching
 export contractables, contractable, uncontractables, uncontractable
 export prime, setprime, noprime
