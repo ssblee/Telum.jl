@@ -101,8 +101,7 @@ end
 
     lazy_view = 2 * contract(left, (2,), right, (1,))
     sub_view = Telum.getsub(lazy_view, 1, _ -> Colon())
-    @test sub_view isa TLArrayView
-    @test sub_view.arr isa Telum.SubTLArray
+    @test sub_view isa Telum.SubTLArray
     @test sub_view.scale == 2
 end
 

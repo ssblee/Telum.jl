@@ -130,6 +130,20 @@ end
     @test qr(lazy, (1,)).Q isa TLArray
 end
 
+@testset "svd accepts embedded-state input" begin
+    q = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing))
+
+    scaled_view = 2.0 * q.F
+    @test scaled_view isa TLArray
+    @test scaled_view.scale == 2.0
+    test_svdQS(scaled_view, (1, 2); verbose=false)
+
+    permuted_view = permutedims(q.F, (3, 1, 2))
+    @test permuted_view isa TLArray
+    @test permuted_view.perm == (3, 1, 2)
+    test_svdQS(permuted_view, (2, 3); verbose=false)
+end
+
 @testset "qr reconstruction" begin
     q0 = getLocalSpace(SpinOptions(nothing, 1))
     _test_qr_reconstructs(q0.Sz, (1,))
@@ -179,15 +193,17 @@ end
     _test_qr_reconstructs(q_su2, (1,); tol=1e-10)
 end
 
-@testset "qr accepts TLArrayView input" begin
+@testset "qr accepts embedded-state input" begin
     q = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing))
 
     scaled_view = 2.0 * q.F
-    @test scaled_view isa TLArrayView
+    @test scaled_view isa TLArray
+    @test scaled_view.scale == 2.0
     _test_qr_reconstructs(scaled_view, (1, 2))
 
     permuted_view = permutedims(q.F, (3, 1, 2))
-    @test permuted_view isa TLArrayView
+    @test permuted_view isa TLArray
+    @test permuted_view.perm == (3, 1, 2)
     _test_qr_reconstructs(permuted_view, (2, 3))
 end
 

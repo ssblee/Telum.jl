@@ -233,7 +233,7 @@ function _write_wmat_storage!(parent, q::TLArray{T, QD, N, RD, QT, PS, M}) where
     g["data"] = q.wmatdata
     g["info"] = _encode_wmatinfo(q.wmatinfo)
     _h5_set_attr!(g, "tuple_width", M)
-    _h5_set_attr!(g, "sector_count", length(q.qlabels))
+    _h5_set_attr!(g, "sector_count", sector_count(q))
     return g
 end
 
@@ -247,9 +247,9 @@ function _read_wmat_storage(parent, sector_count::Int, ::Val{M}) where {M}
 end
 
 function _validate_concrete_tlarray_for_hdf5(q::TLArray)
-    sector_count = length(q.qlabels)
-    length(q.RMTs) == sector_count && length(q.isdefined) == sector_count &&
-        length(q.iszero) == sector_count ||
+    nslots = sector_count(q)
+    length(q.RMTs) == nslots && length(q.isdefined) == nslots &&
+        length(q.iszero) == nslots ||
         throw(ArgumentError("inconsistent TLArray sector storage lengths"))
     rmt_type = nothing
     for sector in sector_slots(q)
@@ -275,7 +275,7 @@ end
 
 function _write_dense_rmt_arena!(g, q::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
     data = T[]
-    info = zeros(Int, 2 + RD, length(q.qlabels))
+    info = zeros(Int, 2 + RD, sector_count(q))
     for sector in sector_slots(q)
         q.isdefined[sector] || continue
         rmt = q.RMTs[sector]
@@ -295,7 +295,7 @@ end
 
 function _write_diag_rmt_arena!(g, q::TLArray{T}) where {T}
     data = T[]
-    info = zeros(Int, 4, length(q.qlabels))
+    info = zeros(Int, 4, sector_count(q))
     for sector in sector_slots(q)
         q.isdefined[sector] || continue
         rmt = q.RMTs[sector]
@@ -316,7 +316,7 @@ function _write_rmt_storage!(parent, q::TLArray{T, QD, N, RD, QT, PS, M, RMT}) w
     storage = _rmt_storage_tag(RMT)
     _h5_set_attr!(g, "storage", storage)
     _h5_set_attr!(g, "alignment", 1)
-    _h5_set_attr!(g, "sector_count", length(q.qlabels))
+    _h5_set_attr!(g, "sector_count", sector_count(q))
     if storage == "dense_arena"
         _write_dense_rmt_arena!(g, q)
     else
@@ -393,7 +393,7 @@ end
 
 function _write_sector_metadata!(parent, q::TLArray)
     g = HDF5.create_group(parent, "sectors")
-    g["qlabels"] = _encode_sector_qlabels(q.qlabels, symm(q))
+    g["qlabels"] = _encode_sector_qlabels(stored_qlabels(q), symm(q))
     g["isdefined"] = collect(Bool, q.isdefined)
     g["iszero"] = collect(Bool, q.iszero)
     return g
@@ -432,7 +432,7 @@ function _write_tlarray_group!(h5, name::AbstractString, q::TLArray{T, QD, N, RD
     _h5_set_attr!(g, "qd", QD)
     _h5_set_attr!(g, "nsymms", N)
     _h5_set_attr!(g, "rd", RD)
-    _h5_set_attr!(g, "sector_count", length(q.qlabels))
+    _h5_set_attr!(g, "sector_count", sector_count(q))
     _h5_set_attr!(g, "nonzero_sector_count", nsectors(q))
 
     _write_symmetries!(g, symm(q))
@@ -451,8 +451,10 @@ function save_tlarray(path::AbstractString, q::AbstractTLArray; name::AbstractSt
     return path
 end
 
-save_tlarray(h5, name::AbstractString, q::TLArray) =
-    _write_tlarray_group!(h5, name, q)
+function save_tlarray(h5, name::AbstractString, q::TLArray)
+    concrete = _is_identity_view_state(stored_conj(q), stored_scale(q), stored_perm(q)) ? q : to_concrete(q)
+    return _write_tlarray_group!(h5, name, concrete)
+end
 
 function save_tlarray(h5, name::AbstractString, q::AbstractTLArray)
     concrete = to_concrete(q)

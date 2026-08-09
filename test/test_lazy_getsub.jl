@@ -65,7 +65,7 @@ end
     @test Telum.is_sector_defined(lazy, 1)
 end
 
-@testset "lazy getsub maps TLArrayView visible legs to source legs" begin
+@testset "lazy getsub maps embedded-state visible legs to source legs" begin
     symm = (U1,)
     qlabels = [(((0,),), ((10,),)), (((1,),), ((11,),))]
     wmatdata = Float64[]
@@ -79,10 +79,11 @@ end
 
     sub_view = Telum.getsub(view_q, 1, sector -> sector == ((10,),) ? Colon() : nothing)
 
-    @test sub_view isa TLArrayView
-    @test sub_view.arr isa Telum.SubTLArray
-    @test sub_view.arr.source_sectors == [1]
-    @test Telum.source_sector(sub_view.arr, 1) == 1
+    @test sub_view isa TLArray
+    @test sub_view.perm == view_q.perm
+    @test Telum.sector_count(sub_view) == 1
+    @test Telum.sector_qlabel(sub_view, 1, 1) == ((10,),)
+    @test Array(to_sparse_array(sub_view)) == Array(to_sparse_array(view_q))[1:1, :]
 end
 
 @testset "lazy getsub preserve_space rejects slicing before materialization" begin

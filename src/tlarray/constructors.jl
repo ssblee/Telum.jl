@@ -198,6 +198,20 @@ function deleteSingleton(q::TLArray{T, QD}, legs::LegList) where {T, QD}
     bad = [leg for leg in positions if !_is_singleton_leg(q, leg)]
     isempty(bad) || throw(ArgumentError(
         "deleteSingleton requires singleton legs, but legs $bad are not singleton"))
+    if !_is_identity_view_state(stored_conj(q), stored_scale(q), stored_perm(q))
+        source_positions = sort!(Int[stored_perm(q)[leg] for leg in positions])
+        new_arr = deleteSingleton(_storage_identity_tlarray(q), source_positions)
+        deleted_visible = Set(positions)
+
+        new_perm = Int[]
+        sizehint!(new_perm, QD - length(positions))
+        for old_visible_leg in 1:QD
+            old_visible_leg in deleted_visible && continue
+            old_source_leg = stored_perm(q)[old_visible_leg]
+            push!(new_perm, old_source_leg - count(pos -> pos < old_source_leg, source_positions))
+        end
+        return _with_view_state(new_arr, stored_conj(q), stored_scale(q), Tuple(new_perm))
+    end
     return _delete_singleton_impl(q, positions)
 end
 
@@ -230,49 +244,6 @@ function deleteSingleton(q::AbstractTLArray{T, QD}, legs::LegList) where {T, QD}
     isempty(bad) || throw(ArgumentError(
         "deleteSingleton requires singleton legs, but legs $bad are not singleton"))
     return _delete_singleton_lazy(q, positions)
-end
-
-function deleteSingleton(q::TLArrayView{T, QD}; dir=nothing, itag=nothing, plev=nothing) where {T, QD}
-    singleton_legs = if isnothing(dir) && isnothing(itag) && isnothing(plev)
-        _singleton_legs(q)
-    else
-        candidate_legs = findlegs(q; dir=dir, itag=itag, plev=plev)
-        [leg for leg in candidate_legs if _is_singleton_leg(q, leg)]
-    end
-
-    if isempty(singleton_legs)
-        if isnothing(dir) && isnothing(itag) && isnothing(plev)
-            @warn "deleteSingleton: no singleton legs found"
-        else
-            @warn "deleteSingleton: no singleton legs matched the requested criteria"
-        end
-        return q
-    end
-    return deleteSingleton(q, singleton_legs)
-end
-
-function deleteSingleton(q::TLArrayView{T, QD}, leg::Integer) where {T, QD}
-    return deleteSingleton(q, (leg,))
-end
-
-function deleteSingleton(q::TLArrayView{T, QD}, legs::LegList) where {T, QD}
-    positions = _normalize_delete_singleton_legs(q, legs)
-    bad = [leg for leg in positions if !_is_singleton_leg(q, leg)]
-    isempty(bad) || throw(ArgumentError(
-        "deleteSingleton requires singleton legs, but legs $bad are not singleton"))
-
-    source_positions = sort!(_view_arr_legs(q, positions))
-    new_arr = deleteSingleton(q.arr, source_positions)
-    deleted_visible = Set(positions)
-
-    new_perm = Int[]
-    sizehint!(new_perm, QD - length(positions))
-    for old_visible_leg in 1:QD
-        old_visible_leg in deleted_visible && continue
-        old_source_leg = q.perm[old_visible_leg]
-        push!(new_perm, old_source_leg - count(pos -> pos < old_source_leg, source_positions))
-    end
-    return _normalize_tlarray_view(new_arr, q.conj, q.scale, Tuple(new_perm))
 end
 
 function _expand_singleton_kw(values, count::Int, name::AbstractString)
@@ -348,6 +319,11 @@ function _insert_singleton_rmt(rmt::DiagRMT{T, RD},
                                n_symm::Int) where {T, RD}
     shift_axis(axis) = axis + count(pos -> pos <= axis, positions)
     return DiagRMT{T,RD + length(positions)}(rmt.diag, (shift_axis(rmt.axis[1]), shift_axis(rmt.axis[2])))
+end
+
+function _storage_identity_tlarray(q::TLArray)
+    return TLArray(Val(:alias_storage), symm(q), stored_qlabels(q), q.wmatdata, q.wmatinfo,
+                   q.RMTs, q.isdefined, q.iszero, stored_inds(q), stored_spaces(q))
 end
 
 function _add_singleton_leg_maps(qd::Int, positions)
@@ -427,6 +403,37 @@ function _add_singleton_lazy(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}, p
 end
 
 function _delete_singleton_lazy(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}, positions) where {T, QD, N, RD, QT, PS, M, RMT}
+    if !_is_identity_view_state(stored_conj(q), stored_scale(q), stored_perm(q))
+        source_positions = sort!(Int[stored_perm(q)[leg] for leg in positions])
+        new_qd = QD - length(positions)
+        new_rd = RD - length(positions)
+        source_to_result, result_to_source = _delete_singleton_leg_maps(QD, source_positions)
+
+        new_inds = [stored_inds(q)[old_leg] for old_leg in result_to_source]
+        new_spaces = [stored_spaces(q)[old_leg] for old_leg in result_to_source]
+        qlabels = Vector{NTuple{new_qd, QT}}(undef, sector_count(q))
+        for sector in sector_slots(q)
+            qlabels[sector] = ntuple(new_leg -> stored_sector_qlabel(QT, q, sector, result_to_source[new_leg]),
+                                     Val(new_qd))
+        end
+
+        deleted_visible = Set(positions)
+        new_perm = Int[]
+        sizehint!(new_perm, new_qd)
+        for old_visible_leg in 1:QD
+            old_visible_leg in deleted_visible && continue
+            old_source_leg = stored_perm(q)[old_visible_leg]
+            push!(new_perm, old_source_leg - count(pos -> pos < old_source_leg, source_positions))
+        end
+
+        TR = eltype(RMT)
+        source_arr = _with_view_state(q, false, one(T), _identity_phys_perm(Val(QD)))
+        return DeleteSingletonTLArray{T, new_qd, N, new_rd, QT, PS, M, Array{TR, new_rd}}(
+            qlabels, Tuple(new_inds), Tuple(new_spaces),
+            stored_conj(q), stored_scale(q), Tuple(new_perm),
+            source_arr, source_positions, source_to_result, result_to_source)
+    end
+
     new_qd = QD - length(positions)
     new_rd = RD - length(positions)
     source_to_result, result_to_source = _delete_singleton_leg_maps(QD, positions)
@@ -479,6 +486,29 @@ every added leg or an iterable with one value per inserted leg.
 """
 function addSingleton(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
                       itag="", plev=0, lock=0, dir='+') where {T, QD, N, RD, QT, PS, M, RMT}
+    if !_is_identity_view_state(stored_conj(q), stored_scale(q), stored_perm(q))
+        positions, itag_vec, plev_vec, lock_vec, dir_vec =
+            _singleton_insert_spec(q, legs; itag=itag, plev=plev, lock=lock, dir=dir)
+        internal_dir = stored_conj(q) ? [d == '+' ? '-' : '+' for d in dir_vec] : dir_vec
+        new_arr = addSingleton(_storage_identity_tlarray(q); nlegs=length(positions),
+                               itag=itag_vec, plev=plev_vec, lock=lock_vec,
+                               dir=internal_dir)
+        new_qd = QD + length(positions)
+        new_perm = Vector{Int}(undef, new_qd)
+        old_leg = 1
+        insert_idx = 1
+        for new_leg in 1:new_qd
+            if insert_idx <= length(positions) && positions[insert_idx] == new_leg
+                new_perm[new_leg] = QD + insert_idx
+                insert_idx += 1
+            else
+                new_perm[new_leg] = stored_perm(q)[old_leg]
+                old_leg += 1
+            end
+        end
+        return _with_view_state(new_arr, stored_conj(q), stored_scale(q), Tuple(new_perm))
+    end
+
     positions, itag_vec, plev_vec, lock_vec, dir_vec =
         _singleton_insert_spec(q, legs; itag=itag, plev=plev, lock=lock, dir=dir)
 
@@ -541,38 +571,6 @@ function addSingleton(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
     positions, itag_vec, plev_vec, lock_vec, dir_vec =
         _singleton_insert_spec(q, legs; itag=itag, plev=plev, lock=lock, dir=dir)
     return _add_singleton_lazy(q, positions, itag_vec, plev_vec, lock_vec, dir_vec)
-end
-
-function addSingleton(q::TLArrayView{T, QD}; nlegs::Integer=1,
-                      itag="", plev=0, lock=0, dir='+') where {T, QD}
-    count = Int(nlegs)
-    count >= 1 || throw(ArgumentError("nlegs must be at least 1, got $nlegs"))
-    positions = (QD + 1):(QD + count)
-    return addSingleton(q, positions; itag=itag, plev=plev, lock=lock, dir=dir)
-end
-
-function addSingleton(q::TLArrayView{T, QD}, legs;
-                      itag="", plev=0, lock=0, dir='+') where {T, QD}
-    positions, itag_vec, plev_vec, lock_vec, dir_vec =
-        _singleton_insert_spec(q, legs; itag=itag, plev=plev, lock=lock, dir=dir)
-    internal_dir = q.conj ? [d == '+' ? '-' : '+' for d in dir_vec] : dir_vec
-    new_arr = addSingleton(q.arr; nlegs=length(positions),
-                           itag=itag_vec, plev=plev_vec, lock=lock_vec, dir=internal_dir)
-
-    new_qd = QD + length(positions)
-    new_perm = Vector{Int}(undef, new_qd)
-    old_leg = 1
-    insert_idx = 1
-    for new_leg in 1:new_qd
-        if insert_idx <= length(positions) && positions[insert_idx] == new_leg
-            new_perm[new_leg] = QD + insert_idx
-            insert_idx += 1
-        else
-            new_perm[new_leg] = q.perm[old_leg]
-            old_leg += 1
-        end
-    end
-    return _normalize_tlarray_view(new_arr, q.conj, q.scale, Tuple(new_perm))
 end
 
 """

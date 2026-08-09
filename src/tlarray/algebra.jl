@@ -4,7 +4,8 @@ function _materialized_scale(qs::TLArray{T, QD, N, RD}, fac::Number) where {T, Q
     RT = promote_type(T, typeof(fac))
     if iszero(fac)
         RMTs = Vector{Array{RT, RD}}(undef, sector_count(qs))
-        return TLArray(symm(qs), copy(qs.qlabels), qs.wmatdata, qs.wmatinfo, RMTs, qs.inds, qs.spaces)
+        return TLArray(symm(qs), copy(stored_qlabels(qs)), qs.wmatdata, qs.wmatinfo,
+                       RMTs, stored_inds(qs), stored_spaces(qs))
     end
     if RT !== T
         RMTs = eltype(qs.RMTs) <: DiagRMT ? Vector{DiagRMT{RT, RD}}(undef, sector_count(qs)) :
@@ -13,8 +14,8 @@ function _materialized_scale(qs::TLArray{T, QD, N, RD}, fac::Number) where {T, Q
             qs.iszero[sector_index] && continue
             RMTs[sector_index] = qs.RMTs[sector_index] * fac
         end
-        return TLArray(symm(qs), copy(qs.qlabels), _copy_wmat_storage(qs; deep=true)...,
-                       RMTs, qs.inds, _copy_spaces_tuple(qs.spaces))
+        return TLArray(symm(qs), copy(stored_qlabels(qs)), _copy_wmat_storage(qs; deep=true)...,
+                       RMTs, stored_inds(qs), _copy_spaces_tuple(stored_spaces(qs)))
     end
     result = deepcopy(qs)
     for sector_index in sector_slots(result)
@@ -72,8 +73,6 @@ function LinearAlgebra.norm(q::TLArray{T, QD, N}) where {T, QD, N}
     end
     return sqrt(s)
 end
-
-LinearAlgebra.norm(q::TLArrayView) = abs(q.scale) * norm(q.arr)
 
 function LinearAlgebra.norm(q::TLArrayContraction)
     compute_sectors(q, sector_slots(q))

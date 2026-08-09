@@ -232,9 +232,6 @@ end
 
 _test_to_sparse_array(q::TLArray) = _test_to_sparse_array(q, eltype(q))
 
-_test_to_sparse_array(q::TLArrayView, ::Type{FT} = Float64) where {FT} =
-    _test_to_sparse_array(Telum.to_concrete(q), FT)
-_test_to_sparse_array(q::TLArrayView) = _test_to_sparse_array(q, eltype(q))
 _test_to_sparse_array(q::TLArrayContraction, ::Type{FT} = Float64) where {FT} =
     _test_to_sparse_array(Telum.to_concrete(q), FT)
 _test_to_sparse_array(q::TLArrayContraction) = _test_to_sparse_array(q, eltype(q))
@@ -360,8 +357,10 @@ function test_sum_sparse_equivalence_mixed_rmt_eltypes()
 
     complex_view = permutedims(complex_dense, (2, 1))
     scaled_complex_view = (1.5 - 0.5im) * complex_dense
-    @test complex_view isa TLArrayView
-    @test scaled_complex_view isa TLArrayView
+    @test complex_view isa TLArray
+    @test complex_view.perm == (2, 1)
+    @test scaled_complex_view isa TLArray
+    @test scaled_complex_view.scale == 1.5 - 0.5im
 
     result_tuple = sum((real_dense, complex_view, scaled_complex_view, complex_diag))
     reference_tuple = Array(to_sparse_array(real_dense, ComplexF64)) +
@@ -404,7 +403,7 @@ function test_sum_sparse_equivalence_mixed_rmt_eltypes()
 end
 
 function test_contract_tlarrayview_inputs()
-    @testset "contract TLArrayView inputs" begin
+    @testset "contract embedded-state inputs" begin
         symm = (U1,)
         qlabels = [(((0,),), ((0,),))]
         wmatdata = Float64[]
@@ -420,11 +419,14 @@ function test_contract_tlarrayview_inputs()
 
         left_view = 2.0 * left
         right_view = (1.5 - 0.5im) * right
-        @test left_view isa TLArrayView
-        @test right_view isa TLArrayView
+        @test left_view isa TLArray
+        @test left_view.scale == 2.0
+        @test right_view isa TLArray
+        @test right_view.scale == 1.5 - 0.5im
 
-        # Compare view*dense and view*view contraction against the sparse-array
-        # reference so scalar view materialization and eltype promotion are both covered.
+        # Compare embedded-state*dense and embedded-state*embedded-state
+        # contraction against the sparse-array reference so scalar materialization
+        # and eltype promotion are both covered.
         for (a, b) in ((left_view, right), (left_view, right_view))
             result = a * b
             reference = Array(contract_sparse(to_sparse_array(a, ComplexF64),
@@ -839,8 +841,8 @@ end
 
 function _test_eigen_reconstructs_view(q::AbstractTLArray; hermitian::Bool=false, tol=1e-9)
     result = eigen(q; hermitian)
-    # TLArrayView inputs should reconstruct the represented tensor, not only the
-    # eager TLArray produced internally by eigen.
+    # Embedded-state inputs should reconstruct the represented tensor, not only
+    # the eager TLArray produced internally by eigen.
     V = lock(result.V, 1)
     rec = isnothing(result.V_inv) ? V * result.D * result.V' : V * result.D * result.V_inv
     @test norm(q - rec) / max(norm(q), 1.0) < tol
@@ -848,8 +850,8 @@ function _test_eigen_reconstructs_view(q::AbstractTLArray; hermitian::Bool=false
 end
 
 function test_eigen_tlarrayview()
-    @testset "eigen accepts TLArrayView input" begin
-        # Nonzero scalar multiplication returns TLArrayView for these operands,
+    @testset "eigen accepts embedded-state input" begin
+        # Nonzero scalar multiplication stores embedded scale for these operands,
         # covering both Hermitian and non-Hermitian eigen paths on lazy inputs.
         hermitian_blocks = [
             Matrix(Symmetric(randn(5, 5))),
@@ -857,7 +859,8 @@ function test_eigen_tlarrayview()
         ]
         hermitian_q = _test_multi_sector_matrix_tlarray(hermitian_blocks)
         hermitian_view = 2.0 * hermitian_q
-        @test hermitian_view isa TLArrayView
+        @test hermitian_view isa TLArray
+        @test hermitian_view.scale == 2.0
         hermitian_result = _test_eigen_reconstructs_view(hermitian_view; hermitian=true)
         @test isnothing(hermitian_result.V_inv)
 
@@ -871,7 +874,8 @@ function test_eigen_tlarrayview()
         complex_blocks[2][2, 1] -= 1.0 + 1.5im
         complex_q = _test_multi_sector_matrix_tlarray(complex_blocks)
         complex_view = (1.5 - 0.25im) * complex_q
-        @test complex_view isa TLArrayView
+        @test complex_view isa TLArray
+        @test complex_view.scale == 1.5 - 0.25im
         complex_result = _test_eigen_reconstructs_view(complex_view; tol=1e-8)
         @test !isnothing(complex_result.V_inv)
     end

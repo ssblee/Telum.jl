@@ -591,8 +591,7 @@ end
     lazy_view_source = contract(left, (2,), right, (1,))
     view = 2 * permutedims(addSingleton(lazy_view_source, 3; itag="aux", dir='+'), (2, 1, 3))
     delete_view = deleteSingleton(view, 3)
-    @test delete_view isa TLArrayView
-    @test delete_view.arr isa Telum.DeleteSingletonTLArray
+    @test delete_view isa Telum.DeleteSingletonTLArray
     @test delete_view.scale == 2
     view_ref = 2 * permutedims(eager, (2, 1))
     Telum.compute_sectors(delete_view, [1])
@@ -740,6 +739,40 @@ end
         arr_orig   = Array(to_sparse_array(q4))
         arr_scaled = Array(to_sparse_array(q_scaled))
         @test norm(arr_scaled - 2.5 .* arr_orig) < 1e-10
+    end
+
+    @testset "embedded view state preserves storage" begin
+        q_perm = permutedims(q4, (4, 1, 2, 3))
+        @test q_perm isa TLArray
+        @test q_perm.perm == (4, 1, 2, 3)
+
+        q_complex = (1.0 + 2.0im) * q_perm
+        @test eltype(q_complex) === ComplexF64
+        @test eltype(typeof(q_complex).parameters[end]) === eltype(typeof(q4).parameters[end])
+        @test q_complex.scale == 1.0 + 2.0im
+        @test q_complex.perm == q_perm.perm
+
+        concrete = to_concrete(q_complex)
+        @test concrete isa TLArray
+        @test concrete.perm == ntuple(identity, Val(4))
+        @test concrete.scale == one(eltype(concrete))
+        @test !concrete.conj
+        @test eltype(typeof(concrete).parameters[end]) === ComplexF64
+
+        reference = (1.0 + 2.0im) .* permutedims(Array(to_sparse_array(q4, ComplexF64)), (4, 1, 2, 3))
+        @test norm(Array(to_sparse_array(q_complex, ComplexF64)) - reference) < 1e-10
+
+        sub = getsub(q_perm, 1, _ -> Colon(); preserve_space=true)
+        @test sub.perm == q_perm.perm
+        @test sub.scale == q_perm.scale
+        @test sub.conj == q_perm.conj
+        @test norm(Array(to_sparse_array(sub)) - Array(to_sparse_array(q_perm))) < 1e-10
+
+        added = addSingleton(q_perm, 2; dir='+')
+        @test added.perm == (4, 5, 1, 2, 3)
+        deleted = deleteSingleton(added, 2)
+        @test deleted.perm == q_perm.perm
+        @test norm(Array(to_sparse_array(deleted)) - Array(to_sparse_array(q_perm))) < 1e-10
     end
 
     # ── addition: q4 + q4 ≈ 2*q4 ─────────────────────────────────────────────

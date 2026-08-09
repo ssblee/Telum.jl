@@ -54,7 +54,7 @@ include("TLArray.jl")
 include("sparse_array.jl")
 include("io_hdf5.jl")
 
-export AbstractTLArray, TLArray, TLArrayView, TLArrayContraction, TLIndex, Itag, DiagRMT
+export AbstractTLArray, TLArray, TLArrayContraction, TLIndex, Itag, DiagRMT
 export ProductSymm, productsymm, product_symms, symm, nsymms
 export LocalSpaceOptions, SpinOptions, FermionOptions, FermionSOptions
 export Z, U1, SU, SO, Sp

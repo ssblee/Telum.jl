@@ -156,8 +156,8 @@ function _check_hermitian_eigen_legs(q::AbstractTLArray,
     return nothing
 end
 
-function _eig_scaled_matrix(q::AbstractTLArray, sector_index::Int)
-    rmt, scale = sector_rmt(q, sector_index)
+function _eig_scaled_matrix(q::AbstractTLArray{T, 2, N, RD}, sector_index::Int) where {T, N, RD}
+    rmt, scale = sector_rmt_permuted(q, sector_index, _identity_rmt_perm(Val(RD)))
     rmt_size = sector_rmt_dim(q, sector_index)
     sL, sR = rmt_size[1], rmt_size[2]
     mat = Matrix(reshape(rmt, sL, sR))

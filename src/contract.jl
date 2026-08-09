@@ -161,6 +161,17 @@ function _hptt_permutedims!(dest::AbstractArray{T, D},
     return dest
 end
 
+function _hptt_permutedims!(dest::AbstractArray{T1, D},
+                            A::AbstractArray{T2, D},
+                            perm::NTuple{D, Int}) where {T1, T2, D}
+    if Tuple(perm) == _identity_perm(Val(D))
+        copyto!(dest, A)
+    else
+        copyto!(dest, permutedims(A, perm))
+    end
+    return dest
+end
+
 function _contract_om_axis_data(A::AbstractArray{T1, D}, M::AbstractMatrix{T2}, axis::Int) where {T1, T2<:Real, D}
     dims  = size(A)
     k     = dims[axis]
@@ -284,87 +295,32 @@ function _permuted_rmt_data(rmt::DiagRMT{T, RD},
     return DiagRMT{T,3}(rmt.diag, axis)
 end
 
-function prepared_sector_rmt(q::TLArray{T},
-                             idx::Int,
-                             perm::NTuple{RD, Int},
-                             ::Val{NF},
-                             ::Val{CN},
-                             ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt(q, idx)
-    return _permuted_rmt_data(rmt, perm, Val(NF), Val(CN), Val(N)), alpha
-end
-
-function prepared_sector_rmt(q::TLArrayContraction{T},
-                             idx::Int,
-                             perm::NTuple{RD, Int},
-                             ::Val{NF},
-                             ::Val{CN},
-                             ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt(q, idx)
-    return _permuted_rmt_data(rmt, perm, Val(NF), Val(CN), Val(N)), alpha
-end
-
-function prepared_sector_rmt(q::SubTLArray{T},
-                             idx::Int,
-                             perm::NTuple{RD, Int},
-                             ::Val{NF},
-                             ::Val{CN},
-                             ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt(q, idx)
-    return _permuted_rmt_data(rmt, perm, Val(NF), Val(CN), Val(N)), alpha
-end
-
-function prepared_sector_rmt(q::SingletonTLArray,
-                             idx::Int,
-                             perm::NTuple{RD, Int},
-                             ::Val{NF},
-                             ::Val{CN},
-                             ::Val{N}) where {RD, NF, CN, N}
-    rmt, alpha = sector_rmt(q, idx)
-    return _permuted_rmt_data(rmt, perm, Val(NF), Val(CN), Val(N)), alpha
-end
-
-function prepared_sector_rmt(q::TLArrayView{T, QD},
+function prepared_sector_rmt(q::AbstractTLArray{T, QD},
                              idx::Int,
                              perm::NTuple{RD, Int},
                              ::Val{NF},
                              ::Val{CN},
                              ::Val{N}) where {T, QD, RD, NF, CN, N}
-    source_perm = ntuple(pos -> perm[pos] <= QD ? q.perm[perm[pos]] : perm[pos], Val(RD))
-    prepared, alpha = prepared_sector_rmt(q.arr, idx, source_perm, Val(NF), Val(CN), Val(N))
-    scale = alpha * q.scale
-    if q.conj
-        T <: Real && return prepared, scale
-        return conj(prepared), conj(scale)
-    end
-    return prepared, scale
+    source_perm = _effective_rmt_perm(q, perm, Val(RD))
+    rmt, alpha = sector_rmt(q, idx)
+    prepared = _permuted_rmt_data(rmt, source_perm, Val(NF), Val(CN), Val(N))
+    stored_conj(q) && !(T <: Real) && return conj(prepared), conj(alpha)
+    return prepared, alpha
 end
 
-@inline _effective_rmt_perm(q::TLArray, perm::NTuple{RD, Int}, ::Val{RD}) where {RD} = perm
-@inline _effective_rmt_perm(q::TLArrayContraction, perm::NTuple{RD, Int}, ::Val{RD}) where {RD} = perm
-@inline _effective_rmt_perm(q::SubTLArray, perm::NTuple{RD, Int}, ::Val{RD}) where {RD} = perm
-@inline _effective_rmt_perm(q::SingletonTLArray, perm::NTuple{RD, Int}, ::Val{RD}) where {RD} = perm
-
-@inline function _effective_rmt_perm(q::TLArrayView{T, QD},
+@inline function _effective_rmt_perm(q::AbstractTLArray{T, QD},
                                      perm::NTuple{RD, Int},
                                      ::Val{RD}) where {T, QD, RD}
-    return ntuple(pos -> perm[pos] <= QD ? q.perm[perm[pos]] : perm[pos], Val(RD))
+    return ntuple(pos -> perm[pos] <= QD ? stored_perm(q)[perm[pos]] : perm[pos], Val(RD))
 end
 
-@inline function _layout_source_rmt(q::Union{TLArray, TLArrayContraction, SubTLArray, SingletonTLArray}, sector::Int)
+@inline function _layout_source_rmt(q::AbstractTLArray, sector::Int)
     rmt, _ = sector_rmt(q, sector)
     return rmt
 end
-@inline function _layout_source_rmt(q::TLArrayView, sector::Int)
-    rmt, _ = sector_rmt(q.arr, sector)
-    return rmt
-end
 
-@inline _stream_conj_requires_buffer(q::TLArray{T}) where {T} = false
-@inline _stream_conj_requires_buffer(q::TLArrayContraction{T}) where {T} = false
-@inline _stream_conj_requires_buffer(q::SubTLArray{T}) where {T} = false
-@inline _stream_conj_requires_buffer(q::Union{AddSingletonTLArray{T}, DeleteSingletonTLArray{T}}) where {T} = false
-@inline _stream_conj_requires_buffer(q::TLArrayView{T}) where {T} = q.conj && !(T <: Real)
+@inline _stream_conj_requires_buffer(q::AbstractTLArray{T}) where {T} =
+    stored_conj(q) && !(T <: Real)
 
 function _can_stream_prepared_rmt(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                   perm::NTuple{RD, Int},
@@ -419,10 +375,6 @@ end
 @inline _sector_rmt_size(q::TLArray{T, QD, N, RD}, sector::Int) where {T, QD, N, RD} =
     sector_rmt_dim(q, sector)::NTuple{RD, Int}
 
-@inline function _sector_rmt_size(q::TLArrayView{T, QD, N, RD}, sector::Int) where {T, QD, N, RD}
-    return sector_rmt_dim(q, sector)::NTuple{RD, Int}
-end
-
 @inline _sector_rmt_size(q::TLArrayContraction{T, QD, N, RD}, sector::Int) where {T, QD, N, RD} =
     q.rmt_sizes[sector]
 @inline _sector_rmt_size(q::SubTLArray{T, QD, N, RD}, sector::Int) where {T, QD, N, RD} =
@@ -462,77 +414,14 @@ function _prepared_rmt_dims(q::AbstractTLArray{T, QD, N, RD},
 end
 
 function _prepare_sector_rmt_into!(buffer::Vector{T},
-                                   q::TLArray{T},
-                                   idx::Int,
-                                   perm::NTuple{RD, Int},
-                                   ::Val{NF},
-                                   ::Val{CN},
-                                   ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt(q, idx)
-    kept_sizes, contracted_sizes, om_sizes =
-        _rmt_layout_sizes(rmt, perm, Val(NF), Val(CN), Val(N))
-    out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
-    len = prod(out_dims; init=1)
-    @assert length(buffer) >= len
-    dest = reshape(view(buffer, 1:len), out_dims)
-    _hptt_permutedims!(dest, _rmt_array_data(rmt), perm)
-    return reshape(view(buffer, 1:len),
-                   prod(kept_sizes; init=1),
-                   prod(contracted_sizes; init=1),
-                   prod(om_sizes; init=1)), alpha
-end
-
-function _prepare_sector_rmt_into!(buffer::Vector{T},
-                                   q::TLArrayContraction{T},
-                                   idx::Int,
-                                   perm::NTuple{RD, Int},
-                                   ::Val{NF},
-                                   ::Val{CN},
-                                   ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt(q, idx)
-    kept_sizes, contracted_sizes, om_sizes =
-        _rmt_layout_sizes(rmt, perm, Val(NF), Val(CN), Val(N))
-    out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
-    len = prod(out_dims; init=1)
-    @assert length(buffer) >= len
-    dest = reshape(view(buffer, 1:len), out_dims)
-    _hptt_permutedims!(dest, _rmt_array_data(rmt), perm)
-    return reshape(view(buffer, 1:len),
-                   prod(kept_sizes; init=1),
-                   prod(contracted_sizes; init=1),
-                   prod(om_sizes; init=1)), alpha
-end
-
-function _prepare_sector_rmt_into!(buffer::Vector{T},
-                                   q::Union{AddSingletonTLArray{T}, DeleteSingletonTLArray{T}},
-                                   idx::Int,
-                                   perm::NTuple{RD, Int},
-                                   ::Val{NF},
-                                   ::Val{CN},
-                                   ::Val{N}) where {T, RD, NF, CN, N}
-    rmt, alpha = sector_rmt(q, idx)
-    kept_sizes, contracted_sizes, om_sizes =
-        _rmt_layout_sizes(rmt, perm, Val(NF), Val(CN), Val(N))
-    out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
-    len = prod(out_dims; init=1)
-    @assert length(buffer) >= len
-    dest = reshape(view(buffer, 1:len), out_dims)
-    _hptt_permutedims!(dest, _rmt_array_data(rmt), perm)
-    return reshape(view(buffer, 1:len),
-                   prod(kept_sizes; init=1),
-                   prod(contracted_sizes; init=1),
-                   prod(om_sizes; init=1)), alpha
-end
-
-function _prepare_sector_rmt_into!(buffer::Vector{T},
-                                   q::TLArrayView{T, QD},
+                                   q::AbstractTLArray{T, QD},
                                    idx::Int,
                                    perm::NTuple{RD, Int},
                                    ::Val{NF},
                                    ::Val{CN},
                                    ::Val{N}) where {T, QD, RD, NF, CN, N}
     source_perm = _effective_rmt_perm(q, perm, Val(RD))
-    rmt, alpha = sector_rmt(q.arr, idx)
+    rmt, alpha = sector_rmt(q, idx)
     kept_sizes, contracted_sizes, om_sizes =
         _rmt_layout_sizes(rmt, source_perm, Val(NF), Val(CN), Val(N))
     out_dims = (kept_sizes..., contracted_sizes..., om_sizes...)
@@ -541,17 +430,15 @@ function _prepare_sector_rmt_into!(buffer::Vector{T},
     dest = reshape(view(buffer, 1:len), out_dims)
     _hptt_permutedims!(dest, _rmt_array_data(rmt), source_perm)
 
-    scale = alpha * q.scale
-    scale != one(T) && (dest .*= scale)
-    if q.conj && !(T <: Real)
-        # Conjugate only the streamed copy; the source RMT may be shared.
+    if stored_conj(q) && !(T <: Real)
         dest .= conj.(dest)
+        alpha = conj(alpha)
     end
 
     return reshape(view(buffer, 1:len),
                    prod(kept_sizes; init=1),
                    prod(contracted_sizes; init=1),
-                   prod(om_sizes; init=1)), one(T)
+                   prod(om_sizes; init=1)), alpha
 end
 
 function _cached_prepared_sector_rmt!(cache::Vector{Tuple{PRMT, T}},
@@ -1115,15 +1002,12 @@ function _contract_with_streaming_side!(
 end
 
 compute_sectors(q::TLArray, sector_inds::AbstractVector{<:Integer}) = q
-compute_sectors(q::TLArrayView, sector_inds::AbstractVector{<:Integer}) =
-    compute_sectors(q.arr, sector_inds)
 function compute_sectors(q::SingletonTLArray, sector_inds::AbstractVector{<:Integer})
     compute_sectors(q.arr, sector_inds)
     return q
 end
 
 @inline reference_depth(q::TLArray) = 0
-@inline reference_depth(q::TLArrayView) = reference_depth(q.arr)
 @inline reference_depth(q::TLArrayContraction) = q.reference_depth
 @inline reference_depth(q::SubTLArray) = q.reference_depth
 @inline reference_depth(q::SingletonTLArray) = reference_depth(q.arr)
@@ -2079,7 +1963,8 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
         return q
     end
     compute_sectors(q, sector_slots(q))
-    return TLArray(symm(q), q.qlabels, q.wmatdata, q.wmatinfo, q.RMTs, q.inds, q.spaces)
+    return TLArray(symm(q), stored_qlabels(q), q.wmatdata, q.wmatinfo, q.RMTs,
+                   stored_inds(q), stored_spaces(q))
 end
 
 # ── Main lazy-contraction constructor ─────────────────────────────────────────

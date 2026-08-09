@@ -79,7 +79,7 @@ function legflip(q::TLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
     return permutedims(q_flip, perm)
 end
 
-function legflip(q::TLArrayContraction{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
+function legflip(q::AbstractTLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
     1 <= leg <= QD || throw(BoundsError(q, leg))
     j = get1jtensor(q, leg)
     q_flip = contract(q, (leg,), j, (1,); reduce_lock=false)
@@ -87,7 +87,7 @@ function legflip(q::TLArrayContraction{T, QD, N, RD}, leg::Int) where {T, QD, N,
     return permutedims(q_flip, perm)
 end
 
-function legflip(q::TLArrayContraction, legs::LegList)
+function legflip(q::AbstractTLArray, legs::LegList)
     q_flip = q
     for leg in _normalize_legflip_legs(q, legs)
         q_flip = legflip(q_flip, leg)
@@ -95,42 +95,7 @@ function legflip(q::TLArrayContraction, legs::LegList)
     return q_flip
 end
 
-function legflip(q::TLArrayContraction; dir=nothing, itag=nothing, plev=nothing,
-                 lock=nothing, rev::Bool=false)
-    legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
-                                  rev=rev, opname="legflip")
-    return legflip(q, legs)
-end
-
-function legflip(q::TLArray{T, QD, N, RD}, legs::LegList) where {T, QD, N, RD}
-    positions = _normalize_legflip_legs(q, legs)
-    q_flip = q
-    for leg in positions
-        q_flip = legflip(q_flip, leg)
-    end
-    return q_flip
-end
-
-function legflip(q::TLArray; dir=nothing, itag=nothing, plev=nothing,
-                 lock=nothing, rev::Bool=false)
-    legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
-                                  rev=rev, opname="legflip")
-    return legflip(q, legs)
-end
-
-function legflip(q::TLArrayView, leg::Int)
-    return _view_rewrap(q, legflip(q.arr, _view_arr_leg(q, leg)))
-end
-
-function legflip(q::TLArrayView, legs::LegList)
-    q_flip = q
-    for leg in _normalize_legflip_legs(q, legs)
-        q_flip = legflip(q_flip, leg)
-    end
-    return q_flip
-end
-
-function legflip(q::TLArrayView; dir=nothing, itag=nothing, plev=nothing,
+function legflip(q::AbstractTLArray; dir=nothing, itag=nothing, plev=nothing,
                  lock=nothing, rev::Bool=false)
     legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
                                   rev=rev, opname="legflip")

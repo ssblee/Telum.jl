@@ -54,7 +54,8 @@ end
 
     @testset "matching and unmatching" begin
         q_adj = q'
-        @test q_adj isa TLArrayView
+        @test q_adj isa TLArray
+        @test q_adj.conj
 
         @test matching(q, q_adj) == 1
         @test matchings(q, q_adj) == [1, 2, 3]
@@ -88,14 +89,16 @@ end
 
         q_tagsets = TLArray(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
         q_tagsets_adj = q_tagsets'
-        @test q_tagsets_adj isa TLArrayView
+        @test q_tagsets_adj isa TLArray
+        @test q_tagsets_adj.conj
         @test matchings(q_tagsets, q_tagsets_adj; itag=("aaa,bbb", "bbb,ccc")) == [1, 3]
         @test matchings(q_tagsets, q_tagsets_adj; itag=["aaa,ccc", "bbb,ccc"], rev=true) == [1]
     end
 
     @testset "contractable and uncontractable" begin
         q_adj = q'
-        @test q_adj isa TLArrayView
+        @test q_adj isa TLArray
+        @test q_adj.conj
 
         @test contractable(q, q_adj) == 1
         @test contractables(q, q_adj) == [1, 2, 3]
@@ -130,7 +133,8 @@ end
 
         q_tagsets = TLArray(q, ("aaa,bbb", "aaa,ccc", "bbb,ccc"))
         q_tagsets_adj = q_tagsets'
-        @test q_tagsets_adj isa TLArrayView
+        @test q_tagsets_adj isa TLArray
+        @test q_tagsets_adj.conj
         @test contractables(q_tagsets, q_tagsets_adj; itag=("aaa,bbb", "aaa,ccc")) == [1, 2]
         @test uncontractables(lock(q_tagsets, 2), q_tagsets_adj; itag=["aaa,ccc", "bbb,ccc"]) == [2]
     end
@@ -454,70 +458,72 @@ end
         @test q2.inds[3].itags == "op"
     end
 
-    @testset "TLArrayView leg property modifiers use visible legs" begin
+    @testset "embedded-state leg property modifiers use visible legs" begin
         qv = permutedims(q, (3, 1, 2))
-        @test qv isa TLArrayView
+        @test qv isa TLArray
+        @test qv.perm == (3, 1, 2)
         @test qv.inds == (q.inds[3], q.inds[1], q.inds[2])
 
         q2 = lock(qv, 1)
-        @test q2 isa TLArrayView
-        @test getfield(q2, :arr).inds[3].lock == 1
+        @test q2 isa TLArray
+        @test Telum.stored_inds(q2)[3].lock == 1
         @test q2.inds[1].lock == 1
         @test q2.inds[2].lock == 0
         @test q2.inds[3].lock == 0
 
         q2 = lockp(qv, 2)
-        @test getfield(q2, :arr).inds[1].lock == -1
+        @test Telum.stored_inds(q2)[1].lock == -1
         @test q2.inds[2].lock == -1
 
         q2 = unlock(lock(qv, (1, 3)), 3)
-        @test getfield(q2, :arr).inds[3].lock == 1
-        @test getfield(q2, :arr).inds[2].lock == 0
+        @test Telum.stored_inds(q2)[3].lock == 1
+        @test Telum.stored_inds(q2)[2].lock == 0
         @test q2.inds[1].lock == 1
         @test q2.inds[3].lock == 0
 
         q2 = prime(qv, 1; inc=2)
-        @test getfield(q2, :arr).inds[3].plev == 2
+        @test Telum.stored_inds(q2)[3].plev == 2
         @test q2.inds[1].plev == 2
         @test q2.inds[2].plev == 0
         @test q2.inds[3].plev == 0
 
         q2 = setprime(qv, 2, 4)
-        @test getfield(q2, :arr).inds[1].plev == 4
+        @test Telum.stored_inds(q2)[1].plev == 4
         @test q2.inds[2].plev == 4
 
         q2 = noprime(prime(qv), 1)
-        @test getfield(q2, :arr).inds[3].plev == 0
+        @test Telum.stored_inds(q2)[3].plev == 0
         @test q2.inds[1].plev == 0
         @test q2.inds[2].plev == 1
         @test q2.inds[3].plev == 1
 
         q2 = additag(qv, 1, "visible")
-        @test getfield(q2, :arr).inds[3].itags == "op,visible"
+        @test Telum.stored_inds(q2)[3].itags == "op,visible"
         @test q2.inds[1].itags == "op,visible"
 
         q2 = removeitag(additag(qv, (1, 3), "extra"), 3, "extra")
-        @test getfield(q2, :arr).inds[2].itags == "site2"
+        @test Telum.stored_inds(q2)[2].itags == "site2"
         @test q2.inds[1].itags == "extra,op"
         @test q2.inds[3].itags == "site2"
 
         q2 = replaceitag(qv, 1, "op"=>"operator")
-        @test getfield(q2, :arr).inds[3].itags == "operator"
+        @test Telum.stored_inds(q2)[3].itags == "operator"
         @test q2.inds[1].itags == "operator"
 
         q2 = setitag(qv, 2, "visible-site1")
-        @test getfield(q2, :arr).inds[1].itags == "visible-site1"
+        @test Telum.stored_inds(q2)[1].itags == "visible-site1"
         @test q2.inds[2].itags == "visible-site1"
 
         q2 = additag(qv, "selected"; itag="site1")
-        @test getfield(q2, :arr).inds[1].itags == "selected,site1"
+        @test Telum.stored_inds(q2)[1].itags == "selected,site1"
         @test q2.inds[2].itags == "selected,site1"
 
         qc = conj(q)
-        @test qc isa TLArrayView
+        @test qc isa TLArray
+        @test qc.conj
         @test findlegs(qc; dir='-') == [1]
         q2 = prime(qc; dir='-')
-        @test getfield(q2, :arr).inds[1].plev == 1
+        @test Telum.stored_inds(q2)[1].plev == 1
         @test q2.inds[1].plev == 1
         @test q2.inds[2].plev == 0
         @test q2.inds[3].plev == 0

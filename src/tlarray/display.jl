@@ -19,11 +19,6 @@ const TLARRAY_DISPLAY_HEAD = Ref(5)   # number of first sectors to show
 const TLARRAY_DISPLAY_TAIL = Ref(5)   # number of last sectors to show
 
 Base.show(io::IO, qs::TLArray) = show(io, MIME"text/plain"(), qs)
-function Base.show(io::IO, qs::TLArrayView)
-    concrete = to_concrete(qs)
-    show(io, concrete)
-    return concrete
-end
 function Base.show(io::IO, qs::SubTLArray)
     concrete = to_concrete(qs)
     show(io, concrete)
@@ -130,10 +125,4 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
         QD == 2 && print(io, "\t√", _sector_cgt_size_2d(qs, i))
         k < length(display_indices) && println(io)
     end
-end
-
-function Base.show(io::IO, mime::MIME"text/plain", qs::TLArrayView)
-    concrete = to_concrete(qs)
-    show(io, mime, concrete)
-    return concrete
 end

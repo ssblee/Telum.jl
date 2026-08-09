@@ -1381,7 +1381,7 @@ function _svd_sector_class_matrix!(dest::AbstractMatrix{Tbuf},
                                    right_legs::NTuple{NR, Int},
                                    product_buffer::Matrix{Tbuf},
                                    permute_buffer::Matrix{Tbuf}) where {T, QD, N, RD, QT, PS, NL, NR, Tbuf}
-    rmt, rmt_scale = sector_rmt(q, sector_index)
+    rmt, rmt_scale = sector_rmt_permuted(q, sector_index, _identity_rmt_perm(Val(RD)))
     rmt_size = sector_rmt_dim(q, sector_index)
     phys_dim = prod(rmt_size[i] for i in 1:QD)
     om_dim = prod(rmt_size[QD + n] for n in 1:N)

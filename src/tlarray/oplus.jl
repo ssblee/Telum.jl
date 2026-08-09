@@ -65,7 +65,7 @@ function _oplus_pad_tlarray(q::TLArray{T, QD, N, RD},
                            start_dim_maps,
                            result_dim_maps) where {T, QD, N, RD}
     dims_set = Set(dims_tuple)
-    qlabels = copy(q.qlabels)
+    qlabels = copy(stored_qlabels(q))
     wmatdata, wmatinfo = _copy_wmat_storage(q; deep=true)
     # Padding a direct-sum leg generally destroys diagonal RMT structure.
     RMTs = Vector{Array{T, RD}}(undef, sector_count(q))

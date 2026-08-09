@@ -54,6 +54,11 @@ function _apply_getsub_picks(q::TLArray{T, QD, N, RD, QT},
                              positions,
                              selected_picks::Dict{Int, Dict{Any, Any}};
                              preserve_space::Bool=false) where {T, QD, N, RD, QT}
+    if !_is_identity_view_state(stored_conj(q), stored_scale(q), stored_perm(q))
+        return _apply_getsub_picks_preserve_state(q, positions, selected_picks;
+                                                  preserve_space=preserve_space)
+    end
+
     if preserve_space
         for leg in positions
             for (sector, pick) in selected_picks[leg]
@@ -80,7 +85,8 @@ function _apply_getsub_picks(q::TLArray{T, QD, N, RD, QT},
         end
         keep || continue
         selectors = ntuple(d -> get(picks_by_leg, d, Colon()), RD)
-        selected_rmt = q.RMTs[sector_index][selectors...]
+        selected_rmt = _getsub_is_whole_sector(selectors) ?
+                       q.RMTs[sector_index] : q.RMTs[sector_index][selectors...]
         iszero(sum(abs2, selected_rmt)) && continue
         push!(qlabels_out, ntuple(l -> sector_qlabel(q, sector_index, l), Val(QD)))
         push!(source_wmat_sectors, sector_index)
@@ -108,6 +114,73 @@ function _apply_getsub_picks(q::TLArray{T, QD, N, RD, QT},
 
     wmatdata, wmatinfo = _copy_wmat_storage(q, source_wmat_sectors; deep=true)
     return TLArray(symm(q), qlabels_out, wmatdata, wmatinfo, RMTs_out, q.inds, spaces_out)
+end
+
+function _apply_getsub_picks_preserve_state(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
+                                            positions,
+                                            selected_picks::Dict{Int, Dict{Any, Any}};
+                                            preserve_space::Bool=false) where {T, QD, N, RD, QT, PS, M, RMT}
+    if preserve_space
+        for leg in positions
+            for (sector, pick) in selected_picks[leg]
+                pick isa Colon && continue
+                throw(ArgumentError(
+                    "preserve_space=true is incompatible with slicing sector $sector on leg $leg; return Colon() or nothing instead"))
+            end
+        end
+    end
+
+    selected_leg_set = Set(positions)
+    stored_positions = Dict{Int, Int}(leg => stored_perm(q)[leg] for leg in positions)
+    qlabels_out = NTuple{QD, QT}[]
+    source_wmat_sectors = Int[]
+    TR = eltype(RMT)
+    RMTs_out = Array{TR, RD}[]
+    for sector_index in sector_slots(q)
+        q.iszero[sector_index] && continue
+        selectors = ntuple(_ -> Colon(), Val(RD))
+        keep = true
+        for leg in positions
+            sector = sector_qlabel(q, sector_index, leg)
+            picks = selected_picks[leg]
+            haskey(picks, sector) || (keep = false; break)
+            selectors = Base.setindex(selectors, picks[sector], stored_positions[leg])
+        end
+        keep || continue
+        selected_rmt = q.RMTs[sector_index][selectors...]
+        iszero(sum(abs2, selected_rmt)) && continue
+        push!(qlabels_out, ntuple(l -> stored_sector_qlabel(q, sector_index, l), Val(QD)))
+        push!(source_wmat_sectors, sector_index)
+        push!(RMTs_out, selected_rmt)
+    end
+
+    spaces_out = if preserve_space
+        _copy_spaces_tuple(stored_spaces(q))
+    else
+        ntuple(stored_leg -> begin
+            logical_leg = findfirst(==(stored_leg), stored_perm(q))
+            if logical_leg in selected_leg_set
+                out = eltype(stored_spaces(q)[stored_leg])[]
+                picks = selected_picks[logical_leg]
+                for (sector, dim) in stored_spaces(q)[stored_leg]
+                    haskey(picks, sector) || continue
+                    pick = picks[sector]
+                    push!(out, (sector, pick isa Colon ? dim : length(pick)))
+                end
+                out
+            else
+                copy(stored_spaces(q)[stored_leg])
+            end
+        end, QD)
+    end
+
+    wmatdata, wmatinfo = _copy_wmat_storage(q, source_wmat_sectors; deep=true)
+    isdefined_bits = trues(length(qlabels_out))
+    iszero_bits = falses(length(qlabels_out))
+    return TLArray(Val(:alias_storage_view_state), symm(q), qlabels_out,
+                   wmatdata, wmatinfo, RMTs_out, isdefined_bits, iszero_bits,
+                   stored_inds(q), spaces_out, stored_conj(q), stored_scale(q),
+                   stored_perm(q))
 end
 
 function _normalize_getsub_predicate_legs(q::AbstractTLArray{T, QD}, legs) where {T, QD}
@@ -224,8 +297,11 @@ function _getsub_lazy(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMTsrc},
         RMTs,
         falses(length(qlabels_out)),
         BitVector(iszero_out),
-        inds(q),
+        stored_inds(q),
         spaces_out,
+        stored_conj(q),
+        stored_scale(q),
+        stored_perm(q),
         q,
         source_sectors,
         saved_indices,
@@ -287,7 +363,7 @@ function compute_sectors(q::SubTLArray{T, QD, N, RD, QT, PS, M, RMT},
             rmt, scale = sector_rmt(q.arr, source_sector)
             selectors = q.saved_indices[sector]
             data = _getsub_materialized_rmt(RMT, rmt, selectors)
-            if scale != one(typeof(scale))
+            if scale != stored_scale(q) && scale != one(typeof(scale))
                 data = data * scale
             end
             q.RMTs[sector] = data
@@ -349,16 +425,6 @@ function getsub(q::Union{TLArrayContraction, SubTLArray}, legs::LegList,
     return _getsub_lazy(q, legs, pred; preserve_space=preserve_space)
 end
 
-function getsub(q::TLArrayView, leg::Integer, pred::Function; preserve_space::Bool=false)
-    return _view_rewrap(q, _getsub_lazy(q.arr, _view_arr_legs(q, leg), pred;
-                                        preserve_space=preserve_space))
-end
-
-function getsub(q::TLArrayView, legs::LegList, pred::Function; preserve_space::Bool=false)
-    return _view_rewrap(q, _getsub_lazy(q.arr, _view_arr_legs(q, legs), pred;
-                                        preserve_space=preserve_space))
-end
-
 """
     getsub(q::TLArray, pred::Function; preserve_space::Bool=false, dir=nothing,
            itag=nothing, plev=nothing, lock=nothing, rev=false) -> TLArray
@@ -380,12 +446,4 @@ function getsub(q::Union{TLArrayContraction, SubTLArray}, pred::Function;
     legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
                                   rev=rev, opname="getsub")
     return _getsub_lazy(q, legs, pred; preserve_space=preserve_space)
-end
-
-function getsub(q::TLArrayView, pred::Function; preserve_space::Bool=false,
-                dir=nothing, itag=nothing, plev=nothing, lock=nothing,
-                rev::Bool=false)
-    legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,
-                                  rev=rev, opname="getsub")
-    return getsub(q, legs, pred; preserve_space=preserve_space)
 end

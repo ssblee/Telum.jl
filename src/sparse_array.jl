@@ -6,6 +6,9 @@ logical leg order. This is intended for validation and interoperability, not
 for performance-sensitive tensor-network calculations.
 """
 function to_sparse_array(q::TLArray{T, QD, N, RD}, ::Type{FT}) where {T, QD, N, RD, FT}
+    if !_is_identity_view_state(stored_conj(q), stored_scale(q), stored_perm(q))
+        return to_sparse_array(to_concrete(q), FT)
+    end
     symmetries = symm(q)
     leg_info = [_sparse_leg_offsets(symmetries, spaces(q)[leg]) for leg in 1:QD]
     leg_offsets = first.(leg_info)

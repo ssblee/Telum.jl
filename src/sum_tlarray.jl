@@ -51,7 +51,10 @@ function _align_sum_input(ref::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT1},
         return q
     end
     perm = _find_leg_permutation(inds(ref), spaces(ref), inds(q), spaces(q))
-    return permutedims(q, perm)
+    # Summation compresses sectors by common q-labels and w-matrix gauges.  When
+    # leg alignment changes the physical order, canonicalize the aligned input so
+    # equivalent tensors with different embedded permutations cancel exactly.
+    return to_concrete(permutedims(q, perm))
 end
 
 function _needs_sum_alignment(ref::AbstractTLArray, q::AbstractTLArray)
@@ -122,15 +125,13 @@ end
     return q.rmt_sizes[sector]
 end
 
-function _sum_processed_rmt_dims(q::TLArrayView{T, QD}, sector::Int, ::Val{RD}) where {T, QD, RD}
-    return sector_rmt_dim(q, sector)
-end
-
 function _sum_processed_rmt_dims(q::SingletonTLArray, sector::Int, ::Val{RD}) where {RD}
     return sector_rmt_dim(q, sector)
 end
 
 @inline function _sum_reference_safe(q::TLArray{T, QD, N, RD}, sector::Int, ::Type{T}) where {T, QD, N, RD}
+    stored_perm(q) == _identity_phys_perm(Val(QD)) || return false
+    (!stored_conj(q) || T <: Real) || return false
     rmt, _ = sector_rmt(q, sector)
     return rmt isa Array{T, RD} || rmt isa DiagRMT
 end
@@ -143,12 +144,6 @@ end
 end
 
 @inline _sum_reference_safe(q::TLArrayContraction, sector::Int, ::Type{T}) where {T} = false
-
-@inline function _sum_reference_safe(q::TLArrayView{T, QD}, sector::Int, ::Type{RT}) where {T, QD, RT}
-    q.perm == _identity_phys_perm(Val(QD)) || return false
-    (!q.conj || T <: Real) || return false
-    return _sum_reference_safe(q.arr, sector, RT)
-end
 
 @inline _sum_reference_safe(q::SingletonTLArray, sector::Int, ::Type{T}) where {T} = false
 
@@ -246,15 +241,7 @@ function _sum_copy_scaled!(dest::Array{T, RD}, source::AbstractArray, scale) whe
     return dest
 end
 
-function _sum_copy_processed_unscaled!(dest, q::TLArray, sector::Int, ::Type{T}) where {T}
-    source, _ = sector_rmt(q, sector)
-    @inbounds for I in CartesianIndices(dest)
-        dest[I] = source[I]
-    end
-    return dest
-end
-
-function _sum_copy_processed_unscaled!(dest, q::TLArrayView{T, QD, N, RD}, sector::Int, ::Type{RT}) where {T, QD, N, RD, RT}
+function _sum_copy_processed_unscaled!(dest, q::TLArray{T, QD, N, RD}, sector::Int, ::Type{RT}) where {T, QD, N, RD, RT}
     sector_rmt_permuted!(dest, q, sector, _identity_rmt_perm(Val(RD)))
     return dest
 end
@@ -269,13 +256,6 @@ end
 
 function _sum_sector_scale(q::TLArray{T}, sector::Int, ::Type{RT}) where {T, RT}
     return one(RT)
-end
-
-function _sum_sector_scale(q::TLArrayView, sector::Int, ::Type{RT}) where {RT}
-    _, alpha = sector_rmt(q.arr, sector)
-    scale = alpha * q.scale
-    q.conj && (scale = conj(scale))
-    return _sum_scale(RT, scale)
 end
 
 function _sum_sector_scale(q::SingletonTLArray, sector::Int, ::Type{RT}) where {RT}
@@ -301,7 +281,7 @@ function _sum_prepare_sector_rmt!(buffers::Vector{Vector{T}},
     @assert len <= length(buffers[input_index])
     workspace = reshape(view(buffers[input_index], 1:len), dims)
     _sum_copy_processed_unscaled!(workspace, q, sector, T)
-    return workspace, q isa TLArrayView ? one(T) : _sum_sector_scale(q, sector, T), true
+    return workspace, q isa TLArray ? one(T) : _sum_sector_scale(q, sector, T), true
 end
 
 function _sum_single_contribution!(result_keys::Vector{NTuple{QD, QT}},
@@ -702,8 +682,6 @@ end
 # Keep tuple overloads anchored on concrete tensor containers. A broad
 # Tuple{<:AbstractTLArray,...} sum method invalidates Julia's REPL hint path.
 Base.sum(qs::Tuple{TLArray, Vararg{AbstractTLArray}}) =
-    _sum_tlarrays(_sum_input_vector(qs))
-Base.sum(qs::Tuple{TLArrayView, Vararg{AbstractTLArray}}) =
     _sum_tlarrays(_sum_input_vector(qs))
 Base.sum(qs::AbstractVector{<:AbstractTLArray}) =
     _sum_tlarrays(_sum_input_vector(qs))
