@@ -54,7 +54,7 @@ function _align_sum_input(ref::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT1},
     # Summation compresses sectors by common q-labels and w-matrix gauges.  When
     # leg alignment changes the physical order, canonicalize the aligned input so
     # equivalent tensors with different embedded permutations cancel exactly.
-    return to_concrete(permutedims(q, perm))
+    return _canonical_tlarray(permutedims(q, perm))
 end
 
 function _needs_sum_alignment(ref::AbstractTLArray, q::AbstractTLArray)

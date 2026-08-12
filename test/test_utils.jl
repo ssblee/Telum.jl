@@ -232,9 +232,8 @@ end
 
 _test_to_sparse_array(q::TLArray) = _test_to_sparse_array(q, eltype(q))
 
-_test_to_sparse_array(q::TLArrayContraction, ::Type{FT} = Float64) where {FT} =
-    _test_to_sparse_array(Telum.to_concrete(q), FT)
-_test_to_sparse_array(q::TLArrayContraction) = _test_to_sparse_array(q, eltype(q))
+_test_to_sparse_array(q::Telum.TLArrayContraction, ::Type{FT} = Float64) where {FT} =
+    _test_to_sparse_array(Telum._canonical_tlarray(q), FT)
 
 function _test_contract_matches_sparse_and_preserves_inputs(a::TLArray,
                                                             legs_a::Tuple,
@@ -248,7 +247,7 @@ function _test_contract_matches_sparse_and_preserves_inputs(a::TLArray,
     a_before = Array(a_sparse)
     b_before = Array(b_sparse)
 
-    result = contract(a, legs_a, b, legs_b; lazy=false)
+    result = contract(a, legs_a, b, legs_b)
     result_sparse = Array(to_sparse_array(result, FT))
     reference = Array(contract_sparse(a_sparse, b_sparse, legs_a, legs_b))
 
@@ -464,7 +463,7 @@ function _test_tlarrays_same_sector_storage(a::TLArray, b::TLArray)
 end
 
 function _test_tlarrays_same_sector_storage(a::AbstractTLArray, b::AbstractTLArray)
-    return _test_tlarrays_same_sector_storage(Telum.to_concrete(a), Telum.to_concrete(b))
+    return _test_tlarrays_same_sector_storage(Telum._canonical_tlarray(a), Telum._canonical_tlarray(b))
 end
 
 function _test_tlarrays_same_sector_payloads(a::TLArray, b::TLArray)
@@ -587,9 +586,9 @@ function test_contract_verify_legs_checks_dual(option::LocalSpaceOptions)
     q = q0.F
     j = get1jtensor(q, 2)
 
-    @test contract(q, (2,), j, (1,); reduce_lock=false, lazy=false) isa TLArray
+    @test contract(q, (2,), j, (1,); reduce_lock=false) isa TLArray
     @test_throws AssertionError contract(q, (2,), j, (2,); reduce_lock=false)
-    @test contract(q, (2,), j, (2,); reduce_lock=false, verify_legs=false, lazy=false) isa TLArray
+    @test contract(q, (2,), j, (2,); reduce_lock=false, verify_legs=false) isa TLArray
 end
 
 # ─── test_conj ───────────────────────────────────────────────────────────────

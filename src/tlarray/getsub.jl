@@ -307,8 +307,7 @@ function _getsub_lazy(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMTsrc},
         saved_indices,
         positions,
         rmt_sizes,
-        ReentrantLock(),
-        reference_depth(q) + 1)
+        ReentrantLock())
 end
 
 function _getsub_materialized_rmt(::Type{RMT},
@@ -415,12 +414,12 @@ function getsub(q::TLArray{T, QD, N, RD}, legs::LegList, pred::Function; preserv
     return _apply_getsub_picks(q, positions, selected_picks; preserve_space=preserve_space)
 end
 
-function getsub(q::Union{TLArrayContraction, SubTLArray}, leg::Integer,
+function getsub(q::Union{TLArrayContraction, SubTLArray, SingletonTLArray}, leg::Integer,
                 pred::Function; preserve_space::Bool=false)
     return _getsub_lazy(q, (Int(leg),), pred; preserve_space=preserve_space)
 end
 
-function getsub(q::Union{TLArrayContraction, SubTLArray}, legs::LegList,
+function getsub(q::Union{TLArrayContraction, SubTLArray, SingletonTLArray}, legs::LegList,
                 pred::Function; preserve_space::Bool=false)
     return _getsub_lazy(q, legs, pred; preserve_space=preserve_space)
 end
@@ -440,7 +439,7 @@ function getsub(q::TLArray{T, QD, N, RD}, pred::Function; preserve_space::Bool=f
     return getsub(q, legs, pred; preserve_space=preserve_space)
 end
 
-function getsub(q::Union{TLArrayContraction, SubTLArray}, pred::Function;
+function getsub(q::Union{TLArrayContraction, SubTLArray, SingletonTLArray}, pred::Function;
                 preserve_space::Bool=false, dir=nothing, itag=nothing,
                 plev=nothing, lock=nothing, rev::Bool=false)
     legs = _resolve_matching_legs(q; dir=dir, itag=itag, plev=plev, lock=lock,

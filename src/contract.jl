@@ -1007,11 +1007,6 @@ function compute_sectors(q::SingletonTLArray, sector_inds::AbstractVector{<:Inte
     return q
 end
 
-@inline reference_depth(q::TLArray) = 0
-@inline reference_depth(q::TLArrayContraction) = q.reference_depth
-@inline reference_depth(q::SubTLArray) = q.reference_depth
-@inline reference_depth(q::SingletonTLArray) = reference_depth(q.arr)
-
 function _unique_requested_sectors!(out::Vector{Int},
                                     seen::BitVector,
                                     sector_inds::AbstractVector{<:Integer})
@@ -1325,7 +1320,7 @@ end
 #    end
 #end
 
-function Base.:*(q1::AbstractTLArray, q2::AbstractTLArray)
+function _matched_contract_legs(q1::AbstractTLArray, q2::AbstractTLArray)
     inds1 = inds(q1)
     inds2 = inds(q2)
     spaces1 = spaces(q1)
@@ -1360,7 +1355,21 @@ function Base.:*(q1::AbstractTLArray, q2::AbstractTLArray)
 
     @assert length(legs1) > 0 "No matching contractible indices found between the two TLArray objects"
 
-    return contract(q1, Tuple(legs1), q2, Tuple(legs2))
+    return Tuple(legs1), Tuple(legs2)
+end
+
+function contract(q1::AbstractTLArray, q2::AbstractTLArray; reduce_lock::Bool=true)
+    legs1, legs2 = _matched_contract_legs(q1, q2)
+    return contract(q1, legs1, q2, legs2; reduce_lock=reduce_lock)
+end
+
+Base.:*(q1::AbstractTLArray, q2::AbstractTLArray) = contract(q1, q2)
+
+# `@lazy` rewrites every `*`. The generic fallback preserves non-tensor products.
+@inline _lazy_contract(a, b) = a * b
+function _lazy_contract(q1::AbstractTLArray, q2::AbstractTLArray; reduce_lock::Bool=true)
+    legs1, legs2 = _matched_contract_legs(q1, q2)
+    return _lazy_contract(q1, legs1, q2, legs2; reduce_lock=reduce_lock)
 end
 
 # ─── contract ────────────────────────────────────────────────────────────────
@@ -1954,21 +1963,17 @@ function contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
                   q2::AbstractTLArray{T2, QD2, N, RD2, QT, PS, M, RMT2},
                   legs2::NTuple{CN, Int};
                   reduce_lock::Bool=true,
-                  verify_legs::Bool=true,
-                  lazy::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, M, RMT1, RMT2, CN}
-    q = _contract_lazy(q1, legs1, q2, legs2;
+                  verify_legs::Bool=true) where {T1, T2, QD1, QD2, N, RD1, RD2, QT, PS, M, RMT1, RMT2, CN}
+    q = _lazy_contract(q1, legs1, q2, legs2;
                        reduce_lock=reduce_lock,
                        verify_legs=verify_legs)
-    if lazy
-        return q
-    end
     compute_sectors(q, sector_slots(q))
     return TLArray(symm(q), stored_qlabels(q), q.wmatdata, q.wmatinfo, q.RMTs,
                    stored_inds(q), stored_spaces(q))
 end
 
 # ── Main lazy-contraction constructor ─────────────────────────────────────────
-function _contract_lazy(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
+function _lazy_contract(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
                         legs1::NTuple{CN, Int},
                         q2::AbstractTLArray{T2, QD2, N, RD2, QT, PS, M, RMT2},
                         legs2::NTuple{CN, Int};
@@ -2146,7 +2151,6 @@ function _contract_lazy(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
     end
     result_isdefined = falses(res_nsectors)
     result_iszero = falses(res_nsectors)
-    depth = max(reference_depth(q1), reference_depth(q2)) + 1
     return TLArrayContraction{promote_type(T1, T2, Float64), QD_out, N, RD_out,
                               QT, PS, M,
                               Array{promote_type(T1, T2, Float64), RD_out}}(
@@ -2165,6 +2169,5 @@ function _contract_lazy(q1::AbstractTLArray{T1, QD1, N, RD1, QT, PS, M, RMT1},
         collect(Int, perm1),
         collect(Int, perm2),
         result_rmt_sizes,
-        ReentrantLock(),
-        depth)
+        ReentrantLock())
 end

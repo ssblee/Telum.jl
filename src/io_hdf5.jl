@@ -457,7 +457,7 @@ function save_tlarray(h5, name::AbstractString, q::TLArray)
 end
 
 function save_tlarray(h5, name::AbstractString, q::AbstractTLArray)
-    concrete = to_concrete(q)
+    concrete = _canonical_tlarray(q)
     return save_tlarray(h5, name, concrete)
 end
 

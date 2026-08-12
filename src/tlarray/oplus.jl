@@ -166,7 +166,7 @@ function _align_oplus_inputs(qs)
     isempty(qs) && throw(ArgumentError("oplus requires at least one TLArray"))
     first(qs) isa AbstractTLArray || throw(ArgumentError("oplus entry 1 is not a TLArray"))
 
-    ref = to_concrete(first(qs))
+    ref = _canonical_tlarray(first(qs))
     aligned = Vector{TLArray}(undef, length(qs))
     aligned[1] = ref
     for i in 2:length(qs)
@@ -176,7 +176,7 @@ function _align_oplus_inputs(qs)
             "TLArray entry $i has a different symmetry tuple"))
         qinds = inds(q)
         perm = _find_oplus_leg_permutation(ref.inds, qinds, i)
-        aligned[i] = to_concrete(
+        aligned[i] = _canonical_tlarray(
             perm == ntuple(identity, length(ref.inds)) ? q : permutedims(q, perm))
     end
     return aligned
@@ -257,7 +257,7 @@ function _oplus_matrix_entry(mat, i::Int, j::Int)
     end
     val isa AbstractTLArray || throw(ArgumentError(
         "matrix oplus entry ($i, $j) is neither an AbstractTLArray nor an undefined entry"))
-    return to_concrete(val)
+    return _canonical_tlarray(val)
 end
 
 function _infer_zero_matrix_spaces(first_axis_sources, second_axis_sources, i::Int, j::Int, QD::Int)

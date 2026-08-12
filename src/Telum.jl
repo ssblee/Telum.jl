@@ -54,7 +54,7 @@ include("TLArray.jl")
 include("sparse_array.jl")
 include("io_hdf5.jl")
 
-export AbstractTLArray, TLArray, TLArrayContraction, TLIndex, Itag, DiagRMT
+export AbstractTLArray, TLArray, TLIndex, Itag, DiagRMT
 export ProductSymm, productsymm, product_symms, symm, nsymms
 export LocalSpaceOptions, SpinOptions, FermionOptions, FermionSOptions
 export Z, U1, SU, SO, Sp
@@ -74,5 +74,6 @@ export lock, lockp, unlock
 export additag, removeitag, replaceitag, setitag
 export accumul_costs, read_reset_costs!, set_accumul_costs!
 export save_tlarray, load_tlarray
+export @lazy
 
 end

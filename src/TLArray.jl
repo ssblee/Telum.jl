@@ -628,7 +628,6 @@ struct TLArrayContraction{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArr
     perm2::Vector{Int}
     rmt_sizes::Vector{NTuple{RD, Int}}
     lock::ReentrantLock
-    reference_depth::Int
 end
 
 const GetSubSelector = Union{Colon, Vector{Int}}
@@ -653,7 +652,6 @@ struct SubTLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{<:Any
     affected_legs::Vector{Int}
     rmt_sizes::Vector{NTuple{RD, Int}}
     lock::ReentrantLock
-    reference_depth::Int
 end
 
 struct AddSingletonTLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{<:Any, RD}} <:
@@ -691,22 +689,20 @@ _identity_view_state(::Type{T}, ::Val{QD}) where {T, QD} =
 
 function TLArrayContraction{T, QD, N, RD, QT, PS, M, RMT}(
     qlabels, wmatdata, wmatinfo, RMTs, isdefined, iszero, inds, spaces,
-    arr1, arr2, work_items, factors, perm1, perm2, rmt_sizes, lock,
-    reference_depth) where {T, QD, N, RD, QT, PS, M, RMT}
+    arr1, arr2, work_items, factors, perm1, perm2, rmt_sizes, lock) where {T, QD, N, RD, QT, PS, M, RMT}
     return TLArrayContraction{T, QD, N, RD, QT, PS, M, RMT}(
         qlabels, wmatdata, wmatinfo, RMTs, isdefined, iszero, inds, spaces,
         _identity_view_state(T, Val(QD))..., arr1, arr2, work_items, factors,
-        perm1, perm2, rmt_sizes, lock, reference_depth)
+        perm1, perm2, rmt_sizes, lock)
 end
 
 function SubTLArray{T, QD, N, RD, QT, PS, M, RMT}(
     qlabels, wmatdata, wmatinfo, RMTs, isdefined, iszero, inds, spaces,
-    arr, source_sectors, saved_indices, affected_legs, rmt_sizes, lock,
-    reference_depth) where {T, QD, N, RD, QT, PS, M, RMT}
+    arr, source_sectors, saved_indices, affected_legs, rmt_sizes, lock) where {T, QD, N, RD, QT, PS, M, RMT}
     return SubTLArray{T, QD, N, RD, QT, PS, M, RMT}(
         qlabels, wmatdata, wmatinfo, RMTs, isdefined, iszero, inds, spaces,
         _identity_view_state(T, Val(QD))..., arr, source_sectors,
-        saved_indices, affected_legs, rmt_sizes, lock, reference_depth)
+        saved_indices, affected_legs, rmt_sizes, lock)
 end
 
 function AddSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT}(
@@ -773,11 +769,11 @@ Base.propertynames(q::TLArray, private::Bool=false) =
 Base.propertynames(q::TLArrayContraction, private::Bool=false) =
     (:qlabels, :wmatdata, :wmatinfo, :RMTs, :isdefined, :iszero, :inds, :spaces,
      :conj, :scale, :perm, :arr1, :arr2, :work_items, :factors, :perm1, :perm2,
-     :rmt_sizes, :lock, :reference_depth)
+     :rmt_sizes, :lock)
 Base.propertynames(q::SubTLArray, private::Bool=false) =
     (:qlabels, :wmatdata, :wmatinfo, :RMTs, :isdefined, :iszero, :inds, :spaces,
      :conj, :scale, :perm, :arr, :source_sectors, :saved_indices,
-     :affected_legs, :rmt_sizes, :lock, :reference_depth)
+     :affected_legs, :rmt_sizes, :lock)
 Base.propertynames(q::AddSingletonTLArray, private::Bool=false) =
     (:qlabels, :wmatdata, :wmatinfo, :inds, :spaces, :conj, :scale, :perm,
      :arr, :inserted_legs, :source_to_result_legs, :result_to_source_legs)
@@ -1157,8 +1153,7 @@ function _with_view_state(q::TLArrayContraction{T, QD, N, RD, QT, PS, M, RMT},
     return TLArrayContraction{RT, QD, N, RD, QT, PS, M, RMT}(
         stored_qlabels(q), wmatdata, wmatinfo, q.RMTs, q.isdefined, q.iszero,
         stored_inds(q), stored_spaces(q), conj_flag, cscale, perm, q.arr1, q.arr2,
-        q.work_items, q.factors, q.perm1, q.perm2, q.rmt_sizes, q.lock,
-        q.reference_depth)
+        q.work_items, q.factors, q.perm1, q.perm2, q.rmt_sizes, q.lock)
 end
 
 function _with_view_state(q::SubTLArray{T, QD, N, RD, QT, PS, M, RMT},
@@ -1174,8 +1169,7 @@ function _with_view_state(q::SubTLArray{T, QD, N, RD, QT, PS, M, RMT},
     return SubTLArray{RT, QD, N, RD, QT, PS, M, RMT}(
         stored_qlabels(q), wmatdata, wmatinfo, q.RMTs, q.isdefined, q.iszero,
         stored_inds(q), stored_spaces(q), conj_flag, cscale, perm, q.arr, q.source_sectors,
-        q.saved_indices, q.affected_legs, q.rmt_sizes, q.lock,
-        q.reference_depth)
+        q.saved_indices, q.affected_legs, q.rmt_sizes, q.lock)
 end
 
 function _with_view_state(q::AddSingletonTLArray{T, QD, N, RD, QT, PS, M, RMT},
@@ -1249,7 +1243,7 @@ function materialize(q::SingletonTLArray)
     return q
 end
 
-function to_concrete(q::AbstractTLArray{T, QD, N, RD, QT}) where {T, QD, N, RD, QT}
+function _canonical_tlarray(q::AbstractTLArray{T, QD, N, RD, QT}) where {T, QD, N, RD, QT}
     materialize(q)
     qlabels = [ntuple(leg -> sector_qlabel(q, sector, leg), Val(QD))::NTuple{QD, QT}
                for sector in sector_slots(q)]
@@ -1273,13 +1267,12 @@ function to_concrete(q::AbstractTLArray{T, QD, N, RD, QT}) where {T, QD, N, RD, 
 end
 
 """
-    to_concrete(q::AbstractTLArray) -> TLArray
+    to_concrete(q::TLArray) -> TLArray
 
-Evaluate every undefined sector reachable from `q` and return an independent
-eager `TLArray` for display or file I/O. The returned tensor does not share
-mutable metadata or RMT payload storage with `q` or any tensor referenced by
-`q`, so concrete storage cleanup may safely mutate the result.
+Return an independent canonical copy of the concrete tensor `q`. The result
+does not share mutable metadata or RMT payload storage with `q`.
 """
+to_concrete(q::TLArray) = _canonical_tlarray(q)
 
 @inline function _normalize_tlarray_view(arr::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                                          conj_flag::Bool,
@@ -1549,7 +1542,7 @@ function _tlarray_alias_materialized_storage(q::Union{TLArrayContraction{T, QD, 
 end
 
 TLArray(q::Union{TLArrayContraction, SubTLArray}) = _tlarray_alias_materialized_storage(q)
-TLArray(q::SingletonTLArray) = to_concrete(q)
+TLArray(q::SingletonTLArray) = _canonical_tlarray(q)
 
 Base.convert(::Type{TLArray}, q::AbstractTLArray) = TLArray(q)
 function Base.convert(::Type{TLA}, q::AbstractTLArray) where {TLA<:TLArray}
@@ -2520,7 +2513,7 @@ function _contraction_rewrap(q::TLArrayContraction{T, QD, N, RD, QT, PS, M, RMT}
         stored_qlabels(q), q.wmatdata, q.wmatinfo, q.RMTs, q.isdefined, q.iszero,
         inds, q.spaces, stored_conj(q), stored_scale(q), stored_perm(q),
         q.arr1, q.arr2, q.work_items, q.factors, q.perm1, q.perm2,
-        q.rmt_sizes, q.lock, q.reference_depth)
+        q.rmt_sizes, q.lock)
 end
 
 _contraction_rewrap(q::TLArrayContraction, ref::AbstractTLArray) =
@@ -2919,3 +2912,4 @@ include("svd.jl")
 include("qr.jl")
 include("eig.jl")
 include("permute.jl")
+include("lazy.jl")

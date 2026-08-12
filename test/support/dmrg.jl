@@ -152,11 +152,11 @@ function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov, time_blocks=true)
 
     @time_block time_blocks "Lanczos iteration:" begin
         for i in 1:nKrylov
-            Amul = Hl * As[i]
-            for H in Hs
-                Amul = Amul * H
+            Amul = @lazy begin
+                tmp = Hl * As[i]
+                for H in Hs tmp = tmp * H end
+                tmp * Hr
             end
-            Amul = Amul * Hr
             αs[i] = (As[i]' * Amul)[]
             cnt += 1
 
@@ -178,11 +178,13 @@ function eigs_GS(Hl, Hs, Hr, M; tol, nKrylov, time_blocks=true)
         _, V = eigen(Hkrylov)
         vec = V[:, 1]
         Anew = sum([vec[i] * As[i] for i in 1:cnt])
-        Enew = Hl * Anew
-        for H in Hs
-            Enew = Enew * H
+        Enew = @lazy begin
+            tmp = Hl * Anew
+            for H in Hs
+                tmp = tmp * H
+            end
+            ((tmp * Hr) * Anew')[]
         end
-        Enew = ((Enew * Hr) * Anew')[]
         @assert imag(Enew) < tol
     end
     return Anew, real(Enew)
@@ -332,12 +334,14 @@ function init_MPS(MPO::Vector{<:TLArray}, Nkeep::Int, Nkeep_last::Int=1; tol=0.0
     E, sp = nothing, nothing
 
     for i in 1:N
-        li = findleg(Aprev; itag=i == 1 ? "SLeft" : "SB", dir='-')
-        Anow = getIdentity((Aprev, li), (MPO[i], 2); itag="SL,$i")
-        Hnow = Anow' * lock(Anow * Hprev * MPO[i]; itag="SL,$i")
+        Hmat = @lazy begin
+            li = findleg(Aprev; itag=i == 1 ? "SLeft" : "SB", dir='-')
+            Anow = getIdentity((Aprev, li), (MPO[i], 2); itag="SL,$i")
+            Hnow = Anow' * lock(Anow * Hprev * MPO[i]; itag="SL,$i")
 
-        bli = findleg(Hnow; itag=i == N ? "ORight" : "OB,$i")
-        Hmat = deleteSingleton(getsub(Hnow, bli, x -> x == zq ? 1 : nothing), bli)
+            bli = findleg(Hnow; itag=i == N ? "ORight" : "OB,$i")
+            deleteSingleton(getsub(Hnow, bli, x -> x == zq ? 1 : nothing), bli)
+        end
         e = eigen((Hmat + Hmat') / 2; hermitian=true)
 
         ek, _ = discard_eigen(e, i == N ? Nkeep_last : Nkeep,

@@ -123,9 +123,9 @@ end
     q = getLocalSpace(SpinOptions(:SU2, 1))
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.S, ("bond", "bond", "right"))
-    lazy = contract(left, (2,), right, (1,))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
 
-    @test lazy isa TLArrayContraction
+    @test lazy isa Telum.TLArrayContraction
     @test svd(lazy, (1,)).U isa TLArray
     @test qr(lazy, (1,)).Q isa TLArray
 end

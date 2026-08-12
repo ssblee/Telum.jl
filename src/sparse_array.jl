@@ -7,7 +7,7 @@ for performance-sensitive tensor-network calculations.
 """
 function to_sparse_array(q::TLArray{T, QD, N, RD}, ::Type{FT}) where {T, QD, N, RD, FT}
     if !_is_identity_view_state(stored_conj(q), stored_scale(q), stored_perm(q))
-        return to_sparse_array(to_concrete(q), FT)
+        return to_sparse_array(_canonical_tlarray(q), FT)
     end
     symmetries = symm(q)
     leg_info = [_sparse_leg_offsets(symmetries, spaces(q)[leg]) for leg in 1:QD]
@@ -78,7 +78,7 @@ end
 
 to_sparse_array(q::TLArray) = to_sparse_array(q, eltype(q))
 to_sparse_array(q::AbstractTLArray, ::Type{FT}) where {FT} =
-    to_sparse_array(to_concrete(q), FT)
+    to_sparse_array(_canonical_tlarray(q), FT)
 to_sparse_array(q::AbstractTLArray) = to_sparse_array(q, eltype(q))
 
 function _sparse_leg_offsets(symmetries, splist)

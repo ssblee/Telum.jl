@@ -23,7 +23,7 @@ end
     qi1 = TLArray(q.I, ("dup1", "dup1"))
     qi2 = TLArray(q.I, ("dup2", "dup2"))
     a = getIdentity((qi1, 2), (qi2, 2))
-    @test contract(qi1, (2,), a, (1,); lazy=false) isa TLArray
+    @test contract(qi1, (2,), a, (1,)) isa TLArray
 end
 
 @testset "getIdentity direct contraction" begin
@@ -43,7 +43,7 @@ end
     q = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
-    contracted = contract(left, (2,), right, (1,); lazy=false)
+    contracted = contract(left, (2,), right, (1,))
     @test _test_sector_rmt(contracted, 1) ≈ _test_sector_rmt(q.I, 1) * _test_sector_rmt(q.Sz, 1)
 
     summed = q.Sz + q.Sz
@@ -56,10 +56,10 @@ end
     q = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
-    eager = contract(left, (2,), right, (1,); lazy=false)
-    lazy = contract(left, (2,), right, (1,))
+    eager = contract(left, (2,), right, (1,))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
 
-    @test lazy isa TLArrayContraction
+    @test lazy isa Telum.TLArrayContraction
     @test !Telum.is_sector_defined(lazy, 1)
     @test Telum.sector_rmt_axis_dim(lazy, 1, 1) == size(_test_sector_rmt(eager, 1), 1)
     @test_throws ArgumentError Telum.sector_rmt(lazy, 1)
@@ -79,7 +79,7 @@ end
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
 
-    lazy_full = contract(left, (2,), right, (1,))
+    lazy_full = Telum._lazy_contract(left, (2,), right, (1,))
     sub_full = Telum.getsub(lazy_full, 1, _ -> Colon())
 
     @test sub_full isa Telum.SubTLArray
@@ -92,14 +92,14 @@ end
     @test Telum.is_sector_defined(sub_full, 1)
     @test sub_full.RMTs[1] === lazy_full.RMTs[1]
 
-    lazy_slice = contract(left, (2,), right, (1,))
+    lazy_slice = Telum._lazy_contract(left, (2,), right, (1,))
     sub_slice = Telum.getsub(lazy_slice, 1, _ -> 1)
     Telum.compute_sectors(sub_slice, [1])
     slice_selector = ntuple(d -> d == 1 ? [1] : Colon(), ndims(lazy_slice.RMTs[1]))
     @test sub_slice.RMTs[1] == lazy_slice.RMTs[1][slice_selector...]
     @test sub_slice.RMTs[1] !== lazy_slice.RMTs[1]
 
-    lazy_view = 2 * contract(left, (2,), right, (1,))
+    lazy_view = 2 * Telum._lazy_contract(left, (2,), right, (1,))
     sub_view = Telum.getsub(lazy_view, 1, _ -> Colon())
     @test sub_view isa Telum.SubTLArray
     @test sub_view.scale == 2
@@ -109,7 +109,7 @@ end
     q = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
-    lazy = contract(left, (2,), right, (1,))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
 
     converted = TLArray(lazy)
 
@@ -123,10 +123,45 @@ end
     @test converted.iszero === lazy.iszero
     @test converted.RMTs[1] === lazy.RMTs[1]
 
-    copied = Telum.to_concrete(lazy)
-    @test copied.RMTs !== lazy.RMTs
-    @test copied.RMTs[1] !== lazy.RMTs[1]
+    copied = Telum.to_concrete(converted)
+    @test copied.RMTs !== converted.RMTs
+    @test copied.RMTs[1] !== converted.RMTs[1]
     @test _test_sector_rmt(converted, 1) ≈ _test_sector_rmt(copied, 1)
+end
+
+@testset "@lazy finalizes tensor and scalar results" begin
+    q = getLocalSpace(SpinOptions(nothing, 1))
+    left = TLArray(q.I, ("left", "bond"))
+    right = TLArray(q.Sz, ("bond", "right"))
+    eager = left * right
+
+    result = @lazy begin
+        intermediate = left * right
+        getsub(intermediate, 1, _ -> Colon())
+    end
+    @test result isa TLArray
+    @test _test_sector_rmt(result, 1) ≈ _test_sector_rmt(eager, 1)
+    @test _test_sector_rmt(@lazy(contract(left, right)), 1) ≈ _test_sector_rmt(eager, 1)
+    @test _test_sector_rmt(@lazy(Telum.contract(left, right)), 1) ≈ _test_sector_rmt(eager, 1)
+    @test _test_sector_rmt(@lazy(contract(left, (2,), right, (1,))), 1) ≈
+          _test_sector_rmt(eager, 1)
+    middle = TLArray(q.I, ("bond", "middle"))
+    chained_eager = (left * middle) * TLArray(q.Sz, ("middle", "right"))
+    chained_lazy = @lazy left * middle * TLArray(q.Sz, ("middle", "right"))
+    @test chained_lazy isa TLArray
+    @test _test_sector_rmt(chained_lazy, 1) ≈ _test_sector_rmt(chained_eager, 1)
+    let contract = (_, _) -> error("local contract must not be called")
+        @test _test_sector_rmt(@lazy(contract(left, right)), 1) ≈ _test_sector_rmt(eager, 1)
+    end
+    function lazy_return()
+        @lazy begin
+            intermediate = left * right
+            return intermediate
+        end
+    end
+    @test lazy_return() isa TLArray
+    @test @lazy(2 * 3) == 6
+    @test_throws ArgumentError @lazy (left, right)
 end
 
 test_contract_tlarrayview_inputs()

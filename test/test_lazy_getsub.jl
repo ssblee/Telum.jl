@@ -55,7 +55,7 @@ end
     q = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
-    lazy = contract(left, (2,), right, (1,))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
 
     sub = Telum.getsub(lazy, _ -> Colon(); itag="left")
 
@@ -90,7 +90,7 @@ end
     q = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
-    lazy = contract(left, (2,), right, (1,))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
 
     @test_throws ArgumentError Telum.getsub(lazy, 1, _ -> 1; preserve_space=true)
     @test !Telum.is_sector_defined(lazy, 1)
@@ -100,7 +100,7 @@ end
     q = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
-    lazy = contract(left, (2,), right, (1,))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
 
     sub1 = Telum.getsub(lazy, 1, _ -> Colon())
     sub2 = Telum.getsub(sub1, 2, _ -> Colon())
@@ -117,7 +117,7 @@ end
     q = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q.I, ("left", "bond"))
     right = TLArray(q.Sz, ("bond", "right"))
-    lazy = contract(left, (2,), right, (1,))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
     sub = Telum.getsub(lazy, 1, _ -> Colon())
 
     converted = TLArray(sub)
@@ -132,7 +132,7 @@ end
     @test converted.iszero === sub.iszero
     @test converted.RMTs[1] === sub.RMTs[1]
 
-    copied = Telum.to_concrete(sub)
-    @test copied.RMTs !== sub.RMTs
-    @test copied.RMTs[1] !== sub.RMTs[1]
+    copied = Telum.to_concrete(converted)
+    @test copied.RMTs !== converted.RMTs
+    @test copied.RMTs[1] !== converted.RMTs[1]
 end

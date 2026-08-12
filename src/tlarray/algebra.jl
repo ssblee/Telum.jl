@@ -31,7 +31,7 @@ Base.:-(qs::AbstractTLArray) = qs * -1
 
 # Return a deep copy of a TLArray (CGT metadata, RMTs, indices, spaces all copied).
 Base.copy(q::TLArray) = deepcopy(q)
-Base.copy(q::AbstractTLArray) = to_concrete(q)
+Base.copy(q::AbstractTLArray) = _canonical_tlarray(q)
 
 function _identity_on_tlarray(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N, RD}
     @assert QD == 2 "Scalar add/subtract is only defined for rank-2 TLArray objects"

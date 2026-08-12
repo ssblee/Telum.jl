@@ -20,7 +20,7 @@ const TLARRAY_DISPLAY_TAIL = Ref(5)   # number of last sectors to show
 
 Base.show(io::IO, qs::TLArray) = show(io, MIME"text/plain"(), qs)
 function Base.show(io::IO, qs::SubTLArray)
-    concrete = to_concrete(qs)
+    concrete = _canonical_tlarray(qs)
     show(io, concrete)
     return concrete
 end
@@ -60,7 +60,7 @@ function printmeta(io::IO, q::TLArray)
     println()
 end
 printmeta(q::TLArray) = printmeta(stdout, q)
-printmeta(io::IO, q::AbstractTLArray) = printmeta(io, to_concrete(q))
+printmeta(io::IO, q::AbstractTLArray) = printmeta(io, _canonical_tlarray(q))
 printmeta(q::AbstractTLArray) = printmeta(stdout, q)
 
 # Special pretty-printing for 0-dimensional TLArray (scalar result of full contraction).

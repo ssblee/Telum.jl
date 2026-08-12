@@ -80,9 +80,9 @@ end
                                      tags=("phys", "bond"))
     right = _one_sector_matrix_tlarray(Matrix{Float64}(I, 5, 5);
                                       tags=("bond", "phys"))
-    lazy = contract(left, (2,), right, (1,))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
 
-    @test lazy isa TLArrayContraction
+    @test lazy isa Telum.TLArrayContraction
     @test eigen(lazy; hermitian=true).V isa TLArray
 end
 

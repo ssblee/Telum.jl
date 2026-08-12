@@ -511,12 +511,11 @@ end
     q0 = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q0.I, ("left", "bond"))
     right = TLArray(q0.Sz, ("bond", "right"))
-    eager = contract(left, (2,), right, (1,); lazy=false)
+    eager = contract(left, (2,), right, (1,))
 
-    lazy_add_source = contract(left, (2,), right, (1,))
+    lazy_add_source = Telum._lazy_contract(left, (2,), right, (1,))
     add_lazy = addSingleton(lazy_add_source, 1; itag="aux", dir='+')
     @test add_lazy isa Telum.AddSingletonTLArray
-    @test Telum.reference_depth(add_lazy) == Telum.reference_depth(lazy_add_source)
     @test !Telum.is_sector_defined(lazy_add_source, 1)
     @test Telum.sector_rmt_dim(add_lazy, 1) == (1, Telum.sector_rmt_dim(lazy_add_source, 1)...)
     @test_throws ArgumentError Telum.sector_rmt(add_lazy, 1)
@@ -546,14 +545,13 @@ end
                   [reshape([1.0], 1)], (TLIndex("aux", '-'),), ([((), 1)],))
     contracted_add = contract(addSingleton(contract(left, (2,), right, (1,)),
                                           1; itag="aux", dir='+'),
-                              (1,), aux, (1,); lazy=false)
+                              (1,), aux, (1,))
     @test Telum.sector_rmt(contracted_add, 1)[1] == Telum.sector_rmt(eager, 1)[1]
 
-    lazy_delete_source = contract(left, (2,), right, (1,))
+    lazy_delete_source = Telum._lazy_contract(left, (2,), right, (1,))
     add_for_delete = addSingleton(lazy_delete_source, 1; itag="aux", dir='+')
     delete_lazy = deleteSingleton(add_for_delete, 1)
     @test delete_lazy isa Telum.DeleteSingletonTLArray
-    @test Telum.reference_depth(delete_lazy) == Telum.reference_depth(lazy_delete_source)
     @test !Telum.is_sector_defined(lazy_delete_source, 1)
     @test Telum.sector_rmt_dim(delete_lazy, 1) == Telum.sector_rmt_dim(lazy_delete_source, 1)
     Telum.compute_sectors(delete_lazy, [1])
@@ -588,7 +586,7 @@ end
     @test delete_settag isa Telum.DeleteSingletonTLArray
     @test String(delete_settag.inds[1].itags) == "only"
 
-    lazy_view_source = contract(left, (2,), right, (1,))
+    lazy_view_source = Telum._lazy_contract(left, (2,), right, (1,))
     view = 2 * permutedims(addSingleton(lazy_view_source, 3; itag="aux", dir='+'), (2, 1, 3))
     delete_view = deleteSingleton(view, 3)
     @test delete_view isa Telum.DeleteSingletonTLArray
@@ -598,6 +596,32 @@ end
     delete_view_rmt, delete_view_scale = Telum.sector_rmt(delete_view, 1)
     view_ref_rmt, view_ref_scale = Telum.sector_rmt(view_ref, 1)
     @test delete_view_scale .* delete_view_rmt ≈ view_ref_scale .* view_ref_rmt
+end
+
+@testset "@lazy composes structural operations" begin
+    q0 = getLocalSpace(SpinOptions(nothing, 1))
+    left = TLArray(q0.I, ("left", "bond"))
+    right = TLArray(q0.Sz, ("bond", "right"))
+    eager = deleteSingleton(
+        getsub(addSingleton(left * right, 1; itag="aux", dir='+'), 1, _ -> Colon()), 1)
+
+    result = @lazy begin
+        q = left * right
+        q = addSingleton(q, 1; itag="aux", dir='+')
+        q = getsub(q, 1, _ -> Colon())
+        deleteSingleton(q, 1)
+    end
+    @test result isa TLArray
+    @test _test_sector_rmt(result, 1) ≈ _test_sector_rmt(eager, 1)
+
+    result_reordered = @lazy begin
+        q = left * right
+        q = getsub(q, 1, _ -> Colon())
+        q = addSingleton(q, 1; itag="aux", dir='+')
+        deleteSingleton(q, 1)
+    end
+    @test result_reordered isa TLArray
+    @test _test_sector_rmt(result_reordered, 1) ≈ _test_sector_rmt(eager, 1)
 end
 
 @testset "deleteSingleton densifies singleton diagonal axis" begin
