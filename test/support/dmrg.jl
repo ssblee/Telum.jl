@@ -241,7 +241,7 @@ function DMRG_GS_1site!(MPS::Vector{<:TLArray{T1, 3}},
             else
                 MPS[i] = M
             end
-            Hrl[i + 1] = (Hrl[i + 2] * MPS[i]) * MPO[i] * lock(MPS[i]'; itag=target_tag)
+            Hrl[i + 1] = @lazy (Hrl[i + 2] * MPS[i]) * MPO[i] * lock(MPS[i]'; itag=target_tag)
         end
         println("Energy: $E")
 
@@ -260,7 +260,7 @@ function DMRG_GS_1site!(MPS::Vector{<:TLArray{T1, 3}},
             else
                 MPS[i] = M
             end
-            Hrl[i + 1] = (Hrl[i] * MPS[i]) * MPO[i] * lock(MPS[i]'; itag=target_tag)
+            Hrl[i + 1] = @lazy (Hrl[i] * MPS[i]) * MPO[i] * lock(MPS[i]'; itag=target_tag)
         end
         println("Energy: $E")
     end
@@ -295,8 +295,7 @@ function DMRG_GS_2site!(MPS::Vector{<:TLArray{T1, 3}},
 
                 MPS[i] = removeitag(U * S, "right")
                 MPS[i + 1] = removeitag(Vd, "right")
-                Hrl[i + 2] = (Hrl[i + 3] * MPS[i + 1]) * MPO[i + 1] *
-                             lock(MPS[i + 1]'; itag="SB,$i")
+                Hrl[i + 2] = @lazy (Hrl[i + 3] * MPS[i + 1]) * MPO[i + 1] * lock(MPS[i + 1]'; itag="SB,$i")
             end
         end
         println("Energy: $E")
@@ -315,8 +314,7 @@ function DMRG_GS_2site!(MPS::Vector{<:TLArray{T1, 3}},
 
                 MPS[i] = removeitag(U, "left")
                 MPS[i + 1] = removeitag(S * Vd, "left")
-                Hrl[i + 1] = (Hrl[i] * MPS[i]) * MPO[i] *
-                             lock(MPS[i]'; itag="SB,$i")
+                Hrl[i + 1] = @lazy (Hrl[i] * MPS[i]) * MPO[i] * lock(MPS[i]'; itag="SB,$i")
             end
         end
         println("Energy: $E")
