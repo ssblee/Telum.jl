@@ -18,13 +18,42 @@
 const TLARRAY_DISPLAY_HEAD = Ref(5)   # number of first sectors to show
 const TLARRAY_DISPLAY_TAIL = Ref(5)   # number of last sectors to show
 
+"""
+    show(io::IO, q::TLArray)
+
+Print a compact text representation of a concrete tensor.
+
+The display includes rank, symmetry names, visible index metadata, sector RMT
+physical dimensions, outer-multiplicity dimensions, qlabels, and scalar sector
+values when available. Sector output is truncated by `TLARRAY_DISPLAY_HEAD` and
+`TLARRAY_DISPLAY_TAIL`.
+"""
 Base.show(io::IO, qs::TLArray) = show(io, MIME"text/plain"(), qs)
+
+"""
+    show(io::IO, q::SubTLArray)
+
+Print a lazy subarray through a materialized concrete `TLArray` view.
+
+The concrete view aliases the subarray's materialized storage and preserves its
+embedded state. This method is intentionally display-oriented and may compute
+lazy sectors.
+"""
 function Base.show(io::IO, qs::SubTLArray)
-    concrete = _canonical_tlarray(qs)
+    concrete = TLArray(qs)
     show(io, concrete)
     return concrete
 end
 
+"""
+    _format_qindex(idx::TLIndex) -> String
+
+Format one `TLIndex` for TLArray text display.
+
+The string includes normalized tags, direction, prime level when nonzero, and
+lock level when nonzero. The dual flag is handled by the caller with color so
+that the raw textual index remains compact.
+"""
 _qindex_plev_string(plev::Int) =
     plev == 0 ? "" : "p$(plev)"
 
@@ -34,6 +63,15 @@ function _format_qindex(idx::TLIndex)
     return "\"$(idx.itags)$(idx.dir)\"$(_qindex_plev_string(idx.plev))$(_qindex_lock_string(idx.lock))"
 end
 
+"""
+    _print_tlarray_header(io::IO, q::TLArray)
+
+Print the one-line non-payload TLArray header.
+
+The header contains visible rank, number of symmetries, symmetry text keys, and
+formatted visible indices. Dual indices are colored when the terminal supports
+ANSI escapes.
+"""
 function _print_tlarray_header(io::IO, qs::TLArray{T, QD, N}) where {T, QD, N}
     symm_names = join((totxt(s) for s in symm(qs)), ", ")
     print(io, "$(QD)D TLArray, $N symmetries [$symm_names]")
@@ -53,22 +91,40 @@ end
     printmeta([io::IO], q::TLArray)
 
 Print only the non-RMT metadata line for `q`, matching the non-numerical prefix
-of the standard `TLArray` text display.
+of the standard `TLArray` text display. This lightweight helper is defined only
+for concrete `TLArray` values; it reads no RMT payloads and does not materialize
+lazy evaluation objects.
 """
 function printmeta(io::IO, q::TLArray)
     _print_tlarray_header(io, q)
     println()
 end
 printmeta(q::TLArray) = printmeta(stdout, q)
-printmeta(io::IO, q::AbstractTLArray) = printmeta(io, _canonical_tlarray(q))
-printmeta(q::AbstractTLArray) = printmeta(stdout, q)
 
+"""
+    show(io::IO, ::MIME"text/plain", q::TLArray{T,0,N,N})
+
+Pretty-print a scalar TLArray produced by full contraction.
+
+The scalar method prints the same header as higher-rank tensors and then appends
+the single scalar value instead of a sector table.
+"""
 # Special pretty-printing for 0-dimensional TLArray (scalar result of full contraction).
 function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, 0, N, N}) where {T, N}
     _print_tlarray_header(io, qs)
     print(io, ": ", _fmt_scalar_str(qs[]))
 end
 
+"""
+    show(io::IO, ::MIME"text/plain", q::TLArray)
+
+Pretty-print sector metadata and small scalar payload summaries for a TLArray.
+
+`q` is assumed concrete. The method displays only active sector slots, computes
+per-symmetry label widths for alignment, marks omitted middle sectors when the
+sector count exceeds the configured head/tail limits, and avoids printing full
+dense RMT payloads.
+"""
 function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
     # --- Header: symmetries and leg dirs/tags on one line ---
     # Format:  TLArray{...}  [Sym1, Sym2]  ["tag1"+, "tag2"-', ...]

@@ -42,6 +42,19 @@
 
 # TODO: Implement a version that get left_legs by predicates or various keyword arguments
 # TODO: Test svd with trunction for TLArray object (This is not rigorous yet)
+"""
+Container for a symmetry-aware SVD.
+
+# Fields
+
+- `U`: left TLArray factor.
+- `S`: diagonal/bond singular-value TLArray.
+- `Vd`: right TLArray factor in the package's directed-bond convention.
+- `kept_list`: globally ordered singular-value entries retained by truncation.
+- `trunc_list`: corresponding discarded entries/truncation bookkeeping.
+
+Its iteration order matches the public SVD return convention.
+"""
 struct SVDResult{TU, TS, TVD, TKL, TTL}
     U::TU
     S::TS
@@ -167,6 +180,14 @@ end
     return left_signature, right_signature
 end
 
+"""Internal SVD row-to-symmetry split descriptor.
+
+# Fields
+
+- `sector_index`: source TLArray sector slot.
+- `q`: product-symmetry q-label tuple for that slot.
+- `left_signature`, `right_signature`: canonical q-label tuples defining each split side.
+"""
 struct _SVDSplitRow{L, R, QT}
     sector_index::Int
     q::QT
@@ -174,6 +195,15 @@ struct _SVDSplitRow{L, R, QT}
     right_signature::NTuple{R, QT}
 end
 
+"""Internal SVD decomposition of one sector into symmetry isometries and core.
+
+# Fields
+
+- `sector_index`, `q`: source slot and q-label tuple.
+- `left_signature`, `right_signature`: canonical side signatures.
+- `left_iso`, `right_iso`: symmetry basis isometries.
+- `core`: reduced dense coefficient core.
+"""
 struct _SVDSymmetrySplit{L, R, QTN}
     sector_index::Int
     q::QTN
@@ -184,6 +214,14 @@ struct _SVDSymmetrySplit{L, R, QTN}
     core::Array{Float64, 3}
 end
 
+"""Internal SVD CGT block descriptor.
+
+# Fields
+
+- `q`: intermediate q-label.
+- `omL`, `omR`: left/right outer-multiplicity dimensions.
+- `coeffs`: dense CGT coefficient block coupling those OM axes.
+"""
 struct _SVDCGTBlockInfo{NZ}
     q::NTuple{NZ, Int}
     omL::Int
@@ -191,6 +229,15 @@ struct _SVDCGTBlockInfo{NZ}
     coeffs::Array{Float64, 3}
 end
 
+"""Internal packed-side layout descriptor for an SVD class.
+
+# Fields
+
+- `signature`: canonical q-label signature.
+- `row_index`, `sector_index`: source split-row and sector identifiers.
+- `phys_dims`, `om_dims`: physical and OM extents.
+- `range`: contiguous packed-matrix range.
+"""
 struct _SVDClassSideInfo{Sig, L, N}
     signature::Sig
     row_index::Int
@@ -200,6 +247,16 @@ struct _SVDClassSideInfo{Sig, L, N}
     range::UnitRange{Int}
 end
 
+"""Internal grouping metadata for one SVD CGT class.
+
+# Fields
+
+- `sector`: class intermediate q-label.
+- `rows`: split-row range in the class.
+- `left_infos`, `right_infos`: packed-side descriptors.
+- `left_ranges`, `right_ranges`: signature-to-range maps.
+- `total_left`, `total_right`: packed matrix dimensions.
+"""
 struct _SVDCGTClassMetadata{QT, LI, LR, RI, RR}
     sector::QT
     rows::UnitRange{Int}
@@ -211,6 +268,14 @@ struct _SVDCGTClassMetadata{QT, LI, LR, RI, RR}
     total_right::Int
 end
 
+"""Internal dense SVD result for one CGT equivalence class.
+
+# Fields
+
+- `sector`: class intermediate q-label.
+- `left_infos`, `right_infos`: descriptors needed to scatter factors.
+- `U`, `S`, `Vt`: dense factor matrices/vector before TLArray sector assembly.
+"""
 struct _SVDCGTClassResult{QT, LI, RI, U, S, Vt}
     sector::QT
     left_infos::LI
@@ -1824,6 +1889,18 @@ function _svd_right_legs(::Val{QD}, left_legs::NTuple{L, Int}) where {QD, L}
     end
 end
 
+"""
+    svd_std(q, left_legs, left_tag="svdL", right_tag="svdR";
+            cutoff=1e-12, Nkeep=nothing, get_lists=false)
+
+Internal implementation of Telum's symmetry-aware SVD. `left_legs` is a
+sorted, unique tuple of logical legs; remaining legs form the right side.
+`left_tag`/`right_tag` label generated bond indices; `cutoff` removes small
+singular values; `Nkeep` caps retained global values; and `get_lists` requests
+kept/discarded bookkeeping. It materializes lazy input, assembles CGT classes,
+factorizes independent dense blocks, and returns the public SVD factors (plus
+lists when requested) without mutating `q`.
+"""
 function svd_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                  left_legs::NTuple{L, Int},
                  left_tag::AbstractString = "svdL",
@@ -2036,6 +2113,15 @@ function LinearAlgebra.svd(q::AbstractTLArray{T, QD, N, RD},
                    cutoff=cutoff, Nkeep=Nkeep, get_lists=get_lists)
 end
 
+"""
+    svd_cgtsvd(q, args...; kwargs...)
+
+Compatibility alias for Telum's symmetry-aware `svd`. `q` is an
+`AbstractTLArray`; positional `args` and keyword `kwargs` are forwarded
+unchanged to the matching `svd` method (including leg selection, tags, cutoff,
+and `Nkeep`). Returns exactly that method's factorization tuple, using the
+CGTSVD bond-leg convention. It does not mutate `q`.
+"""
 svd_cgtsvd(q::AbstractTLArray, args...; kwargs...) = svd(q, args...; kwargs...)
 
 function LinearAlgebra.svd(q::AbstractTLArray{T, QD, N, RD},

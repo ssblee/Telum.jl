@@ -1,14 +1,20 @@
 """
-    to_sparse_array(q::AbstractTLArray[, FT])
+    to_sparse_array(q::AbstractTLArray[, FT]) -> SparseArray
 
-Expand a symmetry-reduced tensor into a `SparseArrayKit.SparseArray` in its
-logical leg order. This is intended for validation and interoperability, not
-for performance-sensitive tensor-network calculations.
+Expand a symmetry-reduced tensor into a `SparseArrayKit.SparseArray`.
+
+`q` supplies TLArray sector metadata, CGT/w-matrix data, and RMT payloads.
+`FT` chooses the floating/scalar type used for the expanded entries; when it is
+omitted, `eltype(q)` is used. The output uses logical visible leg order, not
+stored RMT order. Deferred conjugation, scale, and physical permutation are
+applied while expanding sector payloads.
+
+This function is intended for validation and interoperability. It explicitly
+constructs CGT canonical bases and dense sector blocks, so it should not be used
+in performance-sensitive tensor-network contractions.
 """
-function to_sparse_array(q::TLArray{T, QD, N, RD}, ::Type{FT}) where {T, QD, N, RD, FT}
-    if !_is_identity_view_state(stored_conj(q), stored_scale(q), stored_perm(q))
-        return to_sparse_array(_canonical_tlarray(q), FT)
-    end
+function to_sparse_array(q::AbstractTLArray{T, QD, N, RD}, ::Type{FT}) where {T, QD, N, RD, FT}
+    materialize(q)
     symmetries = symm(q)
     leg_info = [_sparse_leg_offsets(symmetries, spaces(q)[leg]) for leg in 1:QD]
     leg_offsets = first.(leg_info)
@@ -62,7 +68,7 @@ function to_sparse_array(q::TLArray{T, QD, N, RD}, ::Type{FT}) where {T, QD, N, 
             block
         end
         bond_dim = size(cgt_block, QD + 1)
-        rmt, scale = sector_rmt(q, sector)
+        rmt, scale = sector_rmt_permuted(q, sector, _identity_rmt_perm(Val(RD)))
         rmt_merged = reshape(Array(scale .* rmt), size(rmt)[1:QD]..., bond_dim)
         block = zeros(FT, ntuple(leg -> size(cgt_block, leg) * size(rmt_merged, leg), Val(QD)))
         selectors = ntuple(_ -> Colon(), Val(QD))
@@ -76,11 +82,27 @@ function to_sparse_array(q::TLArray{T, QD, N, RD}, ::Type{FT}) where {T, QD, N, 
     return result
 end
 
-to_sparse_array(q::TLArray) = to_sparse_array(q, eltype(q))
-to_sparse_array(q::AbstractTLArray, ::Type{FT}) where {FT} =
-    to_sparse_array(_canonical_tlarray(q), FT)
+"""
+    to_sparse_array(q::AbstractTLArray) -> SparseArray
+    to_sparse_array(q::AbstractTLArray, ::Type{FT}) -> SparseArray
+
+Convenience overloads for sparse expansion.
+
+The two-argument form forces the expanded scalar type `FT`.
+"""
 to_sparse_array(q::AbstractTLArray) = to_sparse_array(q, eltype(q))
 
+"""
+    _sparse_leg_offsets(symmetries, splist) -> (offsets, total_dim)
+
+Compute dense basis ranges for each qlabel sector on one physical leg.
+
+`symmetries` is the product symmetry tuple and `splist` contains
+`(qlabel, rmt_dim)` entries for one TLArray leg. Each sector's expanded size is
+`rmt_dim` times the product of non-Abelian irrep dimensions. Abelian symmetries
+contribute dimension one. The returned `offsets[qlabel]` ranges partition the
+expanded leg dimension in sorted qlabel order.
+"""
 function _sparse_leg_offsets(symmetries, splist)
     QT = typeof(first(splist)[1])
     sector_sizes = Dict{QT, Int}()
@@ -100,6 +122,16 @@ function _sparse_leg_offsets(symmetries, splist)
     return offsets, next_offset - 1
 end
 
+"""
+    _sparse_leg_kron(a, b, qd::Int)
+
+Take a legwise Kronecker product of two CGT blocks with bond axes.
+
+`a` and `b` have `qd` physical axes followed by one bond/outer-multiplicity
+axis. The result interleaves the physical axes leg by leg and merges the two
+bond axes into a single trailing bond axis. This combines CGT factors from
+different symmetries within one TLArray sector.
+"""
 function _sparse_leg_kron(a::AbstractArray, b::AbstractArray, qd::Int)
     dims_a = ntuple(leg -> size(a, leg), qd)
     dims_b = ntuple(leg -> size(b, leg), qd)
@@ -111,6 +143,15 @@ function _sparse_leg_kron(a::AbstractArray, b::AbstractArray, qd::Int)
                    ntuple(leg -> dims_a[leg] * dims_b[leg], qd)..., bond_a * bond_b)
 end
 
+"""
+    _sparse_legwise_kron(a, b)
+
+Take a legwise Kronecker product of two same-rank physical blocks.
+
+`a` and `b` have the same number of axes. For each leg, the output dimension is
+`size(a, leg) * size(b, leg)`. This is used to combine an expanded CGT block
+with the corresponding RMT block for one sector and one OM-bond column.
+"""
 function _sparse_legwise_kron(a::AbstractArray, b::AbstractArray)
     qd = ndims(a)
     dims_a = ntuple(leg -> size(a, leg), qd)

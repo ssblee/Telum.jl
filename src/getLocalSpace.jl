@@ -191,6 +191,17 @@ function _mult_ind_to_splist(symm::NTuple{N, Any},
     return splist
 end
 
+"""
+    getLocalSpace(opts, tags=("", "", ""))
+
+Construct symmetry-adapted local operators selected by `opts`, which must be a
+`SpinOptions`, `FermionOptions`, `FermionSOptions`, or another supported
+`LocalSpaceOptions` subtype. `tags` is a three-string tuple assigned to the
+physical input, physical output, and operator legs; two-leg operators use its
+first two entries. Returns a named tuple keyed by operator name, with each
+value a concrete `TLArray`. The function validates cross-symmetry commutation
+before decomposition and throws `ArgumentError` for inconsistent definitions.
+"""
 function getLocalSpace(opts::LocalSpaceOptions,
     tags::Tuple{Vararg{AbstractString, 3}}=("", "", ""))
 
@@ -247,6 +258,7 @@ function getLocalSpace(opts::LocalSpaceOptions,
     return NamedTuple(Telum)
 end
 
+"""Construct unsymmetrized local-operator `TLArray`s from maximal-weight operator dictionary `mwirops` and three leg tags. This is the no-symmetry fast path used by `getLocalSpace`."""
 function _getLocalSpace_no_symmetry(mwirops::Dict{Symbol, <:AbstractMatrix},
                                     tags::Tuple{Vararg{AbstractString, 3}})
     isempty(mwirops) && throw(ArgumentError("no-symmetry local space has no operators"))

@@ -31,6 +31,15 @@ function _normalize_legflip_legs(q::AbstractTLArray{T, QD}, legs) where {T, QD}
     return positions
 end
 
+"""
+    get1jtensor(q; dir, itag, plev, lock, rev=false)
+
+Construct the one-leg identity tensor for exactly one leg of `q`. `dir`,
+`itag`, `plev`, and `lock` filter candidates with `findleg`; `rev=true` searches
+from the final leg. The selection must be unique or an `ArgumentError` is
+thrown. The returned tensor carries the selected space with the appropriate
+identity/duality structure and is independent of `q`'s RMT payloads.
+"""
 function get1jtensor(q::AbstractTLArray; dir=nothing, itag=nothing, plev=nothing,
                      lock=nothing, rev::Bool=false)
     leg = _resolve_unique_leg(q; dir=dir, itag=itag, plev=plev, lock=lock,
@@ -71,6 +80,16 @@ function get1jtensor(info::leginfo{N, QT, PS}) where {N, QT, PS}
     return q1
 end
 
+"""
+    legflip(q, leg)
+    legflip(q, legs)
+
+Reverse the direction of each selected leg and apply the associated symmetry
+duality map. `leg` is one 1-based index; `legs` is a list of unique indices;
+the keyword-selector form uses `findlegs`. The operation returns a new tensor
+or lazy wrapper, preserves stable sector-slot numbering, and leaves `q`
+unchanged. It throws when a requested index is invalid.
+"""
 function legflip(q::TLArray{T, QD, N, RD}, leg::Int) where {T, QD, N, RD}
     1 <= leg <= QD || throw(BoundsError(q, leg))
     j = get1jtensor(q, leg)

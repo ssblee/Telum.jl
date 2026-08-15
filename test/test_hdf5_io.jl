@@ -1,3 +1,5 @@
+using HDF5
+
 function _assert_tlarray_structural_equal(a::TLArray, b::TLArray)
     @test symm(a) == symm(b)
     @test a.inds == b.inds
@@ -100,6 +102,27 @@ end
         _assert_tlarray_roundtrip(q, loaded)
     end
 
+    v1_path = tempname() * ".h5"
+    try
+        save_tlarray(v1_path, q)
+        HDF5.h5open(v1_path, "r+") do h5
+            g = h5["tensor"]
+            attrs = HDF5.attrs(g)
+            attrs["schema_version"] = "1.0"
+            delete!(attrs, "rmt_eltype")
+            delete!(attrs, "conj")
+            delete!(attrs, "scale")
+            delete!(attrs, "perm")
+        end
+        loaded_v1 = load_tlarray(v1_path)
+        _assert_tlarray_roundtrip(q, loaded_v1)
+        @test !Telum.stored_conj(loaded_v1)
+        @test Telum.stored_scale(loaded_v1) == one(eltype(loaded_v1))
+        @test Telum.stored_perm(loaded_v1) == ntuple(identity, Val(ndims(loaded_v1)))
+    finally
+        isfile(v1_path) && rm(v1_path)
+    end
+
     q_zero = _with_zero_sector(q)
     @test q_zero.iszero[end]
     @test !q_zero.isdefined[end]
@@ -132,14 +155,43 @@ end
         _assert_tlarray_roundtrip(q_complex, loaded)
     end
 
+    float32_RMT_type = Array{Float32, ndims(_test_sector_rmt(q, first_active))}
+    float32_RMTs = Vector{float32_RMT_type}(undef, length(q.RMTs))
+    for sector in Telum.sector_slots(q)
+        q.iszero[sector] && continue
+        float32_RMTs[sector] = Float32.(_test_sector_rmt(q, sector))
+    end
+    q_float32 = TLArray(symm(q), copy(q.qlabels), copy(q.wmatdata), copy(q.wmatinfo),
+                        float32_RMTs, q.inds, q.spaces)
+    q_complex_scaled = (1.0 + 2.0im) * q_float32
+    _with_saved_tlarray(q_complex_scaled) do loaded
+        _assert_tlarray_roundtrip(q_complex_scaled, loaded; tol=1e-6)
+        @test eltype(loaded) === ComplexF64
+        @test eltype(typeof(loaded).parameters[end]) === Float32
+        @test Telum.stored_scale(loaded) == 1.0 + 2.0im
+        @test Telum.stored_perm(loaded) == Telum.stored_perm(q_complex_scaled)
+        @test Telum.stored_conj(loaded) == Telum.stored_conj(q_complex_scaled)
+    end
+
     q_view = permutedims(q, (2, 1, 3))
     q_view_eager = copy(q_view)
     _with_saved_tlarray(q_view) do loaded
         _assert_tlarray_roundtrip(q_view_eager, loaded)
+        @test Telum.stored_inds(loaded) == Telum.stored_inds(q_view)
+        @test Telum.stored_spaces(loaded) == Telum.stored_spaces(q_view)
+        @test Telum.stored_perm(loaded) == Telum.stored_perm(q_view)
+        @test Telum.stored_scale(loaded) == Telum.stored_scale(q_view)
+        @test Telum.stored_conj(loaded) == Telum.stored_conj(q_view)
     end
 
     q_diag = get1jtensor(q0.I, 1)
     _with_saved_tlarray(q_diag) do loaded
         _assert_tlarray_roundtrip(q_diag, loaded)
     end
+
+    lazy = Telum._lazy_contract(TLArray(q0.I, ("left", "bond")),
+                                (2,),
+                                TLArray(q0.I, ("bond", "right")),
+                                (1,))
+    @test_throws MethodError save_tlarray(tempname() * ".h5", lazy)
 end

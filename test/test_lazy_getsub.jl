@@ -132,7 +132,7 @@ end
     @test converted.iszero === sub.iszero
     @test converted.RMTs[1] === sub.RMTs[1]
 
-    copied = Telum.to_concrete(converted)
+    copied = copy(converted)
     @test copied.RMTs !== converted.RMTs
     @test copied.RMTs[1] !== converted.RMTs[1]
 end

@@ -3,6 +3,16 @@
 # The hot path aligns inputs once, groups all sectors by physical q-labels, and
 # compresses each multi-contribution sector in a single QR/RMT pass.
 
+"""
+    _enum_leg_perms!(results, candidates, current, used, QD)
+
+Enumerate bijective leg permutations from per-output candidate lists.
+
+`candidates[i]` contains input legs that could match reference output leg `i`.
+`current` and `used` are backtracking state. Completed permutations are pushed
+to `results` using the convention `perm[i]` is the input leg assigned to
+reference leg `i`.
+"""
 function _enum_leg_perms!(results, candidates, current, used, QD)
     i = length(current) + 1
     if i > QD
@@ -19,6 +29,16 @@ function _enum_leg_perms!(results, candidates, current, used, QD)
     end
 end
 
+"""
+    _find_leg_permutation(inds1, spaces1, inds2, spaces2) -> NTuple
+
+Find the unique input-leg permutation that aligns one tensor to a reference.
+
+`inds1`/`spaces1` describe the reference tensor. `inds2`/`spaces2` describe the
+candidate tensor. A valid `perm` satisfies `inds2[perm[i]] == inds1[i]` and
+`spaces2[perm[i]] == spaces1[i]` for every visible leg. Missing or ambiguous
+matches are rejected.
+"""
 # Find the unique permutation perm such that inds2[perm[i]] == inds1[i] and
 # spaces2[perm[i]] == spaces1[i] for all i.
 function _find_leg_permutation(inds1::NTuple{QD, TLIndex}, spaces1,
@@ -45,22 +65,36 @@ function _find_leg_permutation(inds1::NTuple{QD, TLIndex}, spaces1,
     return results[1]
 end
 
+"""
+    _align_sum_input(ref, q) -> AbstractTLArray
+
+Align one summand to the reference tensor before addition.
+
+If visible indices and spaces already match, `q` is returned unchanged. When a
+unique leg permutation exists, a permuted lazy/common-interface view is returned
+without materializing or rewriting RMT storage.
+"""
 function _align_sum_input(ref::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT1},
                           q::AbstractTLArray{TQ, QD, N, RD, QT, PS, M, RMT2}) where {T, TQ, QD, N, RD, QT, PS, M, RMT1, RMT2}
     if inds(ref) == inds(q) && spaces(ref) == spaces(q)
         return q
     end
     perm = _find_leg_permutation(inds(ref), spaces(ref), inds(q), spaces(q))
-    # Summation compresses sectors by common q-labels and w-matrix gauges.  When
-    # leg alignment changes the physical order, canonicalize the aligned input so
-    # equivalent tensors with different embedded permutations cancel exactly.
-    return _canonical_tlarray(permutedims(q, perm))
+    return permutedims(q, perm)
 end
 
 function _needs_sum_alignment(ref::AbstractTLArray, q::AbstractTLArray)
     return inds(ref) != inds(q) || spaces(ref) != spaces(q)
 end
 
+"""
+    _align_sum_inputs(qs::Vector{AbstractTLArray}) -> Vector{AbstractTLArray}
+
+Align all summands to the first tensor's visible index and space layout.
+
+`qs` must be non-empty. If no input needs alignment, the original vector is
+returned. Otherwise each later tensor is passed through `_align_sum_input`.
+"""
 function _align_sum_inputs(qs::Vector{AbstractTLArray})
     isempty(qs) && throw(ArgumentError("cannot sum an empty collection of TLArray objects"))
     ref = qs[1]
@@ -78,6 +112,16 @@ end
 @inline _sum_sector_key(q::AbstractTLArray{T, QD}, sector_index::Int) where {T, QD} =
     ntuple(l -> sector_qlabel(q, sector_index, l), Val(QD))
 
+"""
+    _sum_sector_table(qs, ::Type{QT}, ::Val{QD})
+
+Build the sorted nonzero-sector table used by many-input TLArray summation.
+
+Each table entry is `(sector_key, input_index, sector_index)`, where
+`sector_key` is the tuple of physical qlabels on all visible legs. Zero sectors
+are skipped. The table is sorted by `sector_key`, and the second return value is
+the number of unique sector keys in the sum.
+"""
 function _sum_sector_table(qs, ::Type{QT}, ::Val{QD}) where {QT, QD}
     total = 0
     for q in qs
@@ -150,6 +194,15 @@ end
 @inline _sum_needs_buffer(q::AbstractTLArray, sector::Int, ::Type{T}) where {T} =
     !_sum_reference_safe(q, sector, T)
 
+"""
+    _sum_prepare_rmt_buffers(qs, ::Type{T}, ::Val{RD})
+
+Allocate per-input scratch buffers for summation payload processing.
+
+Inputs whose sectors can be safely referenced in result type `T` need no
+buffer. Other inputs get one flat buffer large enough for their largest
+processed RMT sector. Returns `(buffers, needs_buffer)` indexed by input.
+"""
 function _sum_prepare_rmt_buffers(qs, ::Type{T}, ::Val{RD}) where {T, RD}
     buffers = Vector{Vector{T}}(undef, length(qs))
     needs_buffer = falses(length(qs))
@@ -176,6 +229,15 @@ function _sum_wmat_reserve_for_entry(qs, entry, ::Val{M}) where {M}
     return ntuple(m -> length(sector_wmat_slot(q, sector_index, m)), Val(M))
 end
 
+"""
+    _sum_wmat_reserve_for_interval(qs, table, interval, ::Val{M})
+
+Compute arena reservation sizes for merged w-matrices in one sector-key group.
+
+`interval` selects table entries with a common sector key. For each non-Abelian
+symmetry slot, columns from all contributing sectors may be concatenated and
+compressed, so the reservation is bounded by `nrows * min(total_cols, nrows)`.
+"""
 function _sum_wmat_reserve_for_interval(qs, table, interval::UnitRange{Int},
                                         ::Val{M}) where {M}
     return ntuple(Val(M)) do m
@@ -195,6 +257,15 @@ function _sum_wmat_reserve_for_interval(qs, table, interval::UnitRange{Int},
     end
 end
 
+"""
+    _sum_wmat_arena_size_upper_bound(qs, table, ::Val{M}) -> Int
+
+Return an upper bound for result w-matrix arena storage during summation.
+
+The table is scanned by equal-sector-key intervals. Single-contribution sectors
+reserve exactly their source slot size, while multi-contribution sectors reserve
+the QR-compression bound from `_sum_wmat_reserve_for_interval`.
+"""
 function _sum_wmat_arena_size_upper_bound(qs, table, ::Val{M}) where {M}
     total = 0
     pos = 1
@@ -212,6 +283,16 @@ function _sum_wmat_arena_size_upper_bound(qs, table, ::Val{M}) where {M}
     return total
 end
 
+"""
+    _sum_store_wmats!(result_wmatdata, result_wmatinfo, next_offset, sector_wmats, reserve, ::Val{M})
+
+Store one result sector's w-matrices into the contiguous w-matrix arena.
+
+`sector_wmats[m]` is copied into `result_wmatdata` at `next_offset`; `reserve[m]`
+is the preallocated slot length for that symmetry and may exceed the actual
+matrix length. A `WMatInfo` entry is pushed to `result_wmatinfo`, and the
+updated next free offset is returned.
+"""
 function _sum_store_wmats!(result_wmatdata::Vector{Float64},
                            result_wmatinfo::Vector{WMatInfo{M}},
                            next_offset::Int,

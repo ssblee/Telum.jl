@@ -71,7 +71,45 @@
         @test occursin("3D TLArray", meta)
         @test occursin("site1", meta)
         @test !occursin('\n', meta)
+
+        left = TLArray(q0.I, ("left", "bond"))
+        right = TLArray(q0.I, ("bond", "right"))
+        lazy = Telum._lazy_contract(left, (2,), right, (1,))
+        @test !hasmethod(printmeta, Tuple{IO, typeof(lazy)})
+        @test_throws MethodError printmeta(IOBuffer(), lazy)
     end
+end
+
+@testset "random_similar preserves TLArray structure" begin
+    q = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing)).F
+    q_random = random_similar(q)
+
+    @test q_random isa TLArray
+    @test q_random !== q
+    @test Telum.inds(q_random) == Telum.inds(q)
+    @test Telum.spaces(q_random) == Telum.spaces(q)
+    @test q_random.qlabels == q.qlabels
+    @test q_random.wmatdata == q.wmatdata
+    @test q_random.wmatinfo == q.wmatinfo
+    @test q_random.wmatdata !== q.wmatdata
+    @test q_random.wmatinfo !== q.wmatinfo
+    @test q_random.iszero == q.iszero
+
+    for sector in Telum.sector_slots(q)
+        if Telum.is_sector_zero(q, sector)
+            @test !Telum.is_sector_defined(q_random, sector)
+        else
+            @test Telum.is_sector_defined(q_random, sector)
+            @test size(q_random.RMTs[sector]) == size(q.RMTs[sector])
+            @test q_random.RMTs[sector] !== q.RMTs[sector]
+        end
+    end
+
+    left = TLArray(getLocalSpace(SpinOptions(nothing, 1)).I, ("left", "bond"))
+    right = TLArray(getLocalSpace(SpinOptions(nothing, 1)).I, ("bond", "right"))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
+    @test_throws MethodError random_similar(lazy)
+    @test_throws Base.CanonicalIndexError copy(lazy)
 end
 
 @testset "zero_qlabels" begin
@@ -776,12 +814,12 @@ end
         @test q_complex.scale == 1.0 + 2.0im
         @test q_complex.perm == q_perm.perm
 
-        concrete = to_concrete(q_complex)
-        @test concrete isa TLArray
-        @test concrete.perm == ntuple(identity, Val(4))
-        @test concrete.scale == one(eltype(concrete))
-        @test !concrete.conj
-        @test eltype(typeof(concrete).parameters[end]) === ComplexF64
+        copied = copy(q_complex)
+        @test copied isa TLArray
+        @test copied.perm == q_complex.perm
+        @test copied.scale == q_complex.scale
+        @test copied.conj == q_complex.conj
+        @test copied.RMTs !== q_complex.RMTs
 
         reference = (1.0 + 2.0im) .* permutedims(Array(to_sparse_array(q4, ComplexF64)), (4, 1, 2, 3))
         @test norm(Array(to_sparse_array(q_complex, ComplexF64)) - reference) < 1e-10

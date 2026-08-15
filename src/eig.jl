@@ -32,6 +32,16 @@ _eig_sort_value(ev::Real, hermitian::Bool) = hermitian ? real(ev) : abs(ev)
 _eig_sort_value(ev::Complex, hermitian::Bool) = hermitian ? real(ev) : abs(ev)
 const _EIG_HERMITIAN_RTOL = sqrt(eps(Float64))
 
+"""
+Container for a symmetry-aware eigendecomposition.
+
+# Fields
+
+- `V`: right-eigenvector TLArray.
+- `D`: diagonal eigenvalue TLArray.
+- `V_inv`: inverse/left-eigenvector factor, or `nothing` when not constructed.
+- `eig_list`: globally ordered eigenvalue/sector/local-index bookkeeping used by `discard_eigen`.
+"""
 struct EigenResult{TV, TD, TVI, TL}
     V::TV
     D::TD
@@ -134,6 +144,7 @@ function _retag_eigen_result(result::EigenResult, eig_tag::AbstractString)
     return EigenResult(V, D, V_inv, result.eig_list)
 end
 
+"""Validate and orient rank-two tensor `q` for eigenvalue routines. `opname` is used in diagnostics; the result has incoming/outgoing leg order and identical space lists, with a lazy permutation applied when needed."""
 function _prepare_eigen_input(q::AbstractTLArray{T, 2, N, RD},
                               opname::AbstractString) where {T, N, RD}
     qinds = inds(q)
@@ -146,6 +157,7 @@ function _prepare_eigen_input(q::AbstractTLArray{T, 2, N, RD},
     return q_work
 end
 
+"""Validate that the two legs of rank-two `q` carry matching tag, prime, lock, and dual metadata required by a Hermitian eigendecomposition. `opname` labels assertion messages."""
 function _check_hermitian_eigen_legs(q::AbstractTLArray,
                                      opname::AbstractString)
     idx1, idx2 = inds(q)
@@ -156,6 +168,7 @@ function _check_hermitian_eigen_legs(q::AbstractTLArray,
     return nothing
 end
 
+"""Materialize one eigenproblem sector as a dense matrix. Applies deferred RMT view/scale state for stable `sector_index` and returns `(matrix, left_dim, right_dim)` for block eigensolvers."""
 function _eig_scaled_matrix(q::AbstractTLArray{T, 2, N, RD}, sector_index::Int) where {T, N, RD}
     rmt, scale = sector_rmt_permuted(q, sector_index, _identity_rmt_perm(Val(RD)))
     rmt_size = sector_rmt_dim(q, sector_index)

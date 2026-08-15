@@ -1,3 +1,14 @@
+"""
+    _reorder_perm_part(qlabels, cgp_part) -> Vector{Int}
+
+Compute the stable reorder inside one same-direction CGT leg group.
+
+`qlabels` are already in stored CGT order for either all incoming or all
+outgoing legs. `cgp_part` maps those stored positions back to physical-leg
+numbers. Equal-qlabel runs are reordered by physical-leg order, while different
+qlabel runs keep their existing sorted order. The returned vector uses
+`perm[new_position] = old_position` convention within the group.
+"""
 function _reorder_perm_part(qlabels::NTuple{N, NTuple{NZ, Int}},
     cgp_part::NTuple{N, Int}) where {NZ, N}
 
@@ -12,6 +23,17 @@ function _reorder_perm_part(qlabels::NTuple{N, NTuple{NZ, Int}},
     return perm
 end
 
+"""
+    _compute_reorder_permutation(qlabels, cgp, legdir) -> Tuple
+
+Compute the CGT stored-leg reorder required after a visible tensor permutation.
+
+`qlabels` are stored-leg qlabels, `cgp[physical_leg] = stored_pos`, and
+`legdir == (m, k)` gives the incoming and outgoing stored-leg counts. The result
+uses `reorder[new_stored_pos] = old_stored_pos`. Only legs with the same
+direction and qlabel may be reordered, preserving the CGT/TLArray tie rule that
+same-qlabel legs follow physical leg order.
+"""
 # Compute the reordering permutation for stored positions to satisfy the order constraint.
 # Returns reorder where reorder[new_stored_pos] = old_stored_pos.
 function _compute_reorder_permutation(qlabels::NTuple{QD, NTuple{NZ, Int}}, 
@@ -37,6 +59,18 @@ function _compute_reorder_permutation(qlabels::NTuple{QD, NTuple{NZ, Int}},
     return reorder
 end
 
+"""
+    _permuted_sector_wmat(symm_type, qlabels, wmat, cgp, legdir, perm)
+
+Transform one sector w-matrix under a visible physical-leg permutation.
+
+`symm_type` selects the non-Abelian symmetry, `qlabels` and `legdir` describe
+the stored CGT leg order, `wmat` is the current outer-multiplicity basis matrix,
+`cgp` maps visible physical legs to stored CGT positions, and `perm` is the
+requested visible permutation. When the stored CGT order changes only by an
+allowed same-qlabel tie reorder, the corresponding `CGTperm` matrix is applied
+to move `wmat` into the new OM basis.
+"""
 function _permuted_sector_wmat(symm_type,
                                qlabels::NTuple{QD, NTuple{NZ, Int}},
                                wmat::AbstractMatrix{Float64},
@@ -68,6 +102,16 @@ function _permuted_sector_wmat(symm_type,
     return cgtperm_obj.perm_arr * wmat
 end
 
+"""
+    _permute_sector_wmat(q, sector_index::Int, perm::NTuple, n)
+
+Return the `n`th symmetry w-matrix for one sector after visible leg permutation.
+
+`q` supplies the sector metadata and original w-matrix, `sector_index` selects
+the sector slot, and `perm` is the requested visible physical-leg permutation.
+The `n::Int` and `Val{n}` methods share the same transformation rule but use the
+most type-stable symmetry lookup available to the caller.
+"""
 function _permute_sector_wmat(q::AbstractTLArray{T, QD, N, RD}, sector_index::Int,
                               perm::NTuple{QD, Int}, n::Int, symm) where {T, QD, N, RD}
     qlabels, cgp, legdir = _sector_cgt_metadata(q, sector_index, n)
@@ -83,4 +127,13 @@ function _permute_sector_wmat(q::AbstractTLArray{T, QD, N, RD, QT, PS}, sector_i
                                  cgp, legdir, perm)
 end
 
+"""
+    permutedims(q::AbstractTLArray, perm) -> AbstractTLArray
+
+Return a lazy physical-leg permutation of `q`.
+
+`perm` uses Julia's `permutedims` convention: output leg `i` reads input leg
+`perm[i]`. The operation updates cheap view state and metadata; RMT payloads are
+not physically permuted until a consumer requests sector payload data.
+"""
 Base.permutedims(q::AbstractTLArray, perm) = _view_permutedims(q, perm)

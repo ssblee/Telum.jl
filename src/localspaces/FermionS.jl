@@ -1,3 +1,14 @@
+"""
+    FermionS_basicops(N::Int)
+
+Build elementary spinful-fermion operators for `N` channels.
+
+Returns `(FF, NN, SS, CC, SZ, chan_l, chan_z)`. `FF[spin, channel]` annihilates
+one spin component, `NN` stores number operators, `SS[channel]` lowers spin,
+`CC[channel]` lowers charge SU(2) by pair annihilation, `SZ[channel]` is the
+spin-z operator, and `chan_l`/`chan_z` define the SU(N) channel algebra over the
+spinful Fock basis.
+"""
 # N: The number of channels
 function FermionS_basicops(N::Int)
     @assert N > 0 "Number of channels must be positive"
@@ -203,6 +214,16 @@ function chan_symmops(opts::FermionSOptions, basic_ops)
     return weights, symms, lops
 end
 
+"""
+    _add_spin_components!(mwirops, channs, N::Int, basic_ops)
+
+Add explicit spin-vector components for a channel group.
+
+`channs` selects physical channels, `N` is the total channel count used for
+naming, and `basic_ops` supplies `SS` and `SZ`. The emitted operators are
+`S<channels>p`, `S<channels>z`, and `S<channels>m` in spherical-component
+normalization; the suffix is omitted when `channs` covers all channels.
+"""
 function _add_spin_components!(
     mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
     channs::AbstractVector{<:Integer},
@@ -218,6 +239,15 @@ function _add_spin_components!(
         (1 / sqrt(2)) * sum(basic_ops.SS[i] for i in suffix_channs)
 end
 
+"""
+    _add_spin_irop!(mwirops, channs, N::Int, basic_ops)
+
+Add one fused SU(2)-spin maximal-weight IROP for a channel group.
+
+`channs` selects the channels being fused. The stored operator is the
+maximal-weight spin component, named `S<channels>` with the channel suffix
+omitted for an all-channel group.
+"""
 function _add_spin_irop!(
     mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
     channs::AbstractVector{<:Integer},
@@ -307,6 +337,16 @@ function add_spin_irop!(mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
     end
 end
 
+"""
+    _annihilation_primary_blocks(opts::FermionSOptions, N::Int)
+
+Create initial spinful annihilation blocks from charge and SU(2)-spin groups.
+
+Each returned block has fields `channs`, `charge_su2`, `spin_su2`, and
+`channel_symm`. Channels sharing the same charge group and SU(2)-spin group are
+fused into one block so the later IROP emission can choose the correct
+maximal-weight annihilation component.
+"""
 function _annihilation_primary_blocks(opts::FermionSOptions, N::Int)
     charge_groups = opts.charge_symm === nothing ? Tuple{Symbol, Vector{Int}}[] : opts.charge_symm
     spin_groups = opts.spin_symm === nothing ? Tuple{Symbol, Vector{Int}}[] : opts.spin_symm
@@ -364,6 +404,16 @@ function _annihilation_primary_blocks(opts::FermionSOptions, N::Int)
     return blocks
 end
 
+"""
+    _split_annihilation_blocks_by_channel_symmetry(blocks, opts, N)
+
+Refine spinful annihilation blocks using channel SU(N) symmetry groups.
+
+`blocks` is modified in place. A channel group may create a new block on
+otherwise unselected channels or split one already generated multi-channel
+block. The split preserves `charge_su2` and `spin_su2` flags so operator
+components remain consistent with the charge/spin fusion already chosen.
+"""
 function _split_annihilation_blocks_by_channel_symmetry(blocks, opts::FermionSOptions, N::Int)
     channel_groups = opts.channel_symm === nothing ? Tuple{Symbol, Vector{Int}}[] : opts.channel_symm
     channel_selected = Set{Int}()
@@ -426,6 +476,16 @@ function _split_annihilation_blocks_by_channel_symmetry(blocks, opts::FermionSOp
     return blocks
 end
 
+"""
+    _add_annihilation_block!(mwirops, block, N::Int, basic_ops)
+
+Emit one spinful fermion annihilation IROP block.
+
+`block.channs` controls naming and channel support. `block.charge_su2` switches
+annihilation to the charge-SU(2) conjugate creation component, `block.spin_su2`
+fuses up/down spin components into one operator, and `block.channel_symm`
+selects only the last channel as the channel maximal-weight component.
+"""
 function _add_annihilation_block!(
     mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
     block,
@@ -495,6 +555,17 @@ function add_annihilation_irop!(mwirops::Dict{Symbol, SparseMatrixCSC{Float64, I
 end
 
 
+"""
+    getSymmetryInfo(opts::FermionSOptions)
+
+Build symmetry metadata and maximal-weight IROPs for a spinful fermion space.
+
+`opts.nchannels` gives local dimension `4^N`. Charge, spin, and channel
+symmetry options each append symmetry types, per-basis weights, and lowering
+operators. The returned `mwirops` dictionary contains spin operators,
+annihilation operators, parity `Z`, and identity `I` with names determined by
+the selected channel groups.
+"""
 function getSymmetryInfo(opts::FermionSOptions)
     # For N-channel SU(2)-spin case, local Hilbert space is:
     #   |0>, |↑>, |↓>, |↑↓>

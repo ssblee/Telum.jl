@@ -14,3 +14,7 @@ benchmark_tblis_contract.jl
 benchmark_tullio_contract.jl
 *.txt
 docs/*
+!docs/Project.toml
+!docs/make.jl
+!docs/src/
+!docs/src/index.md

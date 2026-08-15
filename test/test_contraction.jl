@@ -69,7 +69,7 @@ end
     @test materialized === lazy
     @test Telum.is_sector_defined(lazy, 1)
     @test _test_sector_rmt(materialized, 1) ≈ _test_sector_rmt(eager, 1)
-    concrete = copy(lazy)
+    concrete = TLArray(lazy)
     @test concrete isa TLArray
     @test _test_sector_rmt(concrete, 1) ≈ _test_sector_rmt(eager, 1)
 end
@@ -123,7 +123,7 @@ end
     @test converted.iszero === lazy.iszero
     @test converted.RMTs[1] === lazy.RMTs[1]
 
-    copied = Telum.to_concrete(converted)
+    copied = copy(converted)
     @test copied.RMTs !== converted.RMTs
     @test copied.RMTs[1] !== converted.RMTs[1]
     @test _test_sector_rmt(converted, 1) ≈ _test_sector_rmt(copied, 1)

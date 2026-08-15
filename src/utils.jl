@@ -15,6 +15,17 @@ Returns `(U, SV, S)` where:
 - `SV` has shape `(size(arr,1), ..., size(arr,leg-1), χ, size(arr,leg+1), ..., size(arr,N))`
   i.e. same leg order as the original array with the `leg`-th dimension replaced by `χ`
 - `S` is the kept singular value vector of length `χ`
+
+Arguments:
+- `arr` is the dense input tensor.
+- `leg` is the one-based axis to isolate on the left side of the SVD.
+- `cutoff` discards singular values `<= cutoff`.
+- `maxdim` optionally caps the number of kept singular values after cutoff
+  filtering.
+
+The sign convention flips the first kept singular vector pair when the first
+nonzero entry of the first `U` column is negative, making repeated decompositions
+more deterministic.
 """
 function svd_leg(arr::AbstractArray{T, N}, 
     leg::Integer;

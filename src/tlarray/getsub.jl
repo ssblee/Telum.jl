@@ -1,11 +1,38 @@
+"""
+    getsub(q::TLArray, selector) -> TLArray
+
+Construct a subselected concrete `TLArray` using the legacy selector form.
+
+`selector` is passed to the `TLArray(q, selector)` constructor, which performs
+the actual interpretation. Predicate-based methods below are preferred when
+the selection depends on qlabels and per-sector block dimensions.
+"""
 getsub(q::TLArray, selector) = TLArray(q, selector)
 
+"""
+    _normalize_getsub_index(i::Int, dim::Int, sector, leg::Int) -> Int
+
+Normalize one user index for a sector-local leg slice.
+
+`i` is the raw index returned by a `getsub` predicate, `dim` is the dimension of
+that qlabel sector on `leg`, and `sector`/`leg` are used for diagnostics.
+Negative indices count back from the end of the sector; zero is rejected.
+"""
 function _normalize_getsub_index(i::Int, dim::Int, sector, leg::Int)
     i == 0 && throw(ArgumentError(
         "selector for sector $sector on leg $leg cannot contain 0"))
     return i < 0 ? dim + i + 1 : i
 end
 
+"""
+    _normalize_getsub_indices(raw, dim::Int, sector, leg::Int) -> Vector{Int}
+
+Normalize one predicate return value into explicit positive sector indices.
+
+`raw` may be an integer, tuple of integers, integer range, or integer vector.
+The result is non-empty, duplicate-free, one-based, and bounds-checked against
+`dim`. `sector` and `leg` identify the failing qlabel sector in error messages.
+"""
 function _normalize_getsub_indices(raw, dim::Int, sector, leg::Int)
     inds = if raw isa Integer
         [Int(raw)]
@@ -29,6 +56,16 @@ function _normalize_getsub_indices(raw, dim::Int, sector, leg::Int)
         "selector for sector $sector on leg $leg contains out-of-bounds indices for dimension $dim"))
     return inds
 end
+
+"""
+    _normalize_getsub_predicate_pick(raw, dim::Int, sector, leg::Int)
+
+Interpret one `getsub` predicate result for a sector on a selected leg.
+
+`raw === nothing` drops the sector, `raw isa Colon` keeps the whole sector, and
+integer-like values select sector-local indices. Boolean returns are rejected
+because they are ambiguous between filtering and integer indexing.
+"""
 function _normalize_getsub_predicate_pick(raw, dim::Int, sector, leg::Int)
     raw isa Bool && throw(ArgumentError("getsub predicate for sector $sector on leg $leg must not return Bool; use Colon() or nothing explicitly"))
     raw === nothing && return nothing
@@ -36,6 +73,16 @@ function _normalize_getsub_predicate_pick(raw, dim::Int, sector, leg::Int)
     return _normalize_getsub_indices(raw, dim, sector, leg)
 end
 
+"""
+    _collect_getsub_predicate_picks(q, positions, pred::Function)
+
+Evaluate a sector-selection predicate for every selected leg space.
+
+`q` supplies cached space lists, `positions` are visible leg numbers, and
+`pred` is called as `pred(sector)` for each qlabel sector on each selected leg.
+Returns a dictionary indexed first by leg and then by qlabel sector; sectors
+whose predicate returns `nothing` are omitted.
+"""
 function _collect_getsub_predicate_picks(q::AbstractTLArray, positions, pred::Function)
     selected_picks = Dict{Int, Dict{Any, Any}}()
     for leg in positions
@@ -50,6 +97,17 @@ function _collect_getsub_predicate_picks(q::AbstractTLArray, positions, pred::Fu
     return selected_picks
 end
 
+"""
+    _apply_getsub_picks(q::TLArray, positions, selected_picks; preserve_space=false)
+
+Materialize predicate-based subsetting for an identity-state concrete `TLArray`.
+
+`positions` are visible legs selected by the caller. `selected_picks` maps each
+selected leg and qlabel sector to either `Colon()` or explicit local indices.
+When `preserve_space=false`, selected leg space dimensions are reduced to the
+kept sub-block sizes; when `true`, only whole-sector keeps are allowed and the
+original space lists are copied unchanged.
+"""
 function _apply_getsub_picks(q::TLArray{T, QD, N, RD, QT},
                              positions,
                              selected_picks::Dict{Int, Dict{Any, Any}};
@@ -116,6 +174,16 @@ function _apply_getsub_picks(q::TLArray{T, QD, N, RD, QT},
     return TLArray(symm(q), qlabels_out, wmatdata, wmatinfo, RMTs_out, q.inds, spaces_out)
 end
 
+"""
+    _apply_getsub_picks_preserve_state(q::TLArray, positions, selected_picks; preserve_space=false)
+
+Materialize `getsub` for a concrete tensor that carries non-identity view state.
+
+`positions` are visible legs, but RMT axes are addressed through
+`stored_perm(q)`. The result keeps the stored conjugation, scale, and
+permutation state instead of canonicalizing the full tensor, while the selected
+payload slices are copied into new owned RMT blocks.
+"""
 function _apply_getsub_picks_preserve_state(q::TLArray{T, QD, N, RD, QT, PS, M, RMT},
                                             positions,
                                             selected_picks::Dict{Int, Dict{Any, Any}};
@@ -183,6 +251,15 @@ function _apply_getsub_picks_preserve_state(q::TLArray{T, QD, N, RD, QT, PS, M, 
                    stored_perm(q))
 end
 
+"""
+    _normalize_getsub_predicate_legs(q, legs) -> Vector{Int}
+
+Normalize leg arguments shared by predicate-based `getsub` methods.
+
+`legs` may be one integer or an iterable of integers. The result preserves the
+given order, is non-empty, unique, and bounds-checked against the visible rank
+of `q`.
+"""
 function _normalize_getsub_predicate_legs(q::AbstractTLArray{T, QD}, legs) where {T, QD}
     positions = legs isa Integer ? [Int(legs)] : Int[leg for leg in legs]
     isempty(positions) && throw(ArgumentError("getsub requires at least one leg"))
@@ -193,6 +270,15 @@ function _normalize_getsub_predicate_legs(q::AbstractTLArray{T, QD}, legs) where
     return positions
 end
 
+"""
+    _getsub_preserve_space_check(positions, selected_picks; preserve_space)
+
+Validate `preserve_space=true` for predicate-based subsetting.
+
+Preserving cached space lists is only valid when every kept selected sector is
+kept whole. `positions` and `selected_picks` identify the offending leg/sector
+when a predicate returned explicit indices instead of `Colon()`.
+"""
 function _getsub_preserve_space_check(positions, selected_picks; preserve_space::Bool)
     preserve_space || return nothing
     for leg in positions
@@ -205,6 +291,16 @@ function _getsub_preserve_space_check(positions, selected_picks; preserve_space:
     return nothing
 end
 
+"""
+    _getsub_result_spaces(q, positions, selected_picks; preserve_space)
+
+Build output space lists for a lazy `getsub` wrapper.
+
+`q` supplies the source spaces, `positions` are selected visible legs, and
+`selected_picks` describes which sectors and local indices survive. If
+`preserve_space=true`, source space lists are copied exactly; otherwise selected
+legs are filtered and their dimensions shrink to the selected index count.
+"""
 function _getsub_result_spaces(q::AbstractTLArray{T, QD, N, RD, QT},
                                positions,
                                selected_picks;
@@ -228,6 +324,16 @@ function _getsub_result_spaces(q::AbstractTLArray{T, QD, N, RD, QT},
     end, QD)
 end
 
+"""
+    _getsub_sector_selectors(::Val{RD}, positions, selected_picks, q, sector_index)
+
+Return RMT selectors for one source sector, or `nothing` if it is dropped.
+
+`RD` is the stored RMT rank. `positions` names selected physical legs,
+`selected_picks` maps leg/qlabel to per-axis selections, and `q`/`sector_index`
+provide the sector qlabels. Unselected physical axes and all w-matrix axes are
+kept with `Colon()`.
+"""
 function _getsub_sector_selectors(::Val{RD}, positions, selected_picks, q, sector_index) where {RD}
     picks_by_leg = Dict{Int, GetSubSelector}()
     keep = true
@@ -252,6 +358,16 @@ end
 @inline _getsub_is_whole_sector(selectors::NTuple{RD, GetSubSelector}) where {RD} =
     all(selector -> selector isa Colon, selectors)
 
+"""
+    _getsub_result_rmt_type(RMTsrc, saved_indices, T, Val(RD)) -> Type
+
+Choose the RMT storage type for a lazy `SubTLArray`.
+
+`RMTsrc` is the source RMT type. `saved_indices` holds the selector tuple for
+each retained sector. If every retained sector is a whole-sector keep, the lazy
+wrapper may preserve the source RMT type; any actual slice forces dense
+`Array{T,RD}` output storage.
+"""
 function _getsub_result_rmt_type(::Type{RMTsrc},
                                  saved_indices::Vector{NTuple{RD, GetSubSelector}},
                                  ::Type{T},
@@ -259,6 +375,17 @@ function _getsub_result_rmt_type(::Type{RMTsrc},
     return all(_getsub_is_whole_sector, saved_indices) ? RMTsrc : Array{T, RD}
 end
 
+"""
+    _getsub_lazy(q, legs, pred; preserve_space=false) -> SubTLArray
+
+Create a lazy predicate-based subarray wrapper.
+
+`q` is any lazy or abstract source tensor, `legs` selects visible legs, and
+`pred(sector)` returns `nothing`, `Colon()`, or sector-local indices. The
+wrapper records retained source sector slots, RMT selectors, expected RMT
+sizes, and copied w-matrix metadata, but defers payload extraction until
+`compute_sectors`.
+"""
 function _getsub_lazy(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMTsrc},
                       legs,
                       pred::Function;
@@ -310,6 +437,16 @@ function _getsub_lazy(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMTsrc},
         ReentrantLock())
 end
 
+"""
+    _getsub_materialized_rmt(RMT, rmt, selectors)
+
+Materialize one selected RMT payload for `SubTLArray`.
+
+`RMT` is the wrapper's output RMT type, `rmt` is the source sector payload, and
+`selectors` are the stored-axis selectors saved by `_getsub_lazy`. Whole-sector
+keeps may share or convert the source payload; sliced sectors are copied into
+dense arrays.
+"""
 function _getsub_materialized_rmt(::Type{RMT},
                                   rmt::RMT,
                                   selectors::NTuple{RD, GetSubSelector}) where {RMT, RD}
@@ -336,6 +473,17 @@ function _getsub_materialized_rmt(::Type{Array{T, RD}},
     return out
 end
 
+"""
+    compute_sectors(q::SubTLArray, sector_inds) -> SubTLArray
+
+Compute selected lazy-subarray sectors in place.
+
+`sector_inds` are output sector slots. The method maps them to source sector
+slots, computes each needed source sector once, applies saved RMT selectors,
+combines source scale with the wrapper scale when needed, and marks output
+sector state. Sector numbering is preserved; no sectors are reordered or
+compacted during lazy evaluation.
+"""
 function compute_sectors(q::SubTLArray{T, QD, N, RD, QT, PS, M, RMT},
                          sector_inds::AbstractVector{<:Integer}) where {T, QD, N, RD, QT, PS, M, RMT}
     requested = Int[]
@@ -379,8 +527,10 @@ end
 Return a new `TLArray` containing only sectors whose sector on `leg` satisfies
 `pred`.
 
-`pred(sector)` may return `nothing` to drop that sector, `Colon()` to keep the full
-sector, or an integer / integer range / integer tuple / integer vector to keep
+`pred(sector)` may return `nothing` to drop that sector, `Colon()` to keep the
+full sector, or an integer / integer range / integer tuple / integer vector to
+keep sector-local basis positions. Negative indices count from the end of the
+sector dimension, and zero is invalid.
 
 If `preserve_space=false` (the default), only `q.spaces[leg]` is truncated to
 the retained sectors and all other leg-space lists are copied unchanged. If
@@ -398,8 +548,10 @@ end
 Return a new `TLArray` containing only sectors whose sectors on every selected leg
 satisfy `pred`.
 
-`pred(sector)` may return `nothing` to drop that sector, `Colon()` to keep the full
-sector, or an integer / integer range / integer tuple / integer vector to keep
+`pred(sector)` may return `nothing` to drop that sector, `Colon()` to keep the
+full sector, or an integer / integer range / integer tuple / integer vector to
+keep sector-local basis positions. Negative indices count from the end of the
+sector dimension, and zero is invalid.
 
 If `preserve_space=false` (the default), each selected leg keeps only the
 matching entries in its space list, while unselected legs keep copies of their
@@ -414,11 +566,30 @@ function getsub(q::TLArray{T, QD, N, RD}, legs::LegList, pred::Function; preserv
     return _apply_getsub_picks(q, positions, selected_picks; preserve_space=preserve_space)
 end
 
+"""
+    getsub(q::Union{TLArrayContraction, SubTLArray, SingletonTLArray}, leg::Integer,
+           pred::Function; preserve_space=false) -> SubTLArray
+
+Lazily subset one visible leg of a lazy tensor.
+
+`leg` is interpreted in visible leg order. `pred` has the same return contract
+as the concrete `TLArray` method. The returned wrapper keeps source sector
+slots and computes only requested payload slices.
+"""
 function getsub(q::Union{TLArrayContraction, SubTLArray, SingletonTLArray}, leg::Integer,
                 pred::Function; preserve_space::Bool=false)
     return _getsub_lazy(q, (Int(leg),), pred; preserve_space=preserve_space)
 end
 
+"""
+    getsub(q::Union{TLArrayContraction, SubTLArray, SingletonTLArray}, legs::LegList,
+           pred::Function; preserve_space=false) -> SubTLArray
+
+Lazily subset multiple visible legs of a lazy tensor.
+
+`legs` may be a tuple or vector of visible leg numbers. A source sector is kept
+only when `pred` keeps the qlabel sector on every selected leg.
+"""
 function getsub(q::Union{TLArrayContraction, SubTLArray, SingletonTLArray}, legs::LegList,
                 pred::Function; preserve_space::Bool=false)
     return _getsub_lazy(q, legs, pred; preserve_space=preserve_space)
@@ -429,7 +600,10 @@ end
            itag=nothing, plev=nothing, lock=nothing, rev=false) -> TLArray
 
 Apply predicate-based `getsub` to every leg selected by the keyword criteria.
-The leg selection follows the same matching rules as `findlegs`.
+
+`dir`, `itag`, `plev`, and `lock` are passed to the same leg-selection machinery
+as `findlegs`; `rev=true` reverses the selected order before applying the
+predicate. `pred` uses the same return convention as the explicit-leg methods.
 """
 function getsub(q::TLArray{T, QD, N, RD}, pred::Function; preserve_space::Bool=false,
                 dir=nothing, itag=nothing, plev=nothing, lock=nothing,
@@ -439,6 +613,17 @@ function getsub(q::TLArray{T, QD, N, RD}, pred::Function; preserve_space::Bool=f
     return getsub(q, legs, pred; preserve_space=preserve_space)
 end
 
+"""
+    getsub(q::Union{TLArrayContraction, SubTLArray, SingletonTLArray}, pred::Function;
+           preserve_space=false, dir=nothing, itag=nothing, plev=nothing,
+           lock=nothing, rev=false) -> SubTLArray
+
+Lazily apply predicate-based subsetting to legs selected by metadata.
+
+The keyword selectors choose visible legs with `findlegs` semantics. The
+returned `SubTLArray` defers all payload slicing while preserving source sector
+slot numbering.
+"""
 function getsub(q::Union{TLArrayContraction, SubTLArray, SingletonTLArray}, pred::Function;
                 preserve_space::Bool=false, dir=nothing, itag=nothing,
                 plev=nothing, lock=nothing, rev::Bool=false)

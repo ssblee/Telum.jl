@@ -232,8 +232,6 @@ end
 
 _test_to_sparse_array(q::TLArray) = _test_to_sparse_array(q, eltype(q))
 
-_test_to_sparse_array(q::Telum.TLArrayContraction, ::Type{FT} = Float64) where {FT} =
-    _test_to_sparse_array(Telum._canonical_tlarray(q), FT)
 
 function _test_contract_matches_sparse_and_preserves_inputs(a::TLArray,
                                                             legs_a::Tuple,
@@ -462,9 +460,6 @@ function _test_tlarrays_same_sector_storage(a::TLArray, b::TLArray)
     end
 end
 
-function _test_tlarrays_same_sector_storage(a::AbstractTLArray, b::AbstractTLArray)
-    return _test_tlarrays_same_sector_storage(Telum._canonical_tlarray(a), Telum._canonical_tlarray(b))
-end
 
 function _test_tlarrays_same_sector_payloads(a::TLArray, b::TLArray)
     @test a.qlabels == b.qlabels

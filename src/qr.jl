@@ -2,6 +2,16 @@
 #
 # Symmetry-adapted QR decomposition of a TLArray across a left/right leg split.
 
+"""
+Container for a symmetry-aware QR factorization.
+
+# Fields
+
+- `Q`: left/isometric TLArray factor with the generated QR bond leg.
+- `R`: right/triangular TLArray factor sharing that bond leg.
+
+Destructuring iterates as `(Q, R)`.
+"""
 struct QRResult{TQ, TR}
     Q::TQ
     R::TR
@@ -11,6 +21,14 @@ function QRResult(Q::TLArray, R::TLArray)
     return QRResult{typeof(Q), typeof(R)}(Q, R)
 end
 
+"""Internal dense QR result for one CGT equivalence class.
+
+# Fields
+
+- `sector`: shared intermediate q-label of the class.
+- `left_infos`, `right_infos`: packed-side descriptors used to scatter factors.
+- `Q`, `R`: dense matrix QR factors before TLArray sector assembly.
+"""
 struct _QRCGTClassResult{QT, LI, RI, Q, R}
     sector::QT
     left_infos::LI
@@ -19,6 +37,14 @@ struct _QRCGTClassResult{QT, LI, RI, Q, R}
     R::R
 end
 
+"""Internal QR row-to-symmetry split descriptor.
+
+# Fields
+
+- `sector_index`: source TLArray sector slot.
+- `q`: product-symmetry q-label tuple for that slot.
+- `left_signature`, `right_signature`: canonical q-label tuples defining each split side.
+"""
 struct _QRSplitRow{L, R, QT}
     sector_index::Int
     q::QT
@@ -26,6 +52,15 @@ struct _QRSplitRow{L, R, QT}
     right_signature::NTuple{R, QT}
 end
 
+"""Internal QR decomposition of one sector into symmetry isometries and core.
+
+# Fields
+
+- `sector_index`, `q`: source slot and its q-label tuple.
+- `left_signature`, `right_signature`: canonical side signatures.
+- `left_iso`, `right_iso`: symmetry basis isometries.
+- `core`: reduced dense coefficient core.
+"""
 struct _QRSymmetrySplit{L, R, QTN}
     sector_index::Int
     q::QTN
@@ -36,6 +71,14 @@ struct _QRSymmetrySplit{L, R, QTN}
     core::Array{Float64, 3}
 end
 
+"""Internal QR CGT block descriptor.
+
+# Fields
+
+- `q`: intermediate q-label.
+- `omL`, `omR`: left/right outer-multiplicity dimensions.
+- `coeffs`: dense CGT coefficient block coupling those OM axes.
+"""
 struct _QRCGTBlockInfo{NZ}
     q::NTuple{NZ, Int}
     omL::Int
@@ -43,6 +86,15 @@ struct _QRCGTBlockInfo{NZ}
     coeffs::Array{Float64, 3}
 end
 
+"""Internal packed-side layout descriptor for a QR class.
+
+# Fields
+
+- `signature`: canonical q-label signature of the side.
+- `row_index`, `sector_index`: source split-row and sector identifiers.
+- `phys_dims`, `om_dims`: physical and non-Abelian OM extents.
+- `range`: contiguous packed-matrix range assigned to the side.
+"""
 struct _QRClassSideInfo{Sig, L, N}
     signature::Sig
     row_index::Int
@@ -52,6 +104,16 @@ struct _QRClassSideInfo{Sig, L, N}
     range::UnitRange{Int}
 end
 
+"""Internal grouping metadata used to assemble one QR CGT class.
+
+# Fields
+
+- `sector`: class intermediate q-label.
+- `rows`: split-row range belonging to the class.
+- `left_infos`, `right_infos`: packed-side descriptors.
+- `left_ranges`, `right_ranges`: signature-to-packed-range maps.
+- `total_left`, `total_right`: packed matrix dimensions.
+"""
 struct _QRCGTClassMetadata{QT, LI, LR, RI, RR}
     sector::QT
     rows::UnitRange{Int}
@@ -1167,6 +1229,15 @@ function _qr_build_side_cgt_metadata(source_qlabels::NTuple{QD},
     return (qlabels = qlabels, wmat = wmat, cgp = final_cgp, legdir = legdir)
 end
 
+"""
+    qr_std(q, left_legs, bond_tag="qr") -> QRResult
+
+Internal implementation of Telum's symmetry-aware QR. `left_legs` is a sorted,
+unique tuple of logical legs placed on the Q side; all other legs form the R
+side. `bond_tag` labels the generated bond index. The routine materializes lazy
+input, constructs CGT split classes, performs dense QR independently per class,
+and assembles `Q`/`R` TLArrays without changing `q`.
+"""
 function qr_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                 left_legs::NTuple{L, Int},
                 bond_tag::AbstractString = "qr") where {T, QD, N, RD, QT, PS, M, RMT, L}

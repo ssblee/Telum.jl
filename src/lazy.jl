@@ -1,3 +1,13 @@
+"""
+    _lazy_finalize(x)
+
+Finalize the value produced by an `@lazy` expression.
+
+`x` may be an `AbstractTLArray`, in which case it is materialized as a concrete
+`TLArray`, or a `Number`, which is returned unchanged. Any other value is
+rejected because `@lazy` is intended for tensor expressions and scalar
+contraction results, not as a general-purpose expression transformer.
+"""
 # `@lazy` is deliberately a syntactic, lexical opt-in.  Its only rewrites are
 # contractions; structural operations propagate laziness from their inputs.
 @inline _lazy_finalize(q::AbstractTLArray) = TLArray(q)
@@ -5,6 +15,17 @@
 _lazy_finalize(x) = throw(ArgumentError(
     "@lazy must finish with an AbstractTLArray or Number, got $(typeof(x))"))
 
+"""
+    _lazy_callee(name_or_expr)
+
+Choose the callee used when rewriting a call inside `@lazy`.
+
+For a symbol callee, `contract` and binary/n-ary `*` are redirected to
+`Telum._lazy_contract`; other callees are left unchanged. For qualified calls,
+only `Telum.contract(...)` is redirected. This keeps the macro lexical and
+conservative: unrelated user functions, methods from other modules, and
+structural TLArray operations are not rewritten here.
+"""
 @inline _lazy_callee(name::Symbol) =
     name === :contract || name === :* ? GlobalRef(@__MODULE__, :_lazy_contract) : name
 
@@ -18,6 +39,24 @@ _lazy_finalize(x) = throw(ArgumentError(
     return GlobalRef(@__MODULE__, :_lazy_contract)
 end
 
+"""
+    _lazy_rewrite(ex) -> Expr
+    _lazy_rewrite(ex, in_nested_function::Bool) -> Any
+
+Rewrite a parsed expression so eligible contractions become lazy contractions.
+
+`ex` is an expression tree or literal node. `in_nested_function` tracks whether
+the traversal is inside a nested function or anonymous function; top-level
+`return` values are finalized, but nested-function returns are not captured by
+the surrounding macro. Assignments rewrite only the right-hand side. Quoted,
+inert, and macrocall expressions are intentionally left unchanged to avoid
+rewriting code that Julia or another macro should own.
+
+For call expressions, `_lazy_callee` selects the rewritten callee and arguments
+are rewritten recursively. N-ary multiplication is lowered to a left-associated
+chain of binary lazy contractions so the contraction builder only needs to
+support two-input composition.
+"""
 _lazy_rewrite(ex) = _lazy_rewrite(ex, false)
 _lazy_rewrite(ex, ::Bool) = ex
 
@@ -48,6 +87,16 @@ function _lazy_rewrite(ex::Expr, in_nested_function::Bool)
     return Expr(ex.head, map(arg -> _lazy_rewrite(arg, in_nested_function), ex.args)...)
 end
 
+"""
+    @lazy expression
+
+Rewrite supported tensor operations in `expression` so eligible intermediate
+results remain lazy until `materialize` or payload access requires evaluation.
+The macro rewrites only recognized calls; unsupported
+calls and nested function definitions are retained unchanged. Lazy wrappers
+preserve source sector-slot numbering and carry deferred scale, conjugation,
+and permutation state rather than transforming RMT storage eagerly.
+"""
 macro lazy(ex)
     rewritten = _lazy_rewrite(ex)
     return Expr(:call, GlobalRef(@__MODULE__, :_lazy_finalize), esc(rewritten))
