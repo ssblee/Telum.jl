@@ -8,6 +8,7 @@ makedocs(
     pages = [
         "Home" => "index.md",
         "Getting started" => "getting-started.md",
+        "Migrating from QSpace" => "qspace-migration.md",
         "Tensor operations" => "tensor-operations.md",
         "DMRG tutorial" => "dmrg-tutorial.md",
         "Local spaces" => "local-spaces.md",

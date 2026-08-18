@@ -4,7 +4,7 @@
 
 With the functions I introduced before, various tensor network algorithms can be implemented. Here, we'll get the ground state energy of the well-known Majumdar-Ghosh system. Its Hamiltonian is 
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 using Telum
 
 [1 0; 0 1] ⊗ [1 2; 3 4]
@@ -42,7 +42,7 @@ S^{\dagger} & 0 & 0 & 0  \\
 
 The first and last columns/rows correspond to \(S=0\) spaces, and \(S=1\) for other columns/rows. The \(I\) in (1, 1) and (4, 4) indices, acting on \(S=0\) space, differ from \(I\) in (3, 2) index. To define such a rank-4 tensor, we need to 1) generate appropriate operators and 2) concatenate them to construct a large operator. The oplus function with matrix input will be used.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 using LurCGT
 using Telum
 using LinearAlgebra
@@ -56,7 +56,7 @@ Our goal is to construct a matrix of tensors as below. Every tensor is 4-dimensi
 
 First, load necessary packages and get local operators for a single spin 1/2 site. We can set the itags of resulting operators. The code below fills identities at the (1, 1) and (4, 4) indices.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 qss = Matrix{TLArray}(undef, 4, 4) # Empty 4*4 matrix of tensors.
 i4d = addSingleton(q.I; nlegs=2, itag=("left", "right"), dir=('+', '-'))
 qss[1, 1] = qss[4, 4] = i4d
@@ -71,7 +71,7 @@ Output:
 
 The code below does similar things. Convince yourself that the code below results in the figure above.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 s4d = addSingleton(q.S, 3; itag="left", dir='+')
 s4d = setitag(s4d, 4, "right")
 # Put S and S/2 at the last row of the matrix.
@@ -79,14 +79,14 @@ qss[4, 2] = s4d;
 qss[4, 3] = 1/2 * s4d;
 ```
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 # Generate conjugate spin IROP
 sc4d = addSingleton(q.S'; itag="right", dir='-')
 sc4d = permutedims(setitag(sc4d, 3, "left"), (2, 1, 3, 4))
 qss[2, 1] = sc4d;
 ```
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 id_S1 = getIdentity(q.S, 3) # Identity on S=1 space
 id_S1 = TLArray(id_S1, ("left", "right"))
 qss[3, 2] = q.I ⊗ id_S1
@@ -105,7 +105,7 @@ oplus(matrix, (dim1, dim2)) => Tensors in same column(row) are concatenated thro
 
 An error occurs when there is any ambiguity in determining the spaces and leg direction of the resulting tensor. For example, tensors in the same column should have the same space lists for the i(∉dim1)th legs. The relative position of the tensor is preserved when getting RMT for the new tensor.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 t = oplus(qss, (3, 4))
 ```
 
@@ -125,7 +125,7 @@ After truncation and tagging, MPO is organized as a vector of tensors. The resul
 
 ![MPO.png](assets/MPO.png)
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 N = 40 # Our system size
 zq = zero_qlabels(t) # qlabel for vacuum space. ((0,),) in this case
 MPO = Vector{TLArray{Float64, 4}}(undef, N) 
@@ -167,7 +167,7 @@ First, initialize Aprev and Hprev, which is a result from last iteration. The ge
 
 ![aprev_hprev.png](assets/aprev_hprev.png)
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 Nkeep_init = 50
 N = length(MPO) # 40
 MPS = Vector{TLArray{Float64, 3}}(undef, N)
@@ -190,7 +190,7 @@ The next step is to get an MPS for the first site. Define it from getIdentity an
 
 ![anow_hnow.png](assets/anow_hnow.png)
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 li = findleg(Aprev; dir='-')
 Anow = getIdentity((Aprev, li), (MPO[1], 2); itag="SL,1")
 Hnow = Anow' * lock(Anow * Hprev * MPO[1]; itag="SL,1")
@@ -210,7 +210,7 @@ To diagonalize it, we need to remove the leg 'OB,1'. It is done in two steps.
 
 2. Delete a singleton leg by the deleteSingleton function.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 Hmat = getsub(Hnow, x->x==zq ? 1 : nothing; itag="OB,1")
 Hmat = deleteSingleton(Hmat; itag="OB,1")
 ```
@@ -226,11 +226,11 @@ Diagonalize and keep only the 'Nkeep' smallest eigenvalues and eigenvectors. Thi
 
 There is an argument 'tol' for the discard_eigen function, 0.1 by default. If tol > 0, look at 'Nkeep * tol' more eigenvalues, then find the largest difference between adjacent entries. This becomes the new cutoff. This is introduced to keep the degeneracy near threshold as much as possible.
 
-Of course, there is no discarded space in the code below since there is only one eigenvalue.
+The code below has no discarded space because there is only one eigenvalue.
 
 ![eigen_discard.png](assets/eigen_discard.png)
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 e = eigen((Hmat + Hmat') / 2; hermitian=true)
 ek, ed = discard_eigen(e, Nkeep_init, "SB,1", "SD,1"; tol=0.0);
 ```
@@ -239,7 +239,7 @@ The last step is to 1) complete the MPS for the first site, and 2) prepare for t
 
 ![mps_hprev.png](assets/mps_hprev.png)
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 MPS[1] = Aprev = Anow * ek.V
 Hprev = lock(ek.V * Hnow; itag="SB") * ek.V'
 ```
@@ -254,7 +254,7 @@ Output:
 
 The full initialization code is shown below. For the last state, only the lowest eigenvalue survives. Also, the direction of the rightmost dummy leg is inverted.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 function init_MPS(MPO::Vector{<:TLArray}, Nkeep::Int, Nkeep_last::Int=1; tol=0.0)
     N = length(MPO); MPS = Vector{TLArray{Float64, 3}}(undef, N)
     zq = zero_qlabels(MPO[1])
@@ -297,7 +297,7 @@ The next step is to get the left and right environments used in the 2-site sweep
 
 ![Hlr.png](assets/Hlr.png)
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 function getHrl(MPO, MPS)
     N = length(MPS)
     Hrl = Vector{TLArray}(undef, N + 2)
@@ -321,7 +321,7 @@ Hrl = getHrl(MPO, MPS);
 
 Before starting sweep, the direction of rightmost dummy leg of MPS and matching legs of Hlr[end] are inverted for to meet the arrow convention for MPS algorithm.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 MPS[N] = legflip(MPS[N]; itag="SRight");
 Hrl[end] = legflip(Hrl[end]; itag="SRight");
 ```
@@ -330,14 +330,14 @@ Let's see how a first step of right-to-left sweep is implemented. Initial state 
 
 ![Lanczos.png](assets/Lanczos.png)
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 # Preparing environments, MPS, and MPO
 M = MPS[39] * MPS[40];
 Hl, Hr = Hrl[39], Hrl[42];
 MPO1, MPO2 = MPO[39], MPO[40];
 ```
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 Amul = Hl * M 
 Amul = Amul * MPO1
 Amul = Amul * MPO2
@@ -355,7 +355,7 @@ Output:
 
 The inner product of input and output tensors can be obtained form the code below. t[] is a syntax for getting a scalar value from 0-dimensional tensor. Since M and Amul share same legs, the contraction result is 0-dimensional.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 inner_prod = (M' * Amul)[]
 ```
 
@@ -367,7 +367,7 @@ Output:
 
 The function for full Lanczos algorithm is shown here. They have identical variable names to the code above. Hs is the list of MPO tensors, [MPO[39], MPO[40]] in this case.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 function eigs_GS(Hl, Hs, Hr, M; tol=1e-8, nKrylov=5)
     # solve the effective Hamiltonian eigenvalue problem by Lanczos method
     # return the ground state and energy
@@ -417,7 +417,7 @@ Suppose we got a new local tensor. Here is the code to perform svd and generate 
 
 ![sweep.png](assets/sweep.png)
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 M, E = eigs_GS(Hl, [MPO1, MPO2], Hr, M)
 println("New local tensor: ")
 println(M)
@@ -434,7 +434,7 @@ New local tensor:
 Energy from Lanczos: -14.983487706845967
 ```
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 # Perform svd on M
 # Two strings after M: itag of two legs of singular value tensor S
 # itag=("SB,38", "S,39"): Legs with itag "SB,38" or "S,39" go to the left tensor U
@@ -463,7 +463,7 @@ Output:
 
 The full 2-site DMRG sweep is done here. The final energy is -15.
 
-```@example dmrg_tutorial
+```@repl dmrg_tutorial
 function DMRG_GS_2site!(MPS::Vector{<:TLArray{T1, 3}},
     MPO::Vector{<:TLArray{T2, 4}}, 
     Nkeep::Int, 
@@ -537,9 +537,12 @@ Closest candidates are:
   ...
 ```
 
-This supports both old QSpace.m-style coding (specify leg indices like C = contract(A, (1, 2), B, (2, 3))) and ITensors.jl-style coding (C = A * B with appropriate tagging). 
+Telum supports two contraction interfaces:
 
-1. For early stages, such as manipulating local operators, QSpace.m-style can be efficient since the leg order and direction convention is identical. 
-2. I recommend using ITensor-style inside the complicated tensor network algorithm.
+1. Use `A * B` with compatible tags for the concise, ITensor-like style. This
+   is the recommended interface for tensor-network algorithms.
+2. Use `contract(A, (1, 2), B, (2, 3))` when an algorithm needs to specify
+   the contracted leg positions explicitly.
 
-This library may contain some unexpected behaviors and bugs. If you want to report it or give a suggestion, contact lurlur2000@snu.ac.kr
+Telum is actively developed. To report a bug or suggest an improvement, contact
+lurlur2000@snu.ac.kr.

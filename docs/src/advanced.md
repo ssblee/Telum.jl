@@ -1,4 +1,4 @@
-```@example advanced_topics
+```@repl advanced_topics
 using LurCGT
 using Telum
 using LinearAlgebra
@@ -10,7 +10,7 @@ Output:
 SYSTEM: caught exception of type :MethodError while trying to print a failed Task notice; giving up
 ```
 
-```@example advanced_topics
+```@repl advanced_topics
 option = FermionSOptions(1, :U1, :SU2, nothing)
 q = getLocalSpace(option);
 ```
@@ -19,13 +19,13 @@ q = getLocalSpace(option);
 
 Simple transformations such as scalar multiplication, permutation, and conjugation retain shared tensor storage. In the example below, `T2` uses the storage of `T1` together with its own transformation metadata.
 
-```@example advanced_topics
+```@repl advanced_topics
 using Telum
 
 set_accumul_costs!(false)
 ```
 
-```@example advanced_topics
+```@repl advanced_topics
 T1 = q.I
 println(T1)
 println(typeof(T1)) # Concrete TLArray
@@ -36,7 +36,7 @@ println(typeof(T2)) # Shares storage with T1 through lazy transformation state
 
 If the first RMT of T1 is mutated, T2 is also affected.
 
-```@example advanced_topics
+```@repl advanced_topics
 T1.RMTs[1] = [4;;;;] 
 println(T1)
 println(T2) # The first RMT of T2 is also changed.
@@ -58,7 +58,7 @@ Output:
 You can call `copy` on a concrete `TLArray` to get independently owned storage
 while retaining its deferred logical state.
 
-```@example advanced_topics
+```@repl advanced_topics
 q = getLocalSpace(option)
 T1 = q.I
 T2 = 2 * T1
@@ -80,7 +80,7 @@ Output:
   3.	1x1	| 1x1	[  1 0 ;  1 0 ]	2.000000	√1
 ```
 
-```@example advanced_topics
+```@repl advanced_topics
 T1.RMTs[1] = [4;;;;] 
 println(T1)
 println(T2_) # Not changed
@@ -101,7 +101,7 @@ Output:
 
 Avoid mutation of tensor as far as possible. If it is inevitable, copy the original tensor first.
 
-```@example advanced_topics
+```@repl advanced_topics
 q = getLocalSpace(option)
 T1 = q.I
 T2 = 2 * T1
@@ -123,7 +123,7 @@ Output:
   3.	1x1	| 1x1	[  1 0 ;  1 0 ]	2.000000	√1
 ```
 
-```@example advanced_topics
+```@repl advanced_topics
 T1_.RMTs[1] = [4;;;;]
 println(T1_)
 println(T2) # Not changed
@@ -141,6 +141,31 @@ Output:
   2.	1x1	| 2x2	[  0 1 ;  0 1 ]	2.000000	√2
   3.	1x1	| 1x1	[  1 0 ;  1 0 ]	2.000000	√1
 ```
+
+# Lazy tensor expressions
+
+Use `@lazy` to defer intermediate contractions in a tensor expression. Inside
+the macro, `*` and `contract` calls are rewritten as lazy contractions, while
+structural operations such as `addSingleton`, `deleteSingleton`, and `getsub`
+preserve that deferred state. The final value is materialized as a concrete
+`TLArray` when the `@lazy` expression finishes.
+
+```@repl advanced_topics
+left = TLArray(q.I, ("left", "bond"));
+right = TLArray(q.S, ("bond", "right", "op"));
+
+result = @lazy begin
+    intermediate = left * right
+    addSingleton(intermediate, 1; itag="aux", dir='+')
+end
+
+result
+```
+
+`@lazy` is a lexical opt-in: it changes only contractions written inside its
+expression. Unsupported calls and nested function definitions are left
+unchanged. Use it for expressions with expensive intermediate contractions;
+ordinary tensor expressions remain eager.
 
 # Database management
 
@@ -161,7 +186,7 @@ The CGT data computed in LurCGT is stored on disk via SQlite. In the local envir
 
 Databases are automatically created if they do not exist. Merging the local one with global and deleting local one occurs automatically when the process is terminated normally. Otherwise, local ones should be removed manually.
 
-```@example advanced_topics
+```@repl advanced_topics
 script = expanduser("~/.LurCGT_sqlite/")
 run(`ls $script`)
 ```
@@ -174,7 +199,7 @@ local
 Process(`ls /home/lurlurlur/.LurCGT_sqlite/`, ProcessExited(0))
 ```
 
-```@example advanced_topics
+```@repl advanced_topics
 script = expanduser("~/.LurCGT_sqlite/local/")
 run(`ls $script`)
 ```
@@ -189,7 +214,7 @@ SU3
 Process(`ls /home/lurlurlur/.LurCGT_sqlite/local/`, ProcessExited(0))
 ```
 
-```@example advanced_topics
+```@repl advanced_topics
 script = expanduser("~/.LurCGT_sqlite/local/SU2")
 run(`ls $script`)
 ```
@@ -227,7 +252,7 @@ lurlurlur-MS-7C94_pid36521.db-wal
 Process(`ls /home/lurlurlur/.LurCGT_sqlite/local/SU2`, ProcessExited(0))
 ```
 
-```@example advanced_topics
+```@repl advanced_topics
 script = expanduser("~/.LurCGT_sqlite/global")
 run(`ls $script`)
 ```

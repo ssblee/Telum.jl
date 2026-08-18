@@ -22,16 +22,17 @@ Pkg.develop(path = ".")
 
 - [Getting started](getting-started.md): installation, local operators, tensor construction,
   contraction, and leg tags.
+- [Migrating from QSpace](qspace-migration.md): QSpace concepts and their Telum equivalents.
 - [Tensor operations](tensor-operations.md): decompositions, direct sums, subspace selection,
   and leg utilities.
 - [DMRG tutorial](dmrg-tutorial.md): a complete two-site DMRG calculation for the
   Majumdar--Ghosh model.
 - [Local spaces](local-spaces.md): mixed symmetries and custom local-space definitions.
-- [Advanced topics](advanced.md): shared tensor storage and LurCGT database usage.
+- [Advanced topics](advanced.md): shared tensor storage, lazy expressions, and LurCGT database usage.
 
 ## Quick start
 
-```@example quickstart
+```@repl quickstart
 using Telum
 
 set_accumul_costs!(true)

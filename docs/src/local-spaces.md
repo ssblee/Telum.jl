@@ -5,13 +5,13 @@ With the new version of getLocalSpace, you can
 1. Define the system with mixed symmetry (e.g., U1 charge on channel 1, SU2 charge on channel 2)
 2. Define a custom space easily.
 
-```@example local_spaces
+```@repl local_spaces
 using Telum
 
 zero_qlabels((U1, SU{2}, SU{3}))
 ```
 
-```@example local_spaces
+```@repl local_spaces
 using LurCGT
 using Telum
 using LinearAlgebra
@@ -25,7 +25,7 @@ Suppose we want to define a 4-channel spinful fermionic local space with the sym
 2. SU(2) spin on channels (1, 2, 3), U1 spin on channel 4
 3. SU(2) channel symmetry on channels (1, 2)
 
-```@example local_spaces
+```@repl local_spaces
 option = FermionSOptions(4,                               # Number of channels
                          [(:U1, [1, 2]), (:SU2, [4])],    # Charge symmetries
                          [(:SU2, [1, 2, 3]), (:U1, [4])], # Spin symmetries
@@ -38,7 +38,7 @@ The resulting tensors have 5 symmetries. They are ordered in (charge, spin, chan
 
 In this example, 10 local operators are defined.
 
-```@example local_spaces
+```@repl local_spaces
 println(keys(q))
 ```
 
@@ -50,7 +50,7 @@ Output:
 
 First, I and Z are the identity and fermionic parity operator, respectively.
 
-```@example local_spaces
+```@repl local_spaces
 q.I
 ```
 
@@ -84,7 +84,7 @@ The symmetries of the system are
 
 In this example, S123 is the IROP (S1p+S2p+S3p, S1z+S2z+S3z, S1m+S2m+S3m) up to a multiplicative constant.
 
-```@example local_spaces
+```@repl local_spaces
 q.S123
 ```
 
@@ -108,7 +108,7 @@ Output:
 
 If all spin operators are fused to the unique IROP, the name is fixed to 'S'.
 
-```@example local_spaces
+```@repl local_spaces
 option_3 = FermionSOptions(3, :U1, :SU2, :SU3)
 # The above code is the shortcut for :
 option_3 = FermionSOptions(3,                               # Number of channels
@@ -136,7 +136,7 @@ The symmetries of the system are
 2. From U1 charge on channels (1, 2), F1u+F2u becomes new operator F12u. Similar for F12d.
 3. From SU2 spin symmetry on channels (1, 2, 3), F12u and F12d are fused into IROP F12.
 
-```@example local_spaces
+```@repl local_spaces
 q.F12
 ```
 
@@ -160,7 +160,7 @@ Output:
 
 4. From SU2 spin, F3u and F3d are also fused into F3.
 
-```@example local_spaces
+```@repl local_spaces
 q.F3
 ```
 
@@ -184,7 +184,7 @@ Output:
 
 5. From SU2 charge on channel 4, F4u evolves to (spin down creation, spin up annihilation) on channel 4. Similar to F4d.
 
-```@example local_spaces
+```@repl local_spaces
 q.F4u
 ```
 
@@ -224,7 +224,7 @@ First, define a new 'Option' type. You can name it whatever you want. Just decla
 
 Currently, this type has no field. It can be added if more flexibility is needed.
 
-```@example local_spaces
+```@repl local_spaces
 struct lurspace <: LocalSpaceOptions # This means that the new type 'lurspace' is a subtype of 'LocalSpaceOoptions'.
 end
 ```
@@ -235,7 +235,7 @@ First, let's get the quantum number for each symmetry. With the basis ordering $
 
 ![qnums.png](assets/qnums.png)
 
-```@example local_spaces
+```@repl local_spaces
 function lurspace_qnums()
     return ([(1,), (-1,), (1,), (-1,)], # The quantum numbers for the first symmetry 
             [(1,), (1,), (-1,), (-1,)]) # The quantum numbers for the second symmetry 
@@ -248,11 +248,12 @@ Output:
 lurspace_qnums (generic function with 1 method)
 ```
 
-The spin quantum number is $2S_z$, similar to the QSpace.m convention. (1,) is the syntax to define a 1-element tuple. Without a comma, it is regarded as just a number 1.
+The spin quantum number is represented as $2S_z$. `(1,)` is Julia syntax for a
+one-element tuple; without the comma, `1` is an integer instead.
 
 From Julia syntax, the function can also be defined as follows:
 
-```@example local_spaces
+```@repl local_spaces
 lurspace_qnums() = ([(1,), (-1,), (1,), (-1,)], # The quantum numbers for the first symmetry 
                     [(1,), (1,), (-1,), (-1,)]) # The quantum numbers for the second symmetry
 ```
@@ -265,7 +266,7 @@ lurspace_qnums (generic function with 1 method)
 
 The next step is to define the lowering operators of two $\mathrm{SU}(2)$ symmetries. Basis is $\{|\uparrow\uparrow\rangle, |\downarrow\uparrow\rangle, |\uparrow\downarrow\rangle, |\downarrow\downarrow\rangle \}$.
 
-```@example local_spaces
+```@repl local_spaces
 s1dn = [0 0 0 0;
         1 0 0 0;
         0 0 0 0;
@@ -287,9 +288,9 @@ lurspace_dnops (generic function with 1 method)
 
 [s1dn] ([s2dn]) is the list of lowering operators for the first (second) $\mathrm{SU}(2)$. For general non-Abelian symmetry, more operators can be placed inside the vector.
 
-If the local space is too large, I recommend using a sparse matrix.
+Use a sparse matrix when the local space is large.
 
-```@example local_spaces
+```@repl local_spaces
 using SparseArrays
 sparse(s1dn)
 ```
@@ -310,7 +311,7 @@ In matrix form,
 
 ![irops.png](assets/irops.png)
 
-```@example local_spaces
+```@repl local_spaces
 mwIROP_00 = [1 0 0 0;
              0 1 0 0;
              0 0 1 0;
@@ -342,16 +343,18 @@ Output:
  0  0  0  0
 ```
 
-What we need is a dictionary of maximal weight IROPs. 
+Define a dictionary of maximal-weight IROPs.
 
 1. key: Symbol object. The name of the local IROP (e.g., F, S, Z, I for spinful fermionic site)
 2. value: Corresponding maximal weight IROP
 
-An arbitrary name can be given to the IROP. For scalar factor, I followed the QSpace.m convention.
+You may choose any IROP name. The scalar prefactors above define the
+normalization convention for this local space.
 
-The other operators in the IROP are computed from the repeated commutator [lowering operator, IROP operator]
+Telum computes the remaining operators in each IROP from repeated commutators
+of the lowering operator with the maximal-weight operator.
 
-```@example local_spaces
+```@repl local_spaces
 lurspace_mwIROP() = Dict(:I => mwIROP_00,
                          :S1 => -(1/sqrt(2)) * mwIROP_20,
                          :S2 => -(1/sqrt(2)) * mwIROP_02,
@@ -366,7 +369,7 @@ lurspace_mwIROP (generic function with 1 method)
 
 The last step is to define the 'lurspace' version of getSymmetryInfo. This function will be called inside the getLocalSpace.
 
-```@example local_spaces
+```@repl local_spaces
 Telum.getSymmetryInfo(::lurspace) = (SU{2}, SU{2}), lurspace_qnums(), lurspace_dnops(), lurspace_mwIROP()
 ```
 
@@ -374,7 +377,7 @@ Then, just get the local space operator as usual.
 
 If the IROP contains only one operator(q.I in this case), the operator leg is automatically removed.
 
-```@example local_spaces
+```@repl local_spaces
 option = lurspace()
 q = getLocalSpace(option)
 println("I: ", q.I)
