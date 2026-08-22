@@ -11,7 +11,7 @@ using HDF5
 import Base: lock, unlock
 import LurCGT
 import LurCGT: AbelianSymm, NonabelianSymm, Symmetry, SO, SU, Sp, U1, Z
-import LurCGT: add_qn, decompose_irop, decompose_space, detect_1j, dimension
+import LurCGT: add_qn, decompose_irop, decompose_space, dimension
 import LurCGT: get_CGTom, get_IROP, get_conj_perm, get_dualq
 import LurCGT: getNsave_CGTperm, getNsave_CGTSVD, getNsave_CGTQR, getNsave_Xsymbol, getNsave_Conjperm
 import LurCGT: getNsave_omlist, getNsave_validout, isabelian
