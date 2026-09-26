@@ -81,6 +81,115 @@ function random_similar(a::TLArray)
 end
 
 """
+    _allsectors_property(value, qd, name) -> NTuple{qd}
+
+Expand a scalar leg-metadata keyword to every leg, or validate and return a
+per-leg tuple/vector. `name` is used only in an invalid-length error.
+"""
+function _allsectors_property(value, qd::Int, name::AbstractString)
+    if value isa Tuple || value isa AbstractVector
+        length(value) == qd || throw(ArgumentError(
+            "$name must have one entry per leg ($qd), got $(length(value))"))
+        return Tuple(value)
+    end
+    return ntuple(_ -> value, qd)
+end
+
+"""
+    _allsectors_oms(symm, inds, sector_qlabels) -> oms | nothing
+
+Return one invariant outer-multiplicity dimension per symmetry component for a
+candidate physical q-label tuple. Incoming labels are dualized before fusion;
+`nothing` means that the tuple has no singlet sector.
+"""
+function _allsectors_oms(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex},
+                         sector_qlabels) where {N, QD}
+    trivial = zero_qlabels(symm)
+    oms = Vector{Int}(undef, N)
+    for n in 1:N
+        S = symm[n]
+        labels = ntuple(l -> inds[l].dir == '+' ?
+                        get_dualq(S, sector_qlabels[l][n]) : sector_qlabels[l][n], Val(QD))
+        outcomes = combine_qlabels(S, labels)
+        outcome = findfirst(item -> item[1] == trivial[n], outcomes)
+        isnothing(outcome) && return nothing
+        oms[n] = outcomes[outcome][2]
+    end
+    return Tuple(oms)
+end
+
+"""
+    allsectors_tlarray(symm, spaces, dirs; itags="", plev=0, lock=0,
+                       dual=false, T=Float64) -> TLArray
+
+Construct a concrete invariant tensor containing every q-label sector allowed
+by `spaces` and `dirs`. `symm` is the tuple of symmetry types; each entry of
+`spaces` is a leg space list of `(qlabel, multiplicity)` pairs; and `dirs`
+contains `+` or `-` for each leg. `itags`, `plev`, `lock`, and `dual` may each
+be a scalar or have one entry per leg.
+
+Every allowed sector owns a zero RMT whose physical dimensions are the supplied
+multiplicities and whose trailing symmetry axes span the full outer
+multiplicity. Its non-Abelian w-matrices are identity isometries on that full
+space. Thus, unlike `zero(q)`, the result deliberately retains defined zero
+sectors. Use `random_allsectors_tlarray` to fill the same sector structure with
+random RMT data.
+"""
+function allsectors_tlarray(symm::NTuple{N, Any}, spaces::NTuple{QD, AbstractVector}, dirs;
+                            itags="", plev=0, lock=0, dual=false,
+                            T::Type{<:Number}=Float64) where {N, QD}
+    dir_values = Tuple(dirs)
+    length(dir_values) == QD || throw(ArgumentError("dirs must have one entry per leg ($QD)"))
+    all(dir -> dir == '+' || dir == '-', dir_values) ||
+        throw(ArgumentError("dirs entries must be '+' or '-', got $dir_values"))
+    itag_values = _allsectors_property(itags, QD, "itags")
+    plev_values = _allsectors_property(plev, QD, "plev")
+    lock_values = _allsectors_property(lock, QD, "lock")
+    dual_values = _allsectors_property(dual, QD, "dual")
+    inds = ntuple(l -> TLIndex(String(itag_values[l]), dir_values[l], Int(plev_values[l]),
+                                Int(lock_values[l]), Bool(dual_values[l])), Val(QD))
+    QT = qlabeltype(symm)
+    typed_spaces = ntuple(l -> Vector{Tuple{QT, Int}}(spaces[l]), Val(QD))
+    all(space -> !isempty(space), typed_spaces) ||
+        return _zero_tlarray_with_spaces(symm, inds, typed_spaces; T=T)
+
+    PS = productsymm(symm)
+    nonabelian = nonabelian_symmetry_indices(PS)
+    qlabels = NTuple{QD, QT}[]
+    wmatdata, wmatinfo = _empty_wmat_storage(PS)
+    RMTs = Array{T, QD + N}[]
+    for position in CartesianIndices(ntuple(l -> length(typed_spaces[l]), Val(QD)))
+        sector_qlabels = ntuple(l -> typed_spaces[l][position[l]][1], Val(QD))
+        oms = _allsectors_oms(symm, inds, sector_qlabels)
+        isnothing(oms) && continue
+        push!(qlabels, sector_qlabels)
+        wmats = ntuple(slot -> Matrix{Float64}(I, oms[nonabelian[slot]], oms[nonabelian[slot]]),
+                       Val(length(nonabelian)))
+        _append_wmat_tuple!(wmatdata, wmatinfo, wmats)
+        dims = (ntuple(l -> typed_spaces[l][position[l]][2], Val(QD))..., oms...)
+        push!(RMTs, zeros(T, dims))
+    end
+    return TLArray(symm, qlabels, wmatdata, wmatinfo, RMTs, inds, typed_spaces)
+end
+
+"""
+    random_allsectors_tlarray(symm, spaces, dirs; kwargs...) -> TLArray
+
+Construct the same complete invariant sector structure as `allsectors_tlarray`,
+then replace every defined zero RMT with independent random entries of element
+type `T`. All keyword arguments are forwarded to `allsectors_tlarray`.
+"""
+function random_allsectors_tlarray(symm::NTuple, spaces::NTuple, dirs; kwargs...)
+    q = allsectors_tlarray(symm, spaces, dirs; kwargs...)
+    for sector in sector_slots(q)
+        rmt = q.RMTs[sector]
+        q.RMTs[sector] = rand(eltype(q), size(rmt))
+        q.iszero[sector] = false
+    end
+    return q
+end
+
+"""
     qlabeltype(symm::NTuple{N, Any}) where {N}
     qlabeltype(q::TLArray)
 

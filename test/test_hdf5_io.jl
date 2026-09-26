@@ -135,6 +135,12 @@ end
     q_defined_zero = _with_defined_zero_sector(q)
     @test q_defined_zero.iszero[end]
     @test q_defined_zero.isdefined[end]
+    @test occursin(r"\t\s*zero", sprint(show, MIME"text/plain"(), q_defined_zero))
+
+    q_absent_zero = _with_zero_sector(q)
+    absent_sector = length(q_absent_zero.RMTs)
+    @test !occursin("  $absent_sector.\t", sprint(show, MIME"text/plain"(), q_absent_zero))
+
     _with_saved_tlarray(q_defined_zero) do loaded
         _assert_tlarray_roundtrip(q_defined_zero, loaded)
         @test loaded.iszero[end]

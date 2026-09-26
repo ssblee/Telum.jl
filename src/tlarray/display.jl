@@ -120,10 +120,11 @@ end
 
 Pretty-print sector metadata and small scalar payload summaries for a TLArray.
 
-`q` is assumed concrete. The method displays only active sector slots, computes
-per-symmetry label widths for alignment, marks omitted middle sectors when the
-sector count exceeds the configured head/tail limits, and avoids printing full
-dense RMT payloads.
+`q` is assumed concrete. The method displays active sectors and defined zero
+sectors (marked `zero`), while omitting slots that have no RMT payload. It
+computes per-symmetry label widths for alignment, marks omitted middle sectors
+when the displayed-sector count exceeds the configured head/tail limits, and
+avoids printing full dense RMT payloads.
 """
 function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where {T, QD, N, RD}
     # --- Header: symmetries and leg dirs/tags on one line ---
@@ -132,7 +133,11 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
     println(io)
 
     # --- Sectors: one per line with global label width for cross-sector alignment ---
-    nr = nsectors(qs)
+    # A defined zero sector has payload and q-label metadata worth displaying;
+    # an undefined zero slot represents a sector that does not exist.
+    displayable_indices = [i for i in sector_slots(qs)
+                           if !qs.iszero[i] || qs.isdefined[i]]
+    nr = length(displayable_indices)
     if nr == 0
         print(io, "  (empty)")
         return
@@ -142,11 +147,10 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
     head = TLARRAY_DISPLAY_HEAD[]
     tail = TLARRAY_DISPLAY_TAIL[]
     truncate = nr > head + tail
-    active_indices = [i for i in sector_slots(qs) if !qs.iszero[i]]
     display_indices = if truncate
-        vcat(active_indices[1:head], active_indices[nr-tail+1:nr])
+        vcat(displayable_indices[1:head], displayable_indices[nr-tail+1:nr])
     else
-        active_indices
+        displayable_indices
     end
 
     # Compute per-symmetry widths globally across displayed sectors only.
@@ -158,6 +162,10 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
     # Pre-compute scalar width for alignment (only sectors with scalar RMT).
     scalar_width = 0
     for i in display_indices
+        qs.iszero[i] && begin
+            scalar_width = max(scalar_width, length("zero"))
+            continue
+        end
         rmt, _ = sector_rmt(qs, i)
         length(rmt) == 1 || continue
         scalar_width = max(scalar_width, length(_fmt_scalar_str(_display_scalar_rmt(qs, i))))
@@ -176,7 +184,7 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
         print(io, "  $i.\t", phys_str, om_str, "\t")
         _print_sector_cgt_dims(io, qs, i)
         _print_sector_qlabels(io, qs, i, widths)
-        length(rmt) == 1 &&
+        qs.iszero[i] ? print(io, "\t", lpad("zero", scalar_width)) : length(rmt) == 1 &&
             print(io, "\t", lpad(_fmt_scalar_str(_display_scalar_rmt(qs, i)), scalar_width))
         QD == 2 && print(io, "\t√", _sector_cgt_size_2d(qs, i))
         k < length(display_indices) && println(io)

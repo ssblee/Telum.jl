@@ -80,6 +80,38 @@
     end
 end
 
+@testset "complete sector constructors" begin
+    symmetries = (U1, SU{2})
+    spaces = (
+        [(((0,), (0,)), 1), (((1,), (1,)), 2)],
+        [(((0,), (0,)), 3), (((1,), (1,)), 4)],
+    )
+    q = allsectors_tlarray(symmetries, spaces, ('+', '-');
+                            itags=("left", "right"), plev=(1, 0), lock=(2, 0))
+
+    @test inds(q) == (TLIndex("left", '+', 1, 2), TLIndex("right", '-', 0, 0))
+    @test Telum.spaces(q) == spaces
+    @test Telum.sector_count(q) == 2
+    @test all(Telum.is_sector_defined(q, sector) && Telum.is_sector_zero(q, sector)
+              for sector in Telum.sector_slots(q))
+    @test all(size(Telum.sector_wmat(q, sector, 2)) == (1, 1)
+              for sector in Telum.sector_slots(q))
+    @test all(size(Telum.sector_rmt(q, sector)[1]) == (sector == 1 ? 1 : 2,
+                                                         sector == 1 ? 3 : 4, 1, 1)
+              for sector in Telum.sector_slots(q))
+
+    multi_om_spaces = ntuple(_ -> [(((1,),), 1)], 4)
+    q_multi_om = allsectors_tlarray((SU{2},), multi_om_spaces, ('+', '+', '-', '-'))
+    @test Telum.sector_count(q_multi_om) == 1
+    @test Telum.sector_wmat(q_multi_om, 1, 1) == Matrix{Float64}(I, 2, 2)
+    @test size(Telum.sector_rmt(q_multi_om, 1)[1]) == (1, 1, 1, 1, 2)
+
+    qr = random_allsectors_tlarray(symmetries, spaces, ('+', '-'); T=ComplexF64)
+    @test all(Telum.is_sector_defined(qr, sector) && !Telum.is_sector_zero(qr, sector)
+              for sector in Telum.sector_slots(qr))
+    @test eltype(qr) == ComplexF64
+end
+
 @testset "random_similar preserves TLArray structure" begin
     q = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing)).F
     q_random = random_similar(q)
