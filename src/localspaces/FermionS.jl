@@ -1,3 +1,4 @@
+# N: The number of channels
 """
     FermionS_basicops(N::Int)
 
@@ -9,7 +10,6 @@ one spin component, `NN` stores number operators, `SS[channel]` lowers spin,
 spin-z operator, and `chan_l`/`chan_z` define the SU(N) channel algebra over the
 spinful Fock basis.
 """
-# N: The number of channels
 function FermionS_basicops(N::Int)
     @assert N > 0 "Number of channels must be positive"
 
