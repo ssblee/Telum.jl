@@ -24,6 +24,52 @@ function empty_tlarray(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex};
 end
 
 """
+    TLArray(A::AbstractArray, inds::NTuple{QD, TLIndex}) -> TLArray
+    TLArray(A::AbstractArray; itags="", dirs='+') -> TLArray
+
+Copy a Julia array into a tensor with no symmetry. Each leg has the single
+trivial q-label `()` and multiplicity equal to the corresponding array
+dimension; the full array is stored as the tensor's sole RMT block. `inds`
+provides complete per-leg metadata. In the keyword form, `itags` and `dirs`
+may be scalars broadcast to every leg or tuples/vectors with one entry per
+leg. Directions must be `'+'` or `'-'` and default to `'+'`.
+
+The input is copied, so later mutations of `A` do not change the tensor. The
+array must have one-based axes and a numeric element type.
+"""
+function TLArray(A::AbstractArray{T, QD}, inds::NTuple{QD, TLIndex}) where {T<:Number, QD}
+    axes(A) == map(Base.OneTo, size(A)) || throw(ArgumentError(
+        "TLArray array construction requires one-based axes, got $(axes(A))"))
+
+    QT = qlabeltype(())
+    qlabels = NTuple{QD, QT}[ntuple(_ -> (), Val(QD))]
+    spaces = ntuple(leg -> Tuple{QT, Int}[((), size(A, leg))], Val(QD))
+    RMTs = Array{T, QD}[copy(Array(A))]
+    wmatinfo = WMatInfo{0}[_empty_wmat_info(Val(0))]
+    return TLArray((), qlabels, Float64[], wmatinfo, RMTs, inds, spaces)
+end
+
+function _array_tensor_leg_values(value, qd::Int, name::AbstractString)
+    values = if value isa Tuple || value isa AbstractVector
+        length(value) == qd || throw(ArgumentError(
+            "$name must have one entry per array dimension ($qd), got $(length(value))"))
+        Tuple(value)
+    else
+        ntuple(_ -> value, Val(qd))
+    end
+    return values
+end
+
+function TLArray(A::AbstractArray{T, QD}; itags="", dirs='+') where {T<:Number, QD}
+    itag_values = _array_tensor_leg_values(itags, QD, "itags")
+    dir_values = _array_tensor_leg_values(dirs, QD, "dirs")
+    all(dir -> dir == '+' || dir == '-', dir_values) || throw(ArgumentError(
+        "dirs entries must be '+' or '-', got $dir_values"))
+    inds = ntuple(leg -> TLIndex(String(itag_values[leg]), dir_values[leg]), Val(QD))
+    return TLArray(A, inds)
+end
+
+"""
     empty_tlarray(q::AbstractTLArray; T::Type=Float64) -> TLArray
 
 Create an empty concrete `TLArray` with the same symmetry tuple and visible

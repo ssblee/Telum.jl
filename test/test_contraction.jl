@@ -176,6 +176,10 @@ end
     test_get1jtensor_and_legflip_keywords(FermionSOptions(3, :U1, :SU2, :SU3))
 end
 
+@testset "Abelian legflip fast path and deferred views" begin
+    test_abelian_legflip_views()
+end
+
 @testset "contract verify_legs checks dual" begin
     test_contract_verify_legs_checks_dual(FermionSOptions(1, :U1, :SU2, nothing))
     test_contract_verify_legs_checks_dual(FermionSOptions(3, :U1, :SU2, :SU3))

@@ -23,6 +23,8 @@ function _reorder_perm_part(qlabels::NTuple{N, NTuple{NZ, Int}},
     return perm
 end
 
+# Compute the reordering permutation for stored positions to satisfy the order constraint.
+# Returns reorder where reorder[new_stored_pos] = old_stored_pos.
 """
     _compute_reorder_permutation(qlabels, cgp, legdir) -> Tuple
 
@@ -34,8 +36,6 @@ uses `reorder[new_stored_pos] = old_stored_pos`. Only legs with the same
 direction and qlabel may be reordered, preserving the CGT/TLArray tie rule that
 same-qlabel legs follow physical leg order.
 """
-# Compute the reordering permutation for stored positions to satisfy the order constraint.
-# Returns reorder where reorder[new_stored_pos] = old_stored_pos.
 function _compute_reorder_permutation(qlabels::NTuple{QD, NTuple{NZ, Int}}, 
     cgp::NTuple{QD, Int}, 
     legdir::Tuple{Int, Int}) where {NZ, QD}
@@ -133,7 +133,15 @@ end
 Return a lazy physical-leg permutation of `q`.
 
 `perm` uses Julia's `permutedims` convention: output leg `i` reads input leg
-`perm[i]`. The operation updates cheap view state and metadata; RMT payloads are
-not physically permuted until a consumer requests sector payload data.
+`perm[i]`. The returned array shares the original stored indices, spaces, and
+RMT payloads, and records the new logical-to-stored leg mapping. Accordingly,
+`inds(q)`, `spaces(q)`, and `qlabels(q)` (or `q.qlabels`) are observed in the
+permuted logical-leg order. The q-label tuples are rebuilt lazily on access;
+their stored tuples remain in the original order.
+
+W-matrices for present sector/symmetry slots are transformed when the permuted
+view is created; absent slots remain absent. The RMT payloads are not physically
+permuted until a consumer requests sector payload data. The input `q` is not
+modified.
 """
 Base.permutedims(q::AbstractTLArray, perm) = _view_permutedims(q, perm)

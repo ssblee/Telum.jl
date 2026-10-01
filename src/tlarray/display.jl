@@ -179,7 +179,7 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
         end
         rmt, _ = sector_rmt(qs, i)
         om_dim = prod(size(rmt)[QD+1:end]; init=1)
-        phys_str = join(size(rmt)[1:QD], "x")
+        phys_str = join(sector_rmt_dim(qs, i)[1:QD], "x")
         om_str   = om_dim > 1 ? " @$om_dim" : ""
         print(io, "  $i.\t", phys_str, om_str, "\t")
         _print_sector_cgt_dims(io, qs, i)

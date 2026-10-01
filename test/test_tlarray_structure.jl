@@ -78,6 +78,53 @@
         @test !hasmethod(printmeta, Tuple{IO, typeof(lazy)})
         @test_throws MethodError printmeta(IOBuffer(), lazy)
     end
+
+    @testset "permuted TLArray view display uses logical RMT dimensions" begin
+        q = TLArray(getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing)).F,
+                    ("left", "right", "op"))
+        qp = permutedims(q, (3, 1, 2))
+        shown = sprint(show, MIME"text/plain"(), qp)
+
+        for sector in Telum.sector_slots(qp)
+            Telum.is_sector_defined(qp, sector) || continue
+            dims = Telum.sector_rmt_dim(qp, sector)
+            expected = join(dims[1:ndims(qp)], "x")
+            line = only(filter(l -> startswith(strip(l), "$(sector)."), split(shown, '\n')))
+            @test occursin(expected, line)
+        end
+    end
+end
+
+@testset "permutation and conjugation defer non-W-matrix data" begin
+    q = TLArray(getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing)).F,
+                ("left", "right", "op"))
+    old_inds = getfield(q, :inds)
+    old_spaces = getfield(q, :spaces)
+    old_qlabels = getfield(q, :qlabels)
+    old_rmts = q.RMTs
+
+    qp = permutedims(q, (3, 1, 2))
+    @test getfield(qp, :inds) === old_inds
+    @test getfield(qp, :spaces) === old_spaces
+    @test getfield(qp, :qlabels) === old_qlabels
+    @test qp.RMTs === old_rmts
+    @test qp.wmatdata !== q.wmatdata
+    @test qp.wmatinfo !== q.wmatinfo
+    @test inds(qp) == (inds(q)[3], inds(q)[1], inds(q)[2])
+    @test spaces(qp) == (spaces(q)[3], spaces(q)[1], spaces(q)[2])
+    @test all(qp.qlabels[s] == (q.qlabels[s][3], q.qlabels[s][1], q.qlabels[s][2])
+              for s in Telum.sector_slots(q))
+
+    qc = conj(q)
+    @test getfield(qc, :inds) === old_inds
+    @test getfield(qc, :spaces) === old_spaces
+    @test getfield(qc, :qlabels) === old_qlabels
+    @test qc.RMTs === old_rmts
+    @test qc.wmatdata !== q.wmatdata
+    @test qc.wmatinfo !== q.wmatinfo
+    @test inds(qc) == map(Telum.change_dir, inds(q))
+    @test spaces(qc) == spaces(q)
+    @test qc.qlabels == q.qlabels
 end
 
 @testset "complete sector constructors" begin

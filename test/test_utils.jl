@@ -576,6 +576,72 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     @test_throws ArgumentError legflip(q; itag="missing")
 end
 
+function _legflip_general_reference(q::AbstractTLArray, leg::Int)
+    j = get1jtensor(q, leg)
+    q_flip = contract(q, (leg,), j, (1,); reduce_lock=false)
+    QD = ndims(q)
+    perm = (ntuple(i -> i, leg - 1)..., QD,
+            ntuple(i -> leg - 1 + i, QD - leg)...)
+    return permutedims(q_flip, perm)
+end
+
+function _test_legflip_values(q::AbstractTLArray)
+    if isempty(symm(q))
+        sector = first(Telum.sector_slots(q))
+        identity_perm = ntuple(identity, Val(ndims(q)))
+        rmt, scale = Telum.sector_rmt_permuted(q, sector, identity_perm)
+        return Array(scale .* rmt)
+    end
+    return Array(to_sparse_array(q))
+end
+
+function test_abelian_legflip_views()
+    u1_space = getLocalSpace(FermionOptions(U1), ("left", "right", "op"))
+    no_symm_data = reshape(ComplexF64.(1:24) .+ im .* ComplexF64.(24:-1:1), 2, 3, 4)
+    no_symm = TLArray(no_symm_data;
+                      itags=("dense1", "dense2", "dense3"),
+                      dirs=('+', '-', '+'))
+
+    sources = (
+        (u1_space.F, 2),
+        (conj(u1_space.F), 2),
+        (2.5 * u1_space.F, 3),
+        (permutedims(u1_space.F, (3, 1, 2)), 1),
+        (permutedims(1.5 * conj(u1_space.F), (2, 3, 1)), 3),
+        (no_symm, 2),
+        (conj(no_symm), 1),
+        (permutedims(2.0 * conj(no_symm), (3, 1, 2)), 1),
+    )
+
+    for (source, leg) in sources
+        source_before = _test_legflip_values(source)
+        flipped = legflip(source, leg)
+        if isempty(symm(source))
+            expected_inds = ntuple(l -> l == leg ?
+                change_dir(Telum.change_dual(source.inds[l])) : source.inds[l],
+                Val(ndims(source)))
+            @test flipped.inds == expected_inds
+            @test flipped.spaces == source.spaces
+            @test flipped.qlabels == source.qlabels
+            @test _test_legflip_values(flipped) ≈ source_before
+        else
+            reference = _legflip_general_reference(source, leg)
+            @test flipped.inds == reference.inds
+            @test flipped.spaces == reference.spaces
+            @test sort(flipped.qlabels) == sort(reference.qlabels)
+            @test _test_legflip_values(flipped) ≈ _test_legflip_values(reference)
+        end
+        @test _test_legflip_values(source) ≈ source_before
+        @test flipped.conj == source.conj
+        @test flipped.scale == source.scale
+        @test flipped.perm == source.perm
+        for sector in Telum.sector_slots(source)
+            source.isdefined[sector] || continue
+            @test flipped.RMTs[sector] === source.RMTs[sector]
+        end
+    end
+end
+
 function test_contract_verify_legs_checks_dual(option::LocalSpaceOptions)
     q0 = getLocalSpace(option, ("site1", "site2", "op"))
     q = q0.F

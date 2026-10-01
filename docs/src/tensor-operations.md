@@ -30,6 +30,25 @@ match.
 This extra metadata also makes operations such as eigendecomposition and
 `oplus` unambiguous.
 
+## Permuting legs
+
+`permutedims` returns a lazy view in the requested logical-leg order. It shares
+the source tensor's stored `Index` objects, space lists, q-label tuples, and RMT
+payloads, while `inds`, `spaces`, and `qlabels` expose metadata in the permuted
+logical order. The logical q-label tuples are rebuilt on access; stored tuples
+remain in their original order. Present W-matrix slots are transformed as the
+view is created. Sector RMT payloads are reordered only when requested by a
+consumer; the source tensor is unchanged.
+
+The permutation follows Julia's convention: output leg `i` comes from input
+leg `perm[i]`.
+
+```@repl tensor_operations
+qperm = permutedims(q.I, (2, 1))
+inds(qperm)
+spaces(qperm)
+```
+
 ```@repl tensor_operations
 q.I
 ```
