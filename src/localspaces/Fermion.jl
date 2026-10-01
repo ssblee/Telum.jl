@@ -76,6 +76,7 @@ function _parse_su_channel_symbol(ssymbol::Symbol, channs::AbstractVector{<:Inte
     return nchannels
 end
 
+# N: The number of spinless fermion channels
 """
     Fermion_basicops(N::Int)
 
@@ -86,7 +87,6 @@ its number operator, `chan_l[i]` lowers SU(N) channel weight from channel `i`
 toward `i + 1`, and `chan_z[i]` is the corresponding Cartan weight vector over
 the local Fock basis.
 """
-# N: The number of spinless fermion channels
 function Fermion_basicops(N::Int)
     @assert N > 0 "Number of channels must be positive"
 

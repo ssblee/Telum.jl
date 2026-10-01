@@ -101,6 +101,7 @@ function printmeta(io::IO, q::TLArray)
 end
 printmeta(q::TLArray) = printmeta(stdout, q)
 
+# Special pretty-printing for 0-dimensional TLArray (scalar result of full contraction).
 """
     show(io::IO, ::MIME"text/plain", q::TLArray{T,0,N,N})
 
@@ -109,7 +110,6 @@ Pretty-print a scalar TLArray produced by full contraction.
 The scalar method prints the same header as higher-rank tensors and then appends
 the single scalar value instead of a sector table.
 """
-# Special pretty-printing for 0-dimensional TLArray (scalar result of full contraction).
 function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, 0, N, N}) where {T, N}
     _print_tlarray_header(io, qs)
     print(io, ": ", _fmt_scalar_str(qs[]))

@@ -147,7 +147,6 @@ representations (IROPs) for the physical site described by `opts`.
 Returns a named tuple whose fields correspond to the standard operators of the
 given space type (e.g. `IS`, `Z`, `F`, `S` for a spinful fermionic site).
 """
-
 function reduceto2d(symm::NTuple{N, Any}, 
     data_full::Vector{Tuple{NTuple{3, NTuple{N, Tuple{Vararg{Int}}}}, Array{Float64, M}}}) where {N, M}
 

@@ -1,3 +1,5 @@
+# `@lazy` is deliberately a syntactic, lexical opt-in.  Its only rewrites are
+# contractions; structural operations propagate laziness from their inputs.
 """
     _lazy_finalize(x)
 
@@ -8,8 +10,6 @@ Finalize the value produced by an `@lazy` expression.
 rejected because `@lazy` is intended for tensor expressions and scalar
 contraction results, not as a general-purpose expression transformer.
 """
-# `@lazy` is deliberately a syntactic, lexical opt-in.  Its only rewrites are
-# contractions; structural operations propagate laziness from their inputs.
 @inline _lazy_finalize(q::AbstractTLArray) = TLArray(q)
 @inline _lazy_finalize(x::Number) = x
 _lazy_finalize(x) = throw(ArgumentError(

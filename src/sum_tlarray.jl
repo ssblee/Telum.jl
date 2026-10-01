@@ -29,6 +29,8 @@ function _enum_leg_perms!(results, candidates, current, used, QD)
     end
 end
 
+# Find the unique permutation perm such that inds2[perm[i]] == inds1[i] and
+# spaces2[perm[i]] == spaces1[i] for all i.
 """
     _find_leg_permutation(inds1, spaces1, inds2, spaces2) -> NTuple
 
@@ -39,8 +41,6 @@ candidate tensor. A valid `perm` satisfies `inds2[perm[i]] == inds1[i]` and
 `spaces2[perm[i]] == spaces1[i]` for every visible leg. Missing or ambiguous
 matches are rejected.
 """
-# Find the unique permutation perm such that inds2[perm[i]] == inds1[i] and
-# spaces2[perm[i]] == spaces1[i] for all i.
 function _find_leg_permutation(inds1::NTuple{QD, TLIndex}, spaces1,
                                inds2::NTuple{QD, TLIndex}, spaces2) where {QD}
     candidates = Vector{Vector{Int}}(undef, QD)
