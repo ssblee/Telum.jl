@@ -1898,8 +1898,8 @@ sorted, unique tuple of logical legs; remaining legs form the right side.
 `left_tag`/`right_tag` label generated bond indices; `cutoff` removes small
 singular values; `Nkeep` caps retained global values; and `get_lists` requests
 kept/discarded bookkeeping. It materializes lazy input, assembles CGT classes,
-factorizes independent dense blocks, and returns the public SVD factors (plus
-lists when requested) without mutating `q`.
+factorizes independent dense blocks (or one dense matrix for unsymmetric input),
+and returns the public SVD factors without mutating `q`.
 """
 function svd_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
                  left_legs::NTuple{L, Int},
@@ -1912,6 +1912,8 @@ function svd_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
     @assert isnothing(Nkeep) || Nkeep >= 0 "Nkeep must be non-negative"
     @assert issorted(left_legs)
     @assert length(unique(left_legs)) == length(left_legs)
+    N == 0 && return _svd_unsymmetric(q, left_legs, left_tag, right_tag;
+                                      cutoff=cutoff, Nkeep=Nkeep, get_lists=get_lists)
     symmetries = product_symms(PS)
 
     R = QD - L
@@ -2086,6 +2088,49 @@ function svd_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
     S = _build_svd_cgtsvd_S(PS, symmetries, bond_splist, left_tag, right_tag,
                             sector_values, irrepdim_caches)
     Vd = TLArray(symmetries, Vd_qlabels, wmatdata_Vd, wmatinfo_Vd, RMTs_Vd, inds_Vd, spaces_Vd)
+    return SVDResult(U, S, Vd, kept_list, trunc_list)
+end
+
+function _svd_unsymmetric(q::AbstractTLArray{T, QD, 0},
+                          left_legs::NTuple{L, Int},
+                          left_tag::AbstractString,
+                          right_tag::AbstractString;
+                          cutoff::Float64,
+                          Nkeep::Union{Nothing, Int},
+                          get_lists::Bool) where {T, QD, L}
+    right_legs = _svd_right_legs(Val(QD), left_legs)
+    rmt, scale = sector_rmt_permuted(q, 1, _identity_rmt_perm(Val(QD)))
+    dense = Array(scale .* rmt)
+    perm = (left_legs..., right_legs...)
+    left_dims = Tuple(size(q, leg) for leg in left_legs)
+    right_dims = Tuple(size(q, leg) for leg in right_legs)
+    m = prod(left_dims; init=1)
+    n = prod(right_dims; init=1)
+    matrix = reshape(permutedims(dense, perm), m, n)
+    F = LinearAlgebra.svd(matrix; full=false)
+
+    threshold = cutoff * (isempty(F.S) ? 0.0 : maximum(F.S))
+    keep = findall(>(threshold), F.S)
+    if !isnothing(Nkeep)
+        resize!(keep, min(Nkeep, length(keep)))
+    end
+    singular_values = F.S[keep]
+    k = length(keep)
+
+    Udata = reshape(F.U[:, keep], (left_dims..., k))
+    Vddata = reshape(F.Vt[keep, :], (k, right_dims...))
+    Uinds = (ntuple(i -> q.inds[left_legs[i]], Val(L))..., TLIndex(left_tag, '-'))
+    Vdinds = (TLIndex(right_tag, '-'), ntuple(i -> q.inds[right_legs[i]], Val(QD - L))...)
+    U = TLArray(Udata, Uinds)
+    S = TLArray(Matrix(Diagonal(singular_values)),
+                (TLIndex(left_tag, '+'), TLIndex(right_tag, '+')))
+    Vd = TLArray(Vddata, Vdinds)
+
+    get_lists || return SVDResult(U, S, Vd, nothing, nothing)
+    Entry = Tuple{Float64, Int, Tuple{}, Int}
+    kept_list = Entry[(Float64(F.S[index]), 1, (), index) for index in keep]
+    truncated = setdiff(collect(eachindex(F.S)), keep)
+    trunc_list = Entry[(Float64(F.S[index]), 1, (), index) for index in truncated]
     return SVDResult(U, S, Vd, kept_list, trunc_list)
 end
 

@@ -73,6 +73,16 @@ formatted visible indices. Dual indices are colored when the terminal supports
 ANSI escapes.
 """
 function _print_tlarray_header(io::IO, qs::TLArray{T, QD, N}) where {T, QD, N}
+    if N == 0
+        leg_strs = map(qs.inds) do idx
+            raw = _format_qindex(idx)
+            idx.dual ? "\e[32m$(raw)\e[0m" : raw
+        end
+        size_str = isempty(size(qs)) ? "()" : join(size(qs), "x")
+        print(io, size_str, " TLArray, [", join(leg_strs, ", "), "]")
+        return
+    end
+
     symm_names = join((totxt(s) for s in symm(qs)), ", ")
     print(io, "$(QD)D TLArray, $N symmetries [$symm_names]")
     leg_strs = map(qs.inds) do idx
@@ -105,20 +115,25 @@ printmeta(q::TLArray) = printmeta(stdout, q)
 """
     show(io::IO, ::MIME"text/plain", q::TLArray{T,0,N,N})
 
-Pretty-print a scalar TLArray produced by full contraction.
+Pretty-print a scalar TLArray produced by full contraction. A no-symmetry
+scalar uses the compact no-symmetry summary and does not append a value.
 
-The scalar method prints the same header as higher-rank tensors and then appends
-the single scalar value instead of a sector table.
+For tensors with symmetries, the scalar method prints the same header as
+higher-rank tensors and then appends the single scalar value instead of a
+sector table.
 """
 function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, 0, N, N}) where {T, N}
     _print_tlarray_header(io, qs)
+    N == 0 && return nothing
     print(io, ": ", _fmt_scalar_str(qs[]))
 end
 
 """
     show(io::IO, ::MIME"text/plain", q::TLArray)
 
-Pretty-print sector metadata and small scalar payload summaries for a TLArray.
+Pretty-print a TLArray. Symmetry-aware tensors include sector metadata and
+small scalar payload summaries. A tensor without symmetry is shown only as its
+shape and logical indices.
 
 `q` is assumed concrete. The method displays active sectors and defined zero
 sectors (marked `zero`), while omitting slots that have no RMT payload. It
@@ -130,6 +145,7 @@ function Base.show(io::IO, ::MIME"text/plain", qs::TLArray{T, QD, N, RD}) where 
     # --- Header: symmetries and leg dirs/tags on one line ---
     # Format:  TLArray{...}  [Sym1, Sym2]  ["tag1"+, "tag2"-', ...]
     _print_tlarray_header(io, qs)
+    N == 0 && return nothing
     println(io)
 
     # --- Sectors: one per line with global label width for cross-sector alignment ---

@@ -109,7 +109,7 @@ function _sparse_leg_offsets(symmetries, splist)
     for (qlabel, rmt_dim) in splist
         irrep_dim = prod(isabelian(symmetries[n]) ? 1 :
                          dimension(LurCGT.getNsave_irep(symmetries[n], BigInt, qlabel[n]))
-                         for n in eachindex(symmetries))
+                         for n in eachindex(symmetries); init=1)
         sector_sizes[qlabel] = irrep_dim * rmt_dim
     end
     offsets = Dict{QT, UnitRange{Int}}()

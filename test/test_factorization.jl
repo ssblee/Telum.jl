@@ -86,6 +86,44 @@ end
     end
 end
 
+@testset "svd reconstruction for unsymmetric input" begin
+    q = getLocalSpace(SpinOptions(nothing, 1))
+    for (label, tensor, left_legs) in (
+        ("identity", q.I, (1,)),
+        ("spin-z", q.Sz, (1,)),
+        ("spin-lowering", q.Sm, (1,)),
+    )
+        @testset "$label" begin
+            diff = test_svdQS(tensor, left_legs; cutoff=0.0, verbose=false)
+            @test diff < 1e-10
+            _test_svd_singular_values_match_dense(tensor, left_legs)
+
+            no_lists = svd(tensor, left_legs; cutoff=0.0)
+            @test no_lists.kept_list === nothing
+            @test no_lists.trunc_list === nothing
+
+            metadata = svd(tensor, left_legs; cutoff=0.0, get_lists=true)
+            @test metadata.kept_list !== nothing
+            @test metadata.trunc_list !== nothing
+            @test length(metadata.kept_list) + length(metadata.trunc_list) ==
+                  min(size(tensor, 1), size(tensor, 2))
+        end
+    end
+
+    q4 = TLArray(reshape(collect(1.0:36.0), 2, 3, 2, 3);
+                 itags=("u1", "u2", "u3", "u4"))
+    @testset "rank-four noncontiguous bipartition" begin
+        diff = test_svdQS(q4, (1, 3); cutoff=0.0, verbose=false)
+        @test diff < 1e-10
+        _test_svd_singular_values_match_dense(q4, (1, 3))
+
+        truncated = svd(q4, (1, 3); cutoff=0.0, Nkeep=2, get_lists=true)
+        @test length(truncated.kept_list) == 2
+        @test length(truncated.trunc_list) == 2
+        @test size(truncated.S, 1) == 2
+    end
+end
+
 @testset "identity svd singular values are one" begin
     _test_identity_svd_values_are_one(FermionSOptions(1, :U1, :SU2, nothing))
     _test_identity_svd_values_are_one(FermionSOptions(3, :U1, :SU2, :SU3))
@@ -148,6 +186,10 @@ end
     q0 = getLocalSpace(SpinOptions(nothing, 1))
     _test_qr_reconstructs(q0.Sz, (1,))
     _test_qr_reconstructs(q0.Sm, (1,))
+
+    q4 = TLArray(reshape(collect(1.0:36.0), 2, 3, 2, 3);
+                 itags=("qr_u1", "qr_u2", "qr_u3", "qr_u4"))
+    _test_qr_reconstructs(q4, (1, 3); tol=1e-10)
 
     q_u1 = getLocalSpace(SpinOptions(:U1, 1))
     _test_qr_reconstructs(q_u1.Sz, (1,))

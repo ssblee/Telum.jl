@@ -1244,6 +1244,7 @@ function qr_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
     materialize(q)
     @assert issorted(left_legs)
     @assert length(unique(left_legs)) == length(left_legs)
+    N == 0 && return _qr_unsymmetric(q, left_legs, bond_tag)
 
     R = QD - L
     right_legs::NTuple{R, Int} = _qr_right_legs(Val(QD), left_legs)
@@ -1404,6 +1405,31 @@ function qr_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
     Q = TLArray(symmetries, Q_qlabels, wmatdata_Q, wmatinfo_Q, RMTs_Q, inds_Q, spaces_Q)
     Rfac = TLArray(symmetries, R_qlabels, wmatdata_R, wmatinfo_R, RMTs_R, inds_R, spaces_R)
     return QRResult(Q, Rfac)
+end
+
+function _qr_unsymmetric(q::AbstractTLArray{T, QD, 0},
+                         left_legs::NTuple{L, Int},
+                         bond_tag::AbstractString) where {T, QD, L}
+    right_legs = _qr_right_legs(Val(QD), left_legs)
+    rmt, scale = sector_rmt_permuted(q, 1, _identity_rmt_perm(Val(QD)))
+    dense = Array(scale .* rmt)
+    perm = (left_legs..., right_legs...)
+    left_dims = Tuple(size(q, leg) for leg in left_legs)
+    right_dims = Tuple(size(q, leg) for leg in right_legs)
+    m = prod(left_dims; init=1)
+    n = prod(right_dims; init=1)
+    matrix = reshape(permutedims(dense, perm), m, n)
+
+    k = min(m, n)
+    factorization = LinearAlgebra.qr(matrix)
+    Qmatrix = Matrix(factorization.Q)[:, 1:k]
+    Rmatrix = factorization.R[1:k, :]
+    Qdata = reshape(Qmatrix, (left_dims..., k))
+    Rdata = reshape(Rmatrix, (k, right_dims...))
+
+    Qinds = (ntuple(i -> q.inds[left_legs[i]], Val(L))..., TLIndex(bond_tag, '-'))
+    Rinds = (TLIndex(bond_tag, '+'), ntuple(i -> q.inds[right_legs[i]], Val(QD - L))...)
+    return QRResult(TLArray(Qdata, Qinds), TLArray(Rdata, Rinds))
 end
 
 function LinearAlgebra.qr(q::AbstractTLArray{T, QD, N, RD},

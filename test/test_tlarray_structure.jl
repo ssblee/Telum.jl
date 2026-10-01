@@ -95,6 +95,29 @@
     end
 end
 
+@testset "TLArray array storage copy option" begin
+    data = reshape(collect(1.0:6.0), 2, 3)
+    copied = TLArray(data; itags=("copy_left", "copy_right"), copy=true)
+    shared_default = TLArray(data; itags=("default_left", "default_right"))
+    shared = TLArray(data; itags=("share_left", "share_right"), copy=false)
+
+    @test copied.RMTs[1] !== data
+    @test shared_default.RMTs[1] === data
+    @test shared.RMTs[1] === data
+
+    data[1, 1] = 99.0
+    @test shared_default.RMTs[1][1, 1] == 99.0
+    @test shared.RMTs[1][1, 1] == 99.0
+    @test copied.RMTs[1][1, 1] == 1.0
+
+    shared.RMTs[1][2, 2] = -7.0
+    @test data[2, 2] == -7.0
+
+    view = @view data[:, :]
+    @test_throws ArgumentError TLArray(view; copy=false)
+    @test TLArray(view).RMTs[1] !== data
+end
+
 @testset "permutation and conjugation defer non-W-matrix data" begin
     q = TLArray(getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing)).F,
                 ("left", "right", "op"))
