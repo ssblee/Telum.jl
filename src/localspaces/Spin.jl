@@ -1,3 +1,4 @@
+# s2: spin * 2
 """
     get_SU2_symmops(s2::Int)
 
@@ -9,7 +10,6 @@ converts it to floating point, fixes the overall sign convention, and returns
 `(sp, sz, sm, I, lowering)`: raising, z-component, lowering, identity, and the
 SU(2)-normalized lowering operator used as the irrep lowering block.
 """
-# s2: spin * 2
 function get_SU2_symmops(s2::Int)
     S = s2 / 2
     CGT = LurCGT.getNsave_cg3(SU{2}, BigInt, ((2,), (s2,)), [(s2,)])[(s2,)]

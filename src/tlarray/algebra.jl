@@ -15,6 +15,7 @@ Base.:*(fac::Number, qs::AbstractTLArray) = qs * fac
 Base.:/(qs::AbstractTLArray, fac::Number) = qs * (1 / fac)
 Base.:-(qs::AbstractTLArray) = qs * -1
 
+# Return a deep copy of a TLArray (CGT metadata, RMTs, indices, spaces all copied).
 """
     copy(q::TLArray) -> TLArray
 
@@ -24,7 +25,6 @@ All owned metadata and payload storage are deep-copied while the deferred
 logical `conj`, `scale`, and `perm` state is retained. Lazy evaluation objects
 intentionally have no `copy` method.
 """
-# Return a deep copy of a TLArray (CGT metadata, RMTs, indices, spaces all copied).
 Base.copy(q::TLArray) = deepcopy(q)
 
 """
@@ -54,6 +54,7 @@ function _identity_on_tlarray(q::AbstractTLArray{T, QD, N, RD}) where {T, QD, N,
     return TLArray(id_q, (qinds[in_leg], qinds[out_leg]))
 end
 
+# ─── TLArray norm ─────────────────────────────────────────────────────────────
 """
     norm(q::TLArray) -> Float64
 
@@ -65,7 +66,6 @@ w-matrix, and therefore cross-terms vanish. The norm is
 `sqrt(sum(abs2(scale) * sum(abs2, rmt)))` over nonzero sectors, without
 constructing the full dense tensor.
 """
-# ─── TLArray norm ─────────────────────────────────────────────────────────────
 function LinearAlgebra.norm(q::TLArray{T, QD, N}) where {T, QD, N}
     s = zero(Float64)
     for sector_index in sector_slots(q)

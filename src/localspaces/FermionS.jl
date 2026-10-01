@@ -98,6 +98,10 @@ end
 
 const sym_dict = Dict(:U1 => U1, :SU2 => SU{2})
 
+
+# For now, we only implement U1 charge relative to half-filling
+# Charge symmetry is not nothing here
+# TODO: Z_N charge symmetry, relative to other fillings, etc.
 """
     charge_symmops(opts::FermionSOptions, basic_ops)
 
@@ -109,10 +113,6 @@ half-filling.  `:U1` charge symmetry has no lowering operators.  `:SU2` charge
 symmetry uses the channel-summed pair-annihilation operator as the lowering
 operator.
 """
-
-# For now, we only implement U1 charge relative to half-filling
-# Charge symmetry is not nothing here
-# TODO: Z_N charge symmetry, relative to other fillings, etc.
 function charge_symmops(opts::FermionSOptions, basic_ops)
     N = opts.nchannels
     weights, symms, lops = [], [], []
@@ -135,6 +135,8 @@ function charge_symmops(opts::FermionSOptions, basic_ops)
     return weights, symms, lops
 end
 
+# This covers U1 and SU(2) spin symmetries since the weights are 
+# just the total spin-z component
 """
     spin_symmops(opts::FermionSOptions, basic_ops)
 
@@ -145,9 +147,6 @@ the total spin-z values on those channels.  `:U1` spin symmetry has no lowering
 operators.  `:SU2` spin symmetry uses the channel-summed spin-lowering
 operator.
 """
-
-# This covers U1 and SU(2) spin symmetries since the weights are 
-# just the total spin-z component
 function spin_symmops(opts::FermionSOptions, basic_ops)
     N = opts.nchannels
     weights, symms, lops = [], [], []
@@ -170,6 +169,8 @@ function spin_symmops(opts::FermionSOptions, basic_ops)
     return weights, symms, lops
 end
 
+# For now, we only implement SU(N) channel symmetry
+# TODO: generalize to another channel symmetry
 """
     chan_symmops(opts::FermionSOptions, basic_ops)
 
@@ -179,9 +180,6 @@ The current implementation supports symbols of the form `:SU2`, `:SU3`, ...
 where the SU(N) rank must match the number of listed channels.  It returns the
 Dynkin-basis channel weights and adjacent channel-lowering operators.
 """
-
-# For now, we only implement SU(N) channel symmetry
-# TODO: generalize to another channel symmetry
 function chan_symmops(opts::FermionSOptions, basic_ops)
     N = opts.nchannels; FF = basic_ops.FF
     weights, symms, lops = [], [], []

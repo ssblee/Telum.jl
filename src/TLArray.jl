@@ -1833,6 +1833,7 @@ function _scalar_wmat_product(q::AbstractTLArray{T, QD, N, RD, QT, PS, M}, secto
     return factor
 end
 
+# For 0-dimensional TLArray (scalar), q[] returns the unique RMT element.
 """
     getindex(q::TLArray{T,0,N,N}) -> Number
 
@@ -1842,7 +1843,6 @@ The tensor must have zero or one active sector, and the active RMT must contain
 one element. The returned value combines the RMT element, stored scale, and
 scalar w-matrix factors. An empty scalar tensor returns `zero(T)`.
 """
-# For 0-dimensional TLArray (scalar), q[] returns the unique RMT element.
 function Base.getindex(q::TLArray{T, 0, N, N}) where {T, N}
     @assert nsectors(q) <= 1 "0D TLArray must have zero or one sector"
     if nsectors(q) == 1
@@ -1907,6 +1907,7 @@ function findleg(q::AbstractTLArray{T, QD}, pred::Function) where {T, QD}
     return nothing
 end
 
+# Internal: check if a TLIndex matches all specified criteria
 """
     _matches_criteria(idx::TLIndex; dir=nothing, itag=nothing, plev=nothing, lock=nothing) -> Bool
 
@@ -1916,7 +1917,6 @@ Return whether one index satisfies every supplied leg-selection criterion.
 same tag-query semantics as `findlegs`: comma-separated tags are matched as a
 set and tuple/vector selectors are treated as alternatives.
 """
-# Internal: check if a TLIndex matches all specified criteria
 function _matches_criteria(idx::TLIndex; dir=nothing, itag=nothing, plev=nothing, lock=nothing)
     (!isnothing(dir)  && idx.dir != dir)                                 && return false
     (!isnothing(itag) && !_matches_itag_selector(idx.itags, itag))       && return false
