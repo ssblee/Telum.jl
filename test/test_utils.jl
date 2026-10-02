@@ -103,7 +103,7 @@ function get_offset(symm::Tuple, splist::Vector)
     for (qlabels, RMTd) in splist
         irep_dim = prod(
             isabelian(symm[n]) ? 1 :
-            dimension(getNsave_irep(symm[n], BigInt, qlabels[n]))
+            dimension(LurCGT.getNsave_irep(symm[n], BigInt, qlabels[n]))
             for n in 1:N)
         sz = irep_dim * RMTd
         sector_size[qlabels] = sz
@@ -129,7 +129,7 @@ function _test_to_sparse_array(q::TLArray{T, QD, N, RD},
     symmetries = symm(q)
     # ── Step 1: offset map ──────────────────────────────────────────────────
     # Use spaces field directly for each leg's offset computation.
-    leg_info = [get_offset(symmetries, q.spaces[l]) for l in 1:QD]
+    leg_info = [get_offset(symmetries, Telum.spaces(q)[l]) for l in 1:QD]
     leg_offsets = [li[1] for li in leg_info]
     leg_total = [li[2] for li in leg_info]
 
@@ -396,7 +396,7 @@ function test_sum_sparse_equivalence_mixed_rmt_eltypes()
     @test Array(to_sparse_array(result_multi_sector, ComplexF64)) ≈ reference_multi_sector
     @test eltype(result_multi_sector) == ComplexF64
     @test all(rmt -> rmt isa Array{ComplexF64, 3}, result_multi_sector.RMTs)
-    @test Set(result_multi_sector.qlabels) == Set([(q0, q0), (q1, q1), (q2, q2)])
+    @test Set(Telum.logical_qlabels(result_multi_sector)) == Set([(q0, q0), (q1, q1), (q2, q2)])
 end
 
 function test_contract_tlarrayview_inputs()
@@ -447,10 +447,10 @@ function test_FAcont(option::LocalSpaceOptions)
 end
 
 function _test_tlarrays_same_sector_storage(a::TLArray, b::TLArray)
-    @test a.qlabels == b.qlabels
+    @test Telum.stored_qlabels(a) == Telum.stored_qlabels(b)
     @test a.iszero == b.iszero
     @test a.isdefined == b.isdefined
-    @test a.spaces == b.spaces
+    @test Telum.spaces(a) == Telum.spaces(b)
     for sector_index in intersect(Telum.sector_slots(a), Telum.sector_slots(b))
         (a.iszero[sector_index] || b.iszero[sector_index]) && continue
         @test Array(_test_sector_rmt(a, sector_index)) ≈ Array(_test_sector_rmt(b, sector_index))
@@ -462,7 +462,7 @@ end
 
 
 function _test_tlarrays_same_sector_payloads(a::TLArray, b::TLArray)
-    @test a.qlabels == b.qlabels
+    @test Telum.stored_qlabels(a) == Telum.stored_qlabels(b)
     @test a.iszero == b.iszero
     @test a.isdefined == b.isdefined
     for sector_index in intersect(Telum.sector_slots(a), Telum.sector_slots(b))
@@ -484,18 +484,18 @@ function test_getIdentity_direct_contract(option::LocalSpaceOptions)
     a_pairs = getIdentity((qi, 1); itag="fused")
     a = getIdentity(qi, 1; itag="fused")
 
-    @test a.inds == a_pairs.inds
-    @test a.spaces == a_pairs.spaces
+    @test Telum.inds(a) == Telum.inds(a_pairs)
+    @test Telum.spaces(a) == Telum.spaces(a_pairs)
     _test_tlarrays_same_sector_storage(a, a_pairs)
-    @test a.inds[1] == TLIndex(qi.inds[1].itags, '-', qi.inds[1].plev, qi.inds[1].lock, qi.inds[1].dual)
-    @test a.spaces[1] == qi.spaces[1]
-    @test a.inds[2] == TLIndex("fused", '-')
+    @test Telum.inds(a)[1] == TLIndex(Telum.inds(qi)[1].itags, '-', Telum.inds(qi)[1].plev, Telum.inds(qi)[1].lock, Telum.inds(qi)[1].dual)
+    @test Telum.spaces(a)[1] == Telum.spaces(qi)[1]
+    @test Telum.inds(a)[2] == TLIndex("fused", '-')
 
     ct = qi * a
-    @test length(ct.inds) == 2
-    @test ct.inds[1] == qi.inds[2]
-    @test ct.inds[2] == TLIndex("fused", '-')
-    @test ct.spaces[1] == qi.spaces[2]
+    @test length(Telum.inds(ct)) == 2
+    @test Telum.inds(ct)[1] == Telum.inds(qi)[2]
+    @test Telum.inds(ct)[2] == TLIndex("fused", '-')
+    @test Telum.spaces(ct)[1] == Telum.spaces(qi)[2]
     @test !isempty(_test_defined_sector_indices(convert(TLArray, ct)))
 end
 
@@ -532,8 +532,8 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     q = q0.F
 
     function test_same_tlarray_structure(q1::AbstractTLArray, q2::AbstractTLArray)
-        @test q1.inds == q2.inds
-        @test q1.spaces == q2.spaces
+        @test Telum.inds(q1) == Telum.inds(q2)
+        @test Telum.spaces(q1) == Telum.spaces(q2)
         _test_tlarrays_same_sector_storage(q1, q2)
     end
 
@@ -548,13 +548,13 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     flipped_kw = legflip(q; itag="site2")
     test_same_tlarray_structure(flipped_kw, flipped_explicit)
 
-    @test flipped_explicit.inds[1] == q.inds[1]
-    @test flipped_explicit.inds[2] == change_dir(Telum.change_dual(q.inds[2]))
-    @test flipped_explicit.inds[3] == q.inds[3]
+    @test Telum.inds(flipped_explicit)[1] == Telum.inds(q)[1]
+    @test Telum.inds(flipped_explicit)[2] == change_dir(Telum.change_dual(Telum.inds(q)[2]))
+    @test Telum.inds(flipped_explicit)[3] == Telum.inds(q)[3]
 
     roundtrip = legflip(flipped_explicit, 2)
-    @test roundtrip.inds == q.inds
-    @test roundtrip.spaces == q.spaces
+    @test Telum.inds(roundtrip) == Telum.inds(q)
+    @test Telum.spaces(roundtrip) == Telum.spaces(q)
 
     flipped_multi_tuple = legflip(q, (2, 3))
     flipped_multi_vector = legflip(q, [2, 3])
@@ -563,13 +563,13 @@ function test_get1jtensor_and_legflip_keywords(option::LocalSpaceOptions)
     test_same_tlarray_structure(flipped_multi_vector, flipped_multi_tuple)
     test_same_tlarray_structure(flipped_multi_kw, flipped_multi_tuple)
 
-    @test flipped_multi_tuple.inds[1] == q.inds[1]
-    @test flipped_multi_tuple.inds[2] == change_dir(Telum.change_dual(q.inds[2]))
-    @test flipped_multi_tuple.inds[3] == change_dir(Telum.change_dual(q.inds[3]))
+    @test Telum.inds(flipped_multi_tuple)[1] == Telum.inds(q)[1]
+    @test Telum.inds(flipped_multi_tuple)[2] == change_dir(Telum.change_dual(Telum.inds(q)[2]))
+    @test Telum.inds(flipped_multi_tuple)[3] == change_dir(Telum.change_dual(Telum.inds(q)[3]))
 
     roundtrip_multi = legflip(flipped_multi_tuple, (2, 3))
-    @test roundtrip_multi.inds == q.inds
-    @test roundtrip_multi.spaces == q.spaces
+    @test Telum.inds(roundtrip_multi) == Telum.inds(q)
+    @test Telum.spaces(roundtrip_multi) == Telum.spaces(q)
 
     @test_throws ArgumentError legflip(q, Int[])
     @test_throws ArgumentError legflip(q, (2, 2))
@@ -618,17 +618,17 @@ function test_abelian_legflip_views()
         flipped = legflip(source, leg)
         if isempty(symm(source))
             expected_inds = ntuple(l -> l == leg ?
-                change_dir(Telum.change_dual(source.inds[l])) : source.inds[l],
+                change_dir(Telum.change_dual(Telum.inds(source)[l])) : Telum.inds(source)[l],
                 Val(ndims(source)))
-            @test flipped.inds == expected_inds
-            @test flipped.spaces == source.spaces
-            @test flipped.qlabels == source.qlabels
+            @test Telum.inds(flipped) == expected_inds
+            @test Telum.spaces(flipped) == Telum.spaces(source)
+            @test Telum.logical_qlabels(flipped) == Telum.logical_qlabels(source)
             @test _test_legflip_values(flipped) ≈ source_before
         else
             reference = _legflip_general_reference(source, leg)
-            @test flipped.inds == reference.inds
-            @test flipped.spaces == reference.spaces
-            @test sort(flipped.qlabels) == sort(reference.qlabels)
+            @test Telum.inds(flipped) == Telum.inds(reference)
+            @test Telum.spaces(flipped) == Telum.spaces(reference)
+            @test sort(Telum.logical_qlabels(flipped)) == sort(Telum.logical_qlabels(reference))
             @test _test_legflip_values(flipped) ≈ _test_legflip_values(reference)
         end
         @test _test_legflip_values(source) ≈ source_before
@@ -684,8 +684,8 @@ function test_conj(option::LocalSpaceOptions)
         ("ct", ct),
     ]
 
-    zero_qlabels = copy(q.F.qlabels)
-    push!(zero_qlabels, first(q.F.qlabels))
+    zero_qlabels = copy(Telum.stored_qlabels(q.F))
+    push!(zero_qlabels, first(Telum.stored_qlabels(q.F)))
     zero_wmatdata = copy(q.F.wmatdata)
     zero_wmatinfo = copy(q.F.wmatinfo)
     push!(zero_wmatinfo, Telum._empty_wmat_info(Val(length(q.F.wmatinfo[1]))))
@@ -695,7 +695,7 @@ function test_conj(option::LocalSpaceOptions)
         zero_RMTs[sector_index] = q.F.RMTs[sector_index]
     end
     q_with_zero_sector = TLArray(symm(q.F), zero_qlabels, zero_wmatdata, zero_wmatinfo, zero_RMTs,
-                                 q.F.inds, q.F.spaces)
+                                 Telum.inds(q.F), Telum.spaces(q.F))
     qzc = conj(q_with_zero_sector)
     @test qzc.iszero[end]
     @test !isassigned(qzc.RMTs, length(qzc.RMTs))
@@ -1024,9 +1024,9 @@ function test_lock_reduce(option::LocalSpaceOptions)
          TLIndex("free", '+', 0, 0)))
 
     C1 = A1 * B1
-    free_pos1 = findfirst(idx -> idx.itags == "free" && idx.dir == '-', C1.inds)
-    @test C1.inds[free_pos1].lock == 0
-    println("test_lock_reduce (match):    \"free\" lock=$(C1.inds[free_pos1].lock) (expected 0)")
+    free_pos1 = findfirst(idx -> idx.itags == "free" && idx.dir == '-', Telum.inds(C1))
+    @test Telum.inds(C1)[free_pos1].lock == 0
+    println("test_lock_reduce (match):    \"free\" lock=$(Telum.inds(C1)[free_pos1].lock) (expected 0)")
 
     # ── Scenario 2: no matching leg → lock unchanged ─────────────────────────
     # A2: ("ct" '+' lock=0,  "unique" '-' lock=1)   — from q.I
@@ -1039,9 +1039,9 @@ function test_lock_reduce(option::LocalSpaceOptions)
          TLIndex("other", '+', 0, 0)))
 
     C2 = A2 * B2
-    unique_pos = findfirst(idx -> idx.itags == "unique", C2.inds)
-    @test C2.inds[unique_pos].lock == 1
-    println("test_lock_reduce (no match): \"unique\" lock=$(C2.inds[unique_pos].lock) (expected 1)")
+    unique_pos = findfirst(idx -> idx.itags == "unique", Telum.inds(C2))
+    @test Telum.inds(C2)[unique_pos].lock == 1
+    println("test_lock_reduce (no match): \"unique\" lock=$(Telum.inds(C2)[unique_pos].lock) (expected 1)")
 
     # ── Scenario 3: lock already 0 with match → stays 0 ─────────────────────
     # A3's "free" lock=0 and B1 has a matching "free" leg, but 0 cannot go lower.
@@ -1050,9 +1050,9 @@ function test_lock_reduce(option::LocalSpaceOptions)
         (TLIndex("ct",   '+', 0, 0),
          TLIndex("free", '-', 0, 0)))
     C3 = contract(A3, (1,), B1, (1,))
-    free_pos3 = findfirst(idx -> idx.itags == "free" && idx.dir == '-', C3.inds)
-    @test C3.inds[free_pos3].lock == 0
-    println("test_lock_reduce (lock=0):   \"free\" lock=$(C3.inds[free_pos3].lock) (expected 0)")
+    free_pos3 = findfirst(idx -> idx.itags == "free" && idx.dir == '-', Telum.inds(C3))
+    @test Telum.inds(C3)[free_pos3].lock == 0
+    println("test_lock_reduce (lock=0):   \"free\" lock=$(Telum.inds(C3)[free_pos3].lock) (expected 0)")
 end
 
 # ─── test_contract_requires_matching_spaces_in_star ─────────────────────────
@@ -1068,10 +1068,10 @@ function test_contract_requires_matching_spaces_in_star(option::LocalSpaceOption
         (TLIndex("ct", '-', 0, 0),
          TLIndex("",   '+', 0, 0)))
 
-    first_sector, first_dim = first(B.spaces[1])
-    bad_leg1 = vcat([(first_sector, first_dim + 1)], B.spaces[1][2:end])
-    B_bad = Telum.TLArray(symm(B), copy(B.qlabels), copy(B.wmatdata), copy(B.wmatinfo),
-                                 deepcopy(B.RMTs), B.inds, (bad_leg1, B.spaces[2]))
+    first_sector, first_dim = first(Telum.spaces(B)[1])
+    bad_leg1 = vcat([(first_sector, first_dim + 1)], Telum.spaces(B)[1][2:end])
+    B_bad = Telum.TLArray(symm(B), copy(Telum.stored_qlabels(B)), copy(B.wmatdata), copy(B.wmatinfo),
+                                 deepcopy(B.RMTs), Telum.inds(B), (bad_leg1, Telum.spaces(B)[2]))
 
     @test_throws AssertionError A * B_bad
 end

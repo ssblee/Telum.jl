@@ -168,7 +168,7 @@ function _qr_symmetry_stored_leg_order(
     sizehint!(incoming, QD)
     sizehint!(outgoing, QD)
     for leg in 1:QD
-        if q.inds[leg].dir == '+'
+        if inds(q)[leg].dir == '+'
             push!(incoming, leg)
         else
             push!(outgoing, leg)
@@ -526,7 +526,7 @@ function _count_qr_symmetry_splits(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, R
     isabelian(S) && return 1
     physical_key = _qr_physical_qlabel_key(QT, q, sector_index, Val(n))
     upsp, dnsp, left_legs_canon =
-        _qr_physical_key_split_args(S, physical_key, q.inds, left_legs)
+        _qr_physical_key_split_args(S, physical_key, inds(q), left_legs)
     cache = _qr_cgtqr_cache_for(cgtqr_caches, S, PS, Val(n))
     cgtqr = _qr_get_cgtqr(S, physical_key, upsp, dnsp, left_legs_canon, cache)
     return _qr_cgtqr_split_count(cgtqr)
@@ -849,7 +849,7 @@ function _select_qr_left_legs(q::AbstractTLArray; dir=nothing, itag=nothing, ple
     end
 
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
-    rank = length(q.inds)
+    rank = length(inds(q))
     1 <= length(legs) <= rank - 1 || throw(ArgumentError("keyword-based qr selected legs $legs, but the number of selected legs must be between 1 and $(rank - 1)"))
     return sort(legs)
 end
@@ -1387,11 +1387,11 @@ function qr_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
         (sector, sector_counts[sector]) for sector in sector_order
     ]
 
-    inds_Q = (ntuple(i -> q.inds[left_legs[i]], Val(L))..., TLIndex(bond_tag, '-'))
-    inds_R = (TLIndex(bond_tag, '+'), ntuple(i -> q.inds[right_legs[i]], Val(R))...)
+    inds_Q = (ntuple(i -> inds(q)[left_legs[i]], Val(L))..., TLIndex(bond_tag, '-'))
+    inds_R = (TLIndex(bond_tag, '+'), ntuple(i -> inds(q)[right_legs[i]], Val(R))...)
 
-    spaces_Q = (ntuple(i -> q.spaces[left_legs[i]], Val(L))..., bond_splist)
-    spaces_R = (bond_splist, ntuple(i -> q.spaces[right_legs[i]], Val(R))...)
+    spaces_Q = (ntuple(i -> spaces(q)[left_legs[i]], Val(L))..., bond_splist)
+    spaces_R = (bond_splist, ntuple(i -> spaces(q)[right_legs[i]], Val(R))...)
 
     Q_qlabels = Matrix{QT}(undef, L + 1, length(qlabels_Q))
     for sector_index in eachindex(qlabels_Q), leg in 1:(L + 1)
@@ -1427,8 +1427,8 @@ function _qr_unsymmetric(q::AbstractTLArray{T, QD, 0},
     Qdata = reshape(Qmatrix, (left_dims..., k))
     Rdata = reshape(Rmatrix, (k, right_dims...))
 
-    Qinds = (ntuple(i -> q.inds[left_legs[i]], Val(L))..., TLIndex(bond_tag, '-'))
-    Rinds = (TLIndex(bond_tag, '+'), ntuple(i -> q.inds[right_legs[i]], Val(QD - L))...)
+    Qinds = (ntuple(i -> inds(q)[left_legs[i]], Val(L))..., TLIndex(bond_tag, '-'))
+    Rinds = (TLIndex(bond_tag, '+'), ntuple(i -> inds(q)[right_legs[i]], Val(QD - L))...)
     return QRResult(TLArray(Qdata, Qinds), TLArray(Rdata, Rinds))
 end
 

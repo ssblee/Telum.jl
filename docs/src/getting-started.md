@@ -171,9 +171,9 @@ function print_index(i::TLIndex)
 end
 
 println(ss)
-print_index(ss.inds[1])
-print_index(ss.inds[2])
-print_index(ss.inds[3])
+print_index(Telum.inds(ss)[1])
+print_index(Telum.inds(ss)[2])
+print_index(Telum.inds(ss)[3])
 ```
 
 

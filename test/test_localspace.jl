@@ -57,8 +57,8 @@ end
     spin = getLocalSpace(SpinOptions(nothing, 1))
     @test symm(spin.I) == ()
     @test typeof(spin.I).parameters[6] === ProductSymm{Tuple{}}
-    @test spin.I.qlabels == [((), ())]
-    @test spin.I.spaces == ([(() , 2)], [(() , 2)])
+    @test Telum.stored_qlabels(spin.I) == [((), ())]
+    @test Telum.spaces(spin.I) == ([(() , 2)], [(() , 2)])
     @test _test_sector_rmt(spin.I, 1) ≈ Matrix{Float64}(I, 2, 2)
     @test _test_sector_rmt(spin.Sz, 1) ≈ [0.5 0.0; 0.0 -0.5]
     @test _test_sector_rmt(spin.Sp, 1) ≈ (-1 / sqrt(2)) * [0.0 1.0; 0.0 0.0]
@@ -67,8 +67,8 @@ end
     fermion = getLocalSpace(FermionOptions(1, nothing, nothing))
     @test symm(fermion.I) == ()
     @test typeof(fermion.I).parameters[6] === ProductSymm{Tuple{}}
-    @test fermion.I.qlabels == [((), ())]
-    @test fermion.I.spaces == ([(() , 2)], [(() , 2)])
+    @test Telum.stored_qlabels(fermion.I) == [((), ())]
+    @test Telum.spaces(fermion.I) == ([(() , 2)], [(() , 2)])
     @test _test_sector_rmt(fermion.I, 1) ≈ Matrix{Float64}(I, 2, 2)
     @test size(_test_sector_rmt(fermion.F, 1)) == (2, 2)
     @test size(_test_sector_rmt(fermion.Z, 1)) == (2, 2)
@@ -76,8 +76,8 @@ end
     spinful = getLocalSpace(FermionSOptions(1, nothing, nothing, nothing))
     @test symm(spinful.I) == ()
     @test typeof(spinful.I).parameters[6] === ProductSymm{Tuple{}}
-    @test spinful.I.qlabels == [((), ())]
-    @test spinful.I.spaces == ([(() , 4)], [(() , 4)])
+    @test Telum.stored_qlabels(spinful.I) == [((), ())]
+    @test Telum.spaces(spinful.I) == ([(() , 4)], [(() , 4)])
     @test _test_sector_rmt(spinful.I, 1) ≈ Matrix{Float64}(I, 4, 4)
     @test size(_test_sector_rmt(spinful.Fu, 1)) == (4, 4)
     @test size(_test_sector_rmt(spinful.Fd, 1)) == (4, 4)

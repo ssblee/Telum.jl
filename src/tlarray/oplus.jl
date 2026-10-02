@@ -192,7 +192,7 @@ function _accumulate_oplus_starts(qs, dims_tuple, QD::Int)
         starts[qi] = [Dict{Any, Int}() for _ in 1:QD]
         for leg in 1:QD
             leg ∈ dims_set || continue
-            for (qlabels, dim) in q.spaces[leg]
+            for (qlabels, dim) in spaces(q)[leg]
                 start = get(running[leg], qlabels, 1)
                 starts[qi][leg][qlabels] = start
                 running[leg][qlabels] = start + dim
@@ -301,9 +301,9 @@ function _validate_oplus_common(qs)
         q isa AbstractTLArray || throw(ArgumentError("oplus entry $i is not a TLArray"))
         symm(q) == symm(ref) || throw(ArgumentError(
             "TLArray entry $i has a different symmetry tuple"))
-        length(q.inds) == length(ref.inds) || throw(ArgumentError(
-            "TLArray entry $i has rank $(length(q.inds)), expected $(length(ref.inds))"))
-        _inds_match_for_oplus(q.inds, ref.inds) || throw(ArgumentError(
+        length(inds(q)) == length(inds(ref)) || throw(ArgumentError(
+            "TLArray entry $i has rank $(length(inds(q))), expected $(length(inds(ref)))"))
+        _inds_match_for_oplus(inds(q), inds(ref)) || throw(ArgumentError(
             "TLArray entry $i has different indices " *
             "(same itag, direction, prime level, and lock required; dual ignored)"))
     end
@@ -340,16 +340,16 @@ space lists must match exactly and are copied from the reference tensor.
 """
 function _build_vector_oplus_spaces(qs, dims_tuple)
     ref = _validate_oplus_common(qs)
-    QD = length(ref.inds)
+    QD = length(inds(ref))
     dims_set = Set(dims_tuple)
 
     return ntuple(leg -> begin
         if leg ∈ dims_set
-            _sum_splists_many([q.spaces[leg] for q in qs])
+            _sum_splists_many([spaces(q)[leg] for q in qs])
         else
-            target = ref.spaces[leg]
+            target = spaces(ref)[leg]
             for i in 2:length(qs)
-                qs[i].spaces[leg] == target || throw(ArgumentError(
+                spaces(qs[i])[leg] == target || throw(ArgumentError(
                     "space lists must match on non-oplus leg $leg"))
             end
             copy(target)
@@ -369,15 +369,15 @@ spaces and then added. Element type is promoted across all inputs.
 function _materialize_vector_oplus(qs, dims_tuple)
     ref = _validate_oplus_common(qs)
     result_spaces = _build_vector_oplus_spaces(qs, dims_tuple)
-    QD = length(ref.inds)
+    QD = length(inds(ref))
     result_dim_maps = ntuple(leg -> _splist_dim_map(result_spaces[leg]), QD)
     start_maps = _accumulate_oplus_starts(qs, dims_tuple, QD)
     T = promote_type((_tlarray_eltype(q) for q in qs)...)
 
-    acc = _zero_tlarray_with_spaces(symm(ref), ref.inds, result_spaces; T=T)
+    acc = _zero_tlarray_with_spaces(symm(ref), inds(ref), result_spaces; T=T)
     for (q, qstarts) in zip(qs, start_maps)
         padded = _oplus_pad_tlarray(q, result_spaces, dims_tuple, qstarts, result_dim_maps)
-        padded = q.inds == ref.inds ? padded : TLArray(padded, ref.inds)
+        padded = inds(q) == inds(ref) ? padded : TLArray(padded, inds(ref))
         acc = acc + padded
     end
     return acc
@@ -455,7 +455,7 @@ function oplus(qs::AbstractVector, dimensions)
 
     aligned = _align_oplus_inputs(collect(qs))
     ref = _validate_oplus_common(aligned)
-    dims_tuple = _normalize_oplus_dims(dimensions, length(ref.inds))
+    dims_tuple = _normalize_oplus_dims(dimensions, length(inds(ref)))
     return _materialize_vector_oplus(aligned, dims_tuple)
 end
 
@@ -536,7 +536,7 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
     aligned_qs = _align_oplus_inputs(defined_qs)
     aligned_by_position = Dict(pos => q for (pos, q) in zip(defined_positions, aligned_qs))
     ref = _validate_oplus_common(aligned_qs)
-    first_axis_dims, second_axis_dims = _normalize_oplus_matrix_dims(dimensions, length(ref.inds))
+    first_axis_dims, second_axis_dims = _normalize_oplus_matrix_dims(dimensions, length(inds(ref)))
     first_axis_dims_set = Set(first_axis_dims)
     second_axis_dims_set = Set(second_axis_dims)
 
@@ -544,21 +544,21 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
     second_axis_sources = [Dict{Int, Any}() for _ in axes(mat, 2)]
 
     for ((i, j), q) in zip(defined_positions, aligned_qs)
-        for leg in 1:length(ref.inds)
+        for leg in 1:length(inds(ref))
             if leg ∉ second_axis_dims_set
                 if haskey(first_axis_sources[i], leg)
-                    first_axis_sources[i][leg] == q.spaces[leg] || throw(ArgumentError(
+                    first_axis_sources[i][leg] == spaces(q)[leg] || throw(ArgumentError(
                         "sector $i has incompatible spaces on leg $leg"))
                 else
-                    first_axis_sources[i][leg] = copy(q.spaces[leg])
+                    first_axis_sources[i][leg] = copy(spaces(q)[leg])
                 end
             end
             if leg ∉ first_axis_dims_set
                 if haskey(second_axis_sources[j], leg)
-                    second_axis_sources[j][leg] == q.spaces[leg] || throw(ArgumentError(
+                    second_axis_sources[j][leg] == spaces(q)[leg] || throw(ArgumentError(
                         "column $j has incompatible spaces on leg $leg"))
                 else
-                    second_axis_sources[j][leg] = copy(q.spaces[leg])
+                    second_axis_sources[j][leg] = copy(spaces(q)[leg])
                 end
             end
         end
@@ -569,8 +569,8 @@ function _complete_oplus_matrix(mat::AbstractMatrix, dimensions)
     for j in axes(mat, 2), i in axes(mat, 1)
         q = _oplus_matrix_entry(mat, i, j)
         if q === nothing
-            spaces = _infer_zero_matrix_spaces(first_axis_sources, second_axis_sources, i, j, length(ref.inds))
-            filled[i, j] = _zero_tlarray_with_spaces(symm(ref), ref.inds, spaces; T=T)
+            inferred_spaces = _infer_zero_matrix_spaces(first_axis_sources, second_axis_sources, i, j, length(inds(ref)))
+            filled[i, j] = _zero_tlarray_with_spaces(symm(ref), inds(ref), inferred_spaces; T=T)
         else
             filled[i, j] = aligned_by_position[(i, j)]
         end

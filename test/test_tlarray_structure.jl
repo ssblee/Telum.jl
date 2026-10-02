@@ -5,11 +5,11 @@
         inds = ntuple(i -> TLIndex("l$i", i == 1 ? '+' : '-'), QD)
         q = empty_tlarray(symm, inds)
 
-        @test isempty(q.qlabels)
+        @test isempty(Telum.stored_qlabels(q))
         @test isempty(q.RMTs)
         @test Telum.symm(q) == symm
-        @test q.inds          == inds
-        @test all(isempty(q.spaces[l]) for l in 1:QD)
+        @test Telum.inds(q)          == inds
+        @test all(isempty(Telum.spaces(q)[l]) for l in 1:QD)
     end
 
     # ── multiple symmetries ───────────────────────────────────────────────────
@@ -19,9 +19,9 @@
         q = empty_tlarray(symm, inds)
 
         @test Telum.symm(q) == symm
-        @test q.inds == inds
-        @test length(q.spaces) == 3
-        @test all(isempty(q.spaces[l]) for l in 1:3)
+        @test Telum.inds(q) == inds
+        @test length(Telum.spaces(q)) == 3
+        @test all(isempty(Telum.spaces(q)[l]) for l in 1:3)
     end
 
     # ── element type keyword ──────────────────────────────────────────────────
@@ -44,11 +44,11 @@
         # zero(q) should clear sector payloads without changing the tensor's leg
         # metadata, so it can still participate in compatible tensor operations.
         @test qz isa TLArray
-        @test isempty(qz.qlabels)
+        @test isempty(Telum.stored_qlabels(qz))
         @test isempty(qz.RMTs)
         @test symm(qz) == symm(q)
-        @test qz.inds == q.inds
-        @test qz.spaces == q.spaces
+        @test Telum.inds(qz) == Telum.inds(q)
+        @test Telum.spaces(qz) == Telum.spaces(q)
     end
 
     # ── show does not error ───────────────────────────────────────────────────
@@ -133,9 +133,11 @@ end
     @test qp.RMTs === old_rmts
     @test qp.wmatdata !== q.wmatdata
     @test qp.wmatinfo !== q.wmatinfo
-    @test inds(qp) == (inds(q)[3], inds(q)[1], inds(q)[2])
-    @test spaces(qp) == (spaces(q)[3], spaces(q)[1], spaces(q)[2])
-    @test all(qp.qlabels[s] == (q.qlabels[s][3], q.qlabels[s][1], q.qlabels[s][2])
+    @test Telum.inds(qp) == (Telum.inds(q)[3], Telum.inds(q)[1], Telum.inds(q)[2])
+    @test Telum.spaces(qp) == (Telum.spaces(q)[3], Telum.spaces(q)[1], Telum.spaces(q)[2])
+    @test all(Telum.logical_qlabels(qp)[s] == (Telum.stored_qlabels(q)[s][3],
+                                                Telum.stored_qlabels(q)[s][1],
+                                                Telum.stored_qlabels(q)[s][2])
               for s in Telum.sector_slots(q))
 
     qc = conj(q)
@@ -145,9 +147,40 @@ end
     @test qc.RMTs === old_rmts
     @test qc.wmatdata !== q.wmatdata
     @test qc.wmatinfo !== q.wmatinfo
-    @test inds(qc) == map(Telum.change_dir, inds(q))
-    @test spaces(qc) == spaces(q)
-    @test qc.qlabels == q.qlabels
+    @test Telum.inds(qc) == map(Telum.change_dir, Telum.inds(q))
+    @test Telum.spaces(qc) == Telum.spaces(q)
+    @test Telum.logical_qlabels(qc) == Telum.logical_qlabels(q)
+end
+
+@testset "AbstractTLArray properties expose stored fields" begin
+    q = TLArray(getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing)).F,
+                ("left", "right", "op"))
+    qp = permutedims(q, (3, 1, 2))
+
+    @test qp.inds === getfield(qp, :inds)
+    @test qp.spaces === getfield(qp, :spaces)
+    @test qp.qlabels === getfield(qp, :qlabels)
+    @test qp.inds === Telum.stored_inds(q)
+    @test qp.inds != Telum.inds(qp)
+    @test qp.spaces === Telum.stored_spaces(q)
+    @test qp.spaces != Telum.spaces(qp)
+    @test qp.qlabels === Telum.stored_qlabels(q)
+    @test qp.qlabels != Telum.logical_qlabels(qp)
+    @test propertynames(qp) == fieldnames(typeof(qp))
+
+    left = TLArray(getLocalSpace(SpinOptions(nothing, 1)).I, ("left", "bond"))
+    right = TLArray(getLocalSpace(SpinOptions(nothing, 1)).I, ("bond", "right"))
+    lazy = Telum._lazy_contract(left, (2,), right, (1,))
+    wrapped = addSingleton(lazy, 1; itag="aux", dir='+')
+    @test wrapped isa Telum.AddSingletonTLArray
+    @test wrapped.inds === getfield(wrapped, :inds)
+    @test hasproperty(wrapped, :inds)
+    @test !hasproperty(wrapped, :wmatdata)
+    @test !hasproperty(wrapped, :wmatinfo)
+    @test :wmatdata ∉ propertynames(wrapped)
+    @test :wmatinfo ∉ propertynames(wrapped)
+    @test_throws ErrorException wrapped.wmatdata
+    @test_throws ErrorException wrapped.wmatinfo
 end
 
 @testset "complete sector constructors" begin
@@ -159,7 +192,7 @@ end
     q = allsectors_tlarray(symmetries, spaces, ('+', '-');
                             itags=("left", "right"), plev=(1, 0), lock=(2, 0))
 
-    @test inds(q) == (TLIndex("left", '+', 1, 2), TLIndex("right", '-', 0, 0))
+    @test Telum.inds(q) == (TLIndex("left", '+', 1, 2), TLIndex("right", '-', 0, 0))
     @test Telum.spaces(q) == spaces
     @test Telum.sector_count(q) == 2
     @test all(Telum.is_sector_defined(q, sector) && Telum.is_sector_zero(q, sector)
@@ -190,7 +223,7 @@ end
     @test q_random !== q
     @test Telum.inds(q_random) == Telum.inds(q)
     @test Telum.spaces(q_random) == Telum.spaces(q)
-    @test q_random.qlabels == q.qlabels
+    @test Telum.stored_qlabels(q_random) == Telum.stored_qlabels(q)
     @test q_random.wmatdata == q.wmatdata
     @test q_random.wmatinfo == q.wmatinfo
     @test q_random.wmatdata !== q.wmatdata
@@ -233,14 +266,14 @@ end
     @test qlabeltype(symm(q_empty)) == expected
     @test productsymm(q_empty) == expected_ps
     @test @inferred(symm(q_empty)) == (U1, SU{3})
-    @test eltype(q_empty.spaces[1]) == Tuple{expected, Int}
+    @test eltype(Telum.spaces(q_empty)[1]) == Tuple{expected, Int}
 
     q_multi = empty_tlarray((U1, SU{2}, SU{3}), (TLIndex('+'),))
     @test qlabeltype(q_multi) == Tuple{Tuple{Int}, Tuple{Int}, NTuple{2, Int}}
     @test productsymm(q_multi) == ProductSymm{Tuple{U1, SU{2}, SU{3}}}
 
     q_local = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing)).I
-    @test eltype(q_local.qlabels) == NTuple{2, qlabeltype(q_local)}
+    @test eltype(Telum.stored_qlabels(q_local)) == NTuple{2, qlabeltype(q_local)}
     info = Telum.leginfo(q_local, 1)
     @test qlabeltype(info) == qlabeltype(q_local)
     @test eltype(info.splist) == Tuple{qlabeltype(q_local), Int}
@@ -253,21 +286,21 @@ end
     # Pick a real local-space tensor with both a full-sector selection and a
     # sector whose multiplicity is large enough to test reordering/slicing.
     for base in values(q0)
-        for legcand in 1:length(base.spaces)
+        for legcand in 1:length(Telum.spaces(base))
             qcand = oplus([base, 2.0 * base, 3.0 * base], legcand)
-            reorder_idx = findfirst(i -> qcand.spaces[legcand][i][2] >= 3, eachindex(qcand.spaces[legcand]))
+            reorder_idx = findfirst(i -> Telum.spaces(qcand)[legcand][i][2] >= 3, eachindex(Telum.spaces(qcand)[legcand]))
             isnothing(reorder_idx) && continue
 
-            full_idx = findfirst(i -> i != reorder_idx, eachindex(qcand.spaces[legcand]))
+            full_idx = findfirst(i -> i != reorder_idx, eachindex(Telum.spaces(qcand)[legcand]))
             isnothing(full_idx) && continue
 
             candidate = (
                 q = qcand,
                 leg = legcand,
-                sector_reorder = qcand.spaces[legcand][reorder_idx][1],
-                dim_reorder = qcand.spaces[legcand][reorder_idx][2],
-                sector_full = qcand.spaces[legcand][full_idx][1],
-                dim_full = qcand.spaces[legcand][full_idx][2],
+                sector_reorder = Telum.spaces(qcand)[legcand][reorder_idx][1],
+                dim_reorder = Telum.spaces(qcand)[legcand][reorder_idx][2],
+                sector_full = Telum.spaces(qcand)[legcand][full_idx][1],
+                dim_full = Telum.spaces(qcand)[legcand][full_idx][2],
             )
             break
         end
@@ -283,7 +316,7 @@ end
     sector_full = candidate.sector_full
     dim_full = candidate.dim_full
 
-    row_sector(qs::TLArray, sector_index::Int) = qs.qlabels[sector_index][leg]
+    row_sector(qs::TLArray, sector_index::Int) = Telum.logical_qlabels(qs)[sector_index][leg]
     rows_for_sector(qs::TLArray, sector) =
         [i for i in _test_defined_sector_indices(qs) if row_sector(qs, i) == sector]
 
@@ -298,16 +331,16 @@ end
     # multiplicity, while the reordered sector is truncated to the two requested rows.
     expected_spaces_leg = [
         (sector, sector == sector_full ? dim_full : 2)
-        for (sector, _) in q.spaces[leg]
+        for (sector, _) in Telum.spaces(q)[leg]
         if sector == sector_full || sector == sector_reorder
     ]
 
     # Only the selected leg's space list changes; all other legs remain compatible
     # with the source tensor.
-    @test q_pred_pairs.spaces[leg] == expected_spaces_leg
-    for other_leg in 1:length(q.spaces)
+    @test Telum.spaces(q_pred_pairs)[leg] == expected_spaces_leg
+    for other_leg in 1:length(Telum.spaces(q))
         other_leg == leg && continue
-        @test q_pred_pairs.spaces[other_leg] == q.spaces[other_leg]
+        @test Telum.spaces(q_pred_pairs)[other_leg] == Telum.spaces(q)[other_leg]
     end
     @test Set(row_sector(q_pred_pairs, i) for i in _test_defined_sector_indices(q_pred_pairs)) ==
           Set([sector_full, sector_reorder])
@@ -333,7 +366,7 @@ end
 
     # Range selectors are normalized to the same explicit RMT-axis selection.
     q_range = Telum.getsub(q, leg, sector -> sector == sector_reorder ? (1:2) : nothing)
-    @test q_range.spaces[leg] == [(sector_reorder, 2)]
+    @test Telum.spaces(q_range)[leg] == [(sector_reorder, 2)]
     range_rows = rows_for_sector(q_range, sector_reorder)
     @test length(range_rows) == length(orig_reorder_rows)
     for (range_idx, orig_reorder_idx) in zip(range_rows, orig_reorder_rows)
@@ -345,7 +378,7 @@ end
     # Negative indices follow Julia indexing from the end of the multiplicity axis.
     q_negative = Telum.getsub(q, leg, sector -> sector == sector_reorder ? -1 : nothing)
     negative_rows = rows_for_sector(q_negative, sector_reorder)
-    @test q_negative.spaces[leg] == [(sector_reorder, 1)]
+    @test Telum.spaces(q_negative)[leg] == [(sector_reorder, 1)]
     @test length(negative_rows) == length(orig_reorder_rows)
     for (negative_idx, orig_reorder_idx) in zip(negative_rows, orig_reorder_rows)
         orig_rmt = _test_sector_rmt(q, orig_reorder_idx)
@@ -356,7 +389,7 @@ end
     # Mixed negative and positive selectors should preserve the explicit order.
     q_mixed = Telum.getsub(q, leg, sector -> sector == sector_reorder ? [-1, 1] : nothing)
     mixed_rows = rows_for_sector(q_mixed, sector_reorder)
-    @test q_mixed.spaces[leg] == [(sector_reorder, 2)]
+    @test Telum.spaces(q_mixed)[leg] == [(sector_reorder, 2)]
     @test length(mixed_rows) == length(orig_reorder_rows)
     for (mixed_idx, orig_reorder_idx) in zip(mixed_rows, orig_reorder_rows)
         orig_rmt = _test_sector_rmt(q, orig_reorder_idx)
@@ -368,10 +401,10 @@ end
     # selected leg's space list.
     q_empty = Telum.getsub(q, leg, _ -> nothing)
     @test isempty(_test_defined_sector_indices(q_empty))
-    @test isempty(q_empty.spaces[leg])
-    for other_leg in 1:length(q.spaces)
+    @test isempty(Telum.spaces(q_empty)[leg])
+    for other_leg in 1:length(Telum.spaces(q))
         other_leg == leg && continue
-        @test q_empty.spaces[other_leg] == q.spaces[other_leg]
+        @test Telum.spaces(q_empty)[other_leg] == Telum.spaces(q)[other_leg]
     end
 
     # Invalid selectors fail early: bad legs, duplicates, empty selections, zero,
@@ -392,10 +425,10 @@ end
     # Use an oplus tensor so at least one leg has multiple sectors for the
     # predicate to filter while the untouched legs keep their original spaces.
     for base in values(q0)
-        for legcand in 1:length(base.spaces)
+        for legcand in 1:length(Telum.spaces(base))
             qcand = oplus([base, 2.0 * base, 3.0 * base], legcand)
-            length(qcand.spaces[legcand]) >= 2 || continue
-            candidate = (q = qcand, leg = legcand, target_sector = qcand.spaces[legcand][1][1])
+            length(Telum.spaces(qcand)[legcand]) >= 2 || continue
+            candidate = (q = qcand, leg = legcand, target_sector = Telum.spaces(qcand)[legcand][1][1])
             break
         end
         !isnothing(candidate) && break
@@ -407,25 +440,25 @@ end
     leg = candidate.leg
     target_sector = candidate.target_sector
 
-    row_sector(qs::TLArray, sector_index::Int) = qs.qlabels[sector_index][leg]
+    row_sector(qs::TLArray, sector_index::Int) = Telum.logical_qlabels(qs)[sector_index][leg]
     expected_rows = [i for i in _test_defined_sector_indices(q) if row_sector(q, i) == target_sector]
-    expected_leg_spaces = [entry for entry in q.spaces[leg] if entry[1] == target_sector]
+    expected_leg_spaces = [entry for entry in Telum.spaces(q)[leg] if entry[1] == target_sector]
 
     q_component = Telum.getsub(q, leg, sector -> sector[1] == target_sector[1] ? Colon() : nothing)
     expected_component_rows = [i for i in _test_defined_sector_indices(q) if row_sector(q, i)[1] == target_sector[1]]
-    expected_component_spaces = [entry for entry in q.spaces[leg] if entry[1][1] == target_sector[1]]
+    expected_component_spaces = [entry for entry in Telum.spaces(q)[leg] if entry[1][1] == target_sector[1]]
     _test_tlarrays_same_sector_payloads(q_component, TLArray(q, expected_component_rows))
-    @test q_component.spaces[leg] == expected_component_spaces
+    @test Telum.spaces(q_component)[leg] == expected_component_spaces
 
     # preserve_space keeps the original leg metadata even when only a subset of
     # sector payloads remains defined.
     q_preserved = Telum.getsub(q, leg, sector -> sector == target_sector ? Colon() : nothing; preserve_space=true)
     _test_tlarrays_same_sector_payloads(q_preserved, TLArray(q, expected_rows))
-    @test q_preserved.spaces == q.spaces
+    @test Telum.spaces(q_preserved) == Telum.spaces(q)
 
     q_none_preserved = Telum.getsub(q, leg, _ -> nothing; preserve_space=true)
     @test isempty(_test_defined_sector_indices(q_none_preserved))
-    @test q_none_preserved.spaces == q.spaces
+    @test Telum.spaces(q_none_preserved) == Telum.spaces(q)
 
     @test_throws ArgumentError Telum.getsub(q, leg, _ -> false)
     @test_throws ArgumentError Telum.getsub(q, leg, _ -> true)
@@ -437,11 +470,11 @@ end
     q = oplus([base, 2.0 * base, 3.0 * base], (1, 2))
     legs = (1, 2)
 
-    @test length(q.spaces[1]) >= 2
-    @test length(q.spaces[2]) >= 2
+    @test length(Telum.spaces(q)[1]) >= 2
+    @test length(Telum.spaces(q)[2]) >= 2
     @test !isempty(_test_defined_sector_indices(q))
 
-    row_sector_at(sector_index, leg) = q.qlabels[sector_index][leg]
+    row_sector_at(sector_index, leg) = Telum.logical_qlabels(q)[sector_index][leg]
     first_sector = first(_test_defined_sector_indices(q))
     allowed = Set{Any}([row_sector_at(first_sector, 1), row_sector_at(first_sector, 2)])
     pred = sector -> sector in allowed ? Colon() : nothing
@@ -452,25 +485,25 @@ end
         i for i in _test_defined_sector_indices(q)
         if all(row_sector_at(i, leg) in allowed for leg in legs)
     ]
-    expected_spaces_1 = [entry for entry in q.spaces[1] if entry[1] in allowed]
-    expected_spaces_2 = [entry for entry in q.spaces[2] if entry[1] in allowed]
+    expected_spaces_1 = [entry for entry in Telum.spaces(q)[1] if entry[1] in allowed]
+    expected_spaces_2 = [entry for entry in Telum.spaces(q)[2] if entry[1] in allowed]
 
     q_multi = Telum.getsub(q, legs, pred)
     _test_tlarrays_same_sector_payloads(q_multi, TLArray(q, expected_rows))
-    @test q_multi.spaces[1] == expected_spaces_1
-    @test q_multi.spaces[2] == expected_spaces_2
-    for other_leg in 1:length(q.spaces)
+    @test Telum.spaces(q_multi)[1] == expected_spaces_1
+    @test Telum.spaces(q_multi)[2] == expected_spaces_2
+    for other_leg in 1:length(Telum.spaces(q))
         other_leg in legs && continue
-        @test q_multi.spaces[other_leg] == q.spaces[other_leg]
+        @test Telum.spaces(q_multi)[other_leg] == Telum.spaces(q)[other_leg]
     end
 
     pred_slice = sector -> sector in allowed ? 1 : nothing
     q_multi_sliced = Telum.getsub(q, legs, pred_slice)
-    @test q_multi_sliced.spaces[1] == [(entry[1], 1) for entry in q.spaces[1] if entry[1] in allowed]
-    @test q_multi_sliced.spaces[2] == [(entry[1], 1) for entry in q.spaces[2] if entry[1] in allowed]
-    for other_leg in 1:length(q.spaces)
+    @test Telum.spaces(q_multi_sliced)[1] == [(entry[1], 1) for entry in Telum.spaces(q)[1] if entry[1] in allowed]
+    @test Telum.spaces(q_multi_sliced)[2] == [(entry[1], 1) for entry in Telum.spaces(q)[2] if entry[1] in allowed]
+    for other_leg in 1:length(Telum.spaces(q))
         other_leg in legs && continue
-        @test q_multi_sliced.spaces[other_leg] == q.spaces[other_leg]
+        @test Telum.spaces(q_multi_sliced)[other_leg] == Telum.spaces(q)[other_leg]
     end
     @test length(_test_defined_sector_indices(q_multi_sliced)) == length(expected_rows)
     for (sliced_idx, orig_idx) in zip(_test_defined_sector_indices(q_multi_sliced), expected_rows)
@@ -481,11 +514,11 @@ end
 
     q_multi_preserved = Telum.getsub(q, legs, pred; preserve_space=true)
     _test_tlarrays_same_sector_payloads(q_multi_preserved, TLArray(q, expected_rows))
-    @test q_multi_preserved.spaces == q.spaces
+    @test Telum.spaces(q_multi_preserved) == Telum.spaces(q)
 
     q_multi_kw = Telum.getsub(q, pred; itag="sel")
     _test_tlarrays_same_sector_payloads(q_multi_kw, q_multi)
-    @test q_multi_kw.spaces == q_multi.spaces
+    @test Telum.spaces(q_multi_kw) == Telum.spaces(q_multi)
 
     @test_throws ArgumentError Telum.getsub(q, Int[], pred)
     @test_throws ArgumentError Telum.getsub(q, (1, 1), pred)
@@ -504,13 +537,13 @@ end
         # of the nontrivial sectors present in the input local space.
         @test symm(vac) == symm(q0.I)
         @test length(_test_defined_sector_indices(vac)) == 1
-        @test vac.inds == (TLIndex("", '+'), TLIndex("", '-'))
-        @test length(vac.spaces[1]) == 1
-        @test length(vac.spaces[2]) == 1
+        @test Telum.inds(vac) == (TLIndex("", '+'), TLIndex("", '-'))
+        @test length(Telum.spaces(vac)[1]) == 1
+        @test length(Telum.spaces(vac)[2]) == 1
 
         trivial = zero_qlabels(vac)
-        @test vac.spaces[1][1] == (trivial, 1)
-        @test vac.spaces[2][1] == (trivial, 1)
+        @test Telum.spaces(vac)[1][1] == (trivial, 1)
+        @test Telum.spaces(vac)[2][1] == (trivial, 1)
         @test Array(to_sparse_array(vac)) == ones(1, 1)
     end
 
@@ -519,8 +552,8 @@ end
         q0 = getLocalSpace(option)
         vac = getvac(q0.F, ("vin", "vout"))
 
-        @test vac.inds[1] == TLIndex("vin", '+')
-        @test vac.inds[2] == TLIndex("vout", '-')
+        @test Telum.inds(vac)[1] == TLIndex("vin", '+')
+        @test Telum.inds(vac)[2] == TLIndex("vout", '-')
     end
 end
 
@@ -531,30 +564,30 @@ end
     q_rank2 = TLArray(q0.I, ("lin", "lout"))
 
     q_default = addSingleton(q, 2)
-    @test q_default.inds[1] == q.inds[1]
-    @test q_default.inds[2] == TLIndex("", '+')
-    @test q_default.inds[3] == q.inds[2]
-    @test q_default.inds[4] == q.inds[3]
+    @test Telum.inds(q_default)[1] == Telum.inds(q)[1]
+    @test Telum.inds(q_default)[2] == TLIndex("", '+')
+    @test Telum.inds(q_default)[3] == Telum.inds(q)[2]
+    @test Telum.inds(q_default)[4] == Telum.inds(q)[3]
 
     trivial = zero_qlabels(q)
     # Added singleton legs always carry the trivial sector with multiplicity one.
-    @test q_default.spaces[2] == [(trivial, 1)]
+    @test Telum.spaces(q_default)[2] == [(trivial, 1)]
 
     q_append_default = addSingleton(q)
-    @test q_append_default.inds[1:3] == q.inds
-    @test q_append_default.inds[4] == TLIndex("", '+')
-    @test q_append_default.spaces[4] == [(trivial, 1)]
+    @test Telum.inds(q_append_default)[1:3] == Telum.inds(q)
+    @test Telum.inds(q_append_default)[4] == TLIndex("", '+')
+    @test Telum.spaces(q_append_default)[4] == [(trivial, 1)]
 
     q_append_two = addSingleton(q; nlegs=2,
                                 itag=("tail_left", "tail_right"),
                                 plev=(1, 2),
                                 lock=(0, 1),
                                 dir=('+', '-'))
-    @test q_append_two.inds[1:3] == q.inds
-    @test q_append_two.inds[4] == TLIndex("tail_left", '+', 1, 0)
-    @test q_append_two.inds[5] == TLIndex("tail_right", '-', 2, 1)
-    @test q_append_two.spaces[4] == [(trivial, 1)]
-    @test q_append_two.spaces[5] == [(trivial, 1)]
+    @test Telum.inds(q_append_two)[1:3] == Telum.inds(q)
+    @test Telum.inds(q_append_two)[4] == TLIndex("tail_left", '+', 1, 0)
+    @test Telum.inds(q_append_two)[5] == TLIndex("tail_right", '-', 2, 1)
+    @test Telum.spaces(q_append_two)[4] == [(trivial, 1)]
+    @test Telum.spaces(q_append_two)[5] == [(trivial, 1)]
     @test Array(to_sparse_array(q_append_two)) ==
           Array(to_sparse_array(addSingleton(q, (4, 5);
                                              itag=("tail_left", "tail_right"),
@@ -570,13 +603,13 @@ end
                            lock=(0, 1),
                            dir=('-', '+'))
 
-    @test q_added.inds[1] == TLIndex("left_aux", '-', 2, 0)
-    @test q_added.inds[2] == q.inds[1]
-    @test q_added.inds[3] == q.inds[2]
-    @test q_added.inds[4] == TLIndex("right_aux", '+', 3, 1)
-    @test q_added.inds[5] == q.inds[3]
-    @test q_added.spaces[1] == [(trivial, 1)]
-    @test q_added.spaces[4] == [(trivial, 1)]
+    @test Telum.inds(q_added)[1] == TLIndex("left_aux", '-', 2, 0)
+    @test Telum.inds(q_added)[2] == Telum.inds(q)[1]
+    @test Telum.inds(q_added)[3] == Telum.inds(q)[2]
+    @test Telum.inds(q_added)[4] == TLIndex("right_aux", '+', 3, 1)
+    @test Telum.inds(q_added)[5] == Telum.inds(q)[3]
+    @test Telum.spaces(q_added)[1] == [(trivial, 1)]
+    @test Telum.spaces(q_added)[4] == [(trivial, 1)]
 
     arr_ref = _dense_addSingleton_ref(Array(to_sparse_array(q)), (1, 4))
     arr_added = Array(to_sparse_array(q_added))
@@ -608,33 +641,33 @@ end
     # Deleting singleton legs should restore both metadata and sparse values for
     # explicit leg selection, keyword selection, and default singletons.
     q_deleted_leg = deleteSingleton(q_one, 2)
-    @test q_deleted_leg.inds == q.inds
-    @test q_deleted_leg.spaces == q.spaces
+    @test Telum.inds(q_deleted_leg) == Telum.inds(q)
+    @test Telum.spaces(q_deleted_leg) == Telum.spaces(q)
     @test Array(to_sparse_array(q_deleted_leg)) == Array(to_sparse_array(q))
 
     q_deleted_legs = deleteSingleton(q_two, (1, 4))
-    @test q_deleted_legs.inds == q.inds
-    @test q_deleted_legs.spaces == q.spaces
+    @test Telum.inds(q_deleted_legs) == Telum.inds(q)
+    @test Telum.spaces(q_deleted_legs) == Telum.spaces(q)
     @test Array(to_sparse_array(q_deleted_legs)) == Array(to_sparse_array(q))
 
     q_deleted_kw_tag = deleteSingleton(q_two; itag="left_aux")
-    @test length(q_deleted_kw_tag.inds) == 4
-    @test q_deleted_kw_tag.inds[1] == q.inds[1]
-    @test q_deleted_kw_tag.inds[2] == q.inds[2]
-    @test q_deleted_kw_tag.inds[3] == TLIndex("right_aux", '+', 5, 0)
-    @test q_deleted_kw_tag.inds[4] == q.inds[3]
+    @test length(Telum.inds(q_deleted_kw_tag)) == 4
+    @test Telum.inds(q_deleted_kw_tag)[1] == Telum.inds(q)[1]
+    @test Telum.inds(q_deleted_kw_tag)[2] == Telum.inds(q)[2]
+    @test Telum.inds(q_deleted_kw_tag)[3] == TLIndex("right_aux", '+', 5, 0)
+    @test Telum.inds(q_deleted_kw_tag)[4] == Telum.inds(q)[3]
     @test Array(to_sparse_array(q_deleted_kw_tag)) == Array(to_sparse_array(addSingleton(q, 3; itag="right_aux", plev=5, dir='+')))
 
     q_deleted_kw_plev = deleteSingleton(q_two; plev=5)
-    @test length(q_deleted_kw_plev.inds) == 4
-    @test q_deleted_kw_plev.inds[1] == TLIndex("left_aux", '-', 2, 0)
-    @test q_deleted_kw_plev.inds[2] == q.inds[1]
-    @test q_deleted_kw_plev.inds[3] == q.inds[2]
-    @test q_deleted_kw_plev.inds[4] == q.inds[3]
+    @test length(Telum.inds(q_deleted_kw_plev)) == 4
+    @test Telum.inds(q_deleted_kw_plev)[1] == TLIndex("left_aux", '-', 2, 0)
+    @test Telum.inds(q_deleted_kw_plev)[2] == Telum.inds(q)[1]
+    @test Telum.inds(q_deleted_kw_plev)[3] == Telum.inds(q)[2]
+    @test Telum.inds(q_deleted_kw_plev)[4] == Telum.inds(q)[3]
 
     q_rank2_roundtrip = deleteSingleton(q_rank2_added)
-    @test q_rank2_roundtrip.inds == q_rank2.inds
-    @test q_rank2_roundtrip.spaces == q_rank2.spaces
+    @test Telum.inds(q_rank2_roundtrip) == Telum.inds(q_rank2)
+    @test Telum.spaces(q_rank2_roundtrip) == Telum.spaces(q_rank2)
     @test Array(to_sparse_array(q_rank2_roundtrip)) == Array(to_sparse_array(q_rank2))
 
     @test_throws ArgumentError deleteSingleton(q, 1)
@@ -671,15 +704,15 @@ end
     add_locked = lock(add_lazy, 1)
     @test add_locked isa Telum.AddSingletonTLArray
     @test add_locked.arr === add_lazy.arr
-    @test add_locked.inds[1].lock == add_lazy.inds[1].lock + 1
+    @test Telum.inds(add_locked)[1].lock == Telum.inds(add_lazy)[1].lock + 1
     add_primed = prime(add_lazy, 1; inc=2)
     @test add_primed isa Telum.AddSingletonTLArray
     @test add_primed.arr === add_lazy.arr
-    @test add_primed.inds[1].plev == add_lazy.inds[1].plev + 2
+    @test Telum.inds(add_primed)[1].plev == Telum.inds(add_lazy)[1].plev + 2
     add_tagged = additag(add_lazy, 1, "marked")
     @test add_tagged isa Telum.AddSingletonTLArray
     @test add_tagged.arr === add_lazy.arr
-    @test occursin("marked", String(add_tagged.inds[1].itags))
+    @test occursin("marked", String(Telum.inds(add_tagged)[1].itags))
 
     aux = TLArray((), [((),)], Float64[], [Telum._empty_wmat_info(Val(0))],
                   [reshape([1.0], 1)], (TLIndex("aux", '-'),), ([((), 1)],))
@@ -704,27 +737,27 @@ end
     delete_lockp = lockp(delete_lazy, 1)
     @test delete_lockp isa Telum.DeleteSingletonTLArray
     @test delete_lockp.arr === delete_lazy.arr
-    @test delete_lockp.inds[1].lock == -1
+    @test Telum.inds(delete_lockp)[1].lock == -1
     delete_unlocked = unlock(delete_lockp, 1)
     @test delete_unlocked isa Telum.DeleteSingletonTLArray
     @test delete_unlocked.arr === delete_lazy.arr
-    @test delete_unlocked.inds[1].lock == 0
+    @test Telum.inds(delete_unlocked)[1].lock == 0
     delete_setprime = setprime(delete_lazy, 1, 3)
     @test delete_setprime isa Telum.DeleteSingletonTLArray
     @test delete_setprime.arr === delete_lazy.arr
-    @test delete_setprime.inds[1].plev == 3
+    @test Telum.inds(delete_setprime)[1].plev == 3
     delete_noprime = noprime(delete_setprime, 1)
     @test delete_noprime isa Telum.DeleteSingletonTLArray
-    @test delete_noprime.inds[1].plev == 0
+    @test Telum.inds(delete_noprime)[1].plev == 0
     delete_retagged = replaceitag(additag(delete_lazy, 1, "old"), 1, "old"=>"new")
     @test delete_retagged isa Telum.DeleteSingletonTLArray
-    @test occursin("new", String(delete_retagged.inds[1].itags))
+    @test occursin("new", String(Telum.inds(delete_retagged)[1].itags))
     delete_cleared = removeitag(delete_retagged, 1, "new")
     @test delete_cleared isa Telum.DeleteSingletonTLArray
-    @test !occursin("new", String(delete_cleared.inds[1].itags))
+    @test !occursin("new", String(Telum.inds(delete_cleared)[1].itags))
     delete_settag = setitag(delete_lazy, 1, "only")
     @test delete_settag isa Telum.DeleteSingletonTLArray
-    @test String(delete_settag.inds[1].itags) == "only"
+    @test String(Telum.inds(delete_settag)[1].itags) == "only"
 
     lazy_view_source = Telum._lazy_contract(left, (2,), right, (1,))
     view = 2 * permutedims(addSingleton(lazy_view_source, 3; itag="aux", dir='+'), (2, 1, 3))
@@ -790,10 +823,10 @@ end
     q12_kron = kron(q1, q2)
 
     @test symm(q12) == symm(q1) == symm(q2)
-    @test q12.inds == (q1.inds..., q2.inds...)
-    @test q12.spaces == (q1.spaces..., q2.spaces...)
-    @test q12_kron.inds == q12.inds
-    @test q12_kron.spaces == q12.spaces
+    @test Telum.inds(q12) == (Telum.inds(q1)..., Telum.inds(q2)...)
+    @test Telum.spaces(q12) == (Telum.spaces(q1)..., Telum.spaces(q2)...)
+    @test Telum.inds(q12_kron) == Telum.inds(q12)
+    @test Telum.spaces(q12_kron) == Telum.spaces(q12)
 
     arr_ref = _dense_tensor_product_ref(Array(to_sparse_array(q1)), Array(to_sparse_array(q2)))
     arr_q12 = Array(to_sparse_array(q12))
@@ -828,8 +861,8 @@ end
 
     # Scalar arithmetic is defined as adding/subtracting a scaled identity on the
     # same rank-2 space, not as touching every stored sector directly.
-    idq = getIdentity(q, 2; itag=q.inds[2].itags)
-    idq = TLArray(idq, q.inds)
+    idq = getIdentity(q, 2; itag=Telum.inds(q)[2].itags)
+    idq = TLArray(idq, Telum.inds(q))
 
     @test norm((q + 2.5) - (q + 2.5 * idq)) < 1e-10
     @test norm((q - 2.5) - (q - 2.5 * idq)) < 1e-10
@@ -861,16 +894,16 @@ end
 
     # ── basic structure ───────────────────────────────────────────────────────
     @testset "rank-4 structure" begin
-        @test length(q4.inds)  == 4
-        @test length(q4.spaces) == 4
-        @test q4.inds[1].dir   == '+'
-        @test q4.inds[2].dir   == '+'
-        @test q4.inds[3].dir   == '+'
-        @test q4.inds[4].dir   == '-'
-        @test q4.inds[1].itags == "l1"
-        @test q4.inds[4].itags == "fused"
+        @test length(Telum.inds(q4))  == 4
+        @test length(Telum.spaces(q4)) == 4
+        @test Telum.inds(q4)[1].dir   == '+'
+        @test Telum.inds(q4)[2].dir   == '+'
+        @test Telum.inds(q4)[3].dir   == '+'
+        @test Telum.inds(q4)[4].dir   == '-'
+        @test Telum.inds(q4)[1].itags == "l1"
+        @test Telum.inds(q4)[4].itags == "fused"
         @test !isempty(_test_defined_sector_indices(q4))
-        @test all(!isempty(q4.spaces[l]) for l in 1:4)
+        @test all(!isempty(Telum.spaces(q4)[l]) for l in 1:4)
     end
 
     @testset "svd keyword leg selection" begin
@@ -881,13 +914,13 @@ end
 
         # Keyword selection by direction should choose the same left legs as the
         # explicit tuple and therefore produce identical factor metadata/values.
-        @test U_kw.inds == U_ref.inds
-        @test S_kw.inds == S_ref.inds
-        @test Vd_kw.inds == Vd_ref.inds
+        @test Telum.inds(U_kw) == Telum.inds(U_ref)
+        @test Telum.inds(S_kw) == Telum.inds(S_ref)
+        @test Telum.inds(Vd_kw) == Telum.inds(Vd_ref)
 
-        @test U_kw.spaces == U_ref.spaces
-        @test S_kw.spaces == S_ref.spaces
-        @test Vd_kw.spaces == Vd_ref.spaces
+        @test Telum.spaces(U_kw) == Telum.spaces(U_ref)
+        @test Telum.spaces(S_kw) == Telum.spaces(S_ref)
+        @test Telum.spaces(Vd_kw) == Telum.spaces(Vd_ref)
 
         @test norm(U_kw - U_ref) < 1e-12
         @test norm(S_kw - S_ref) < 1e-12
@@ -952,10 +985,10 @@ end
     @testset "double-conj roundtrip on rank-4" begin
         qc  = conj(q4)
         # all leg directions must flip
-        @test all(qc.inds[i].dir != q4.inds[i].dir for i in 1:4)
+        @test all(Telum.inds(qc)[i].dir != Telum.inds(q4)[i].dir for i in 1:4)
         qcc = conj(qc)
         # directions restored
-        @test all(qcc.inds[i].dir == q4.inds[i].dir for i in 1:4)
+        @test all(Telum.inds(qcc)[i].dir == Telum.inds(q4)[i].dir for i in 1:4)
         # tensor values preserved
         arr_orig = Array(to_sparse_array(q4))
         arr_cc   = Array(to_sparse_array(qcc))

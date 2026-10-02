@@ -74,7 +74,7 @@ ANSI escapes.
 """
 function _print_tlarray_header(io::IO, qs::TLArray{T, QD, N}) where {T, QD, N}
     if N == 0
-        leg_strs = map(qs.inds) do idx
+        leg_strs = map(inds(qs)) do idx
             raw = _format_qindex(idx)
             idx.dual ? "\e[32m$(raw)\e[0m" : raw
         end
@@ -85,7 +85,7 @@ function _print_tlarray_header(io::IO, qs::TLArray{T, QD, N}) where {T, QD, N}
 
     symm_names = join((totxt(s) for s in symm(qs)), ", ")
     print(io, "$(QD)D TLArray, $N symmetries [$symm_names]")
-    leg_strs = map(qs.inds) do idx
+    leg_strs = map(inds(qs)) do idx
         raw = _format_qindex(idx)
         idx.dual ? "\e[32m$(raw)\e[0m" : raw
     end

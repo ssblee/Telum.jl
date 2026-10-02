@@ -13,7 +13,7 @@
     sub = Telum._getsub_lazy(q, 1, _ -> Colon())
 
     @test sub isa Telum.SubTLArray
-    @test sub.qlabels == q.qlabels
+    @test Telum.stored_qlabels(sub) == Telum.stored_qlabels(q)
     @test sub.source_sectors == [1, 2]
     @test Telum.source_sector(sub, 2) == 2
     @test !Telum.is_sector_zero(sub, 1)
@@ -124,9 +124,9 @@ end
 
     @test converted isa TLArray
     @test Telum.is_sector_defined(sub, 1)
-    @test converted.qlabels === sub.qlabels
-    @test converted.wmatdata === sub.wmatdata
-    @test converted.wmatinfo === sub.wmatinfo
+    @test Telum.stored_qlabels(converted) === Telum.stored_qlabels(sub)
+    @test first(Telum.stored_wmat_storage(converted)) === first(Telum.stored_wmat_storage(sub))
+    @test last(Telum.stored_wmat_storage(converted)) === last(Telum.stored_wmat_storage(sub))
     @test converted.RMTs === sub.RMTs
     @test converted.isdefined === sub.isdefined
     @test converted.iszero === sub.iszero

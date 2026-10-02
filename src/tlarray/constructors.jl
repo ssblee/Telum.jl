@@ -438,8 +438,8 @@ function _delete_singleton_impl(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, positi
     new_qd = QD - length(positions)
     new_rd = RD - length(positions)
 
-    keep_inds = [q.inds[leg] for leg in 1:QD if leg ∉ positions]
-    keep_spaces = Vector{Tuple{QT, Int}}[q.spaces[leg] for leg in 1:QD if leg ∉ positions]
+    keep_inds = [inds(q)[leg] for leg in 1:QD if leg ∉ positions]
+    keep_spaces = Vector{Tuple{QT, Int}}[spaces(q)[leg] for leg in 1:QD if leg ∉ positions]
 
     qlabels = Matrix{QT}(undef, new_qd, sector_count(q))
     wmatdata, wmatinfo = _copy_wmat_storage(q; deep=true)
@@ -944,8 +944,8 @@ function addSingleton(q::TLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
             new_spaces[new_leg] = copy(singleton_space)
             insert_idx += 1
         else
-            new_inds[new_leg] = q.inds[old_leg]
-            new_spaces[new_leg] = q.spaces[old_leg]
+            new_inds[new_leg] = inds(q)[old_leg]
+            new_spaces[new_leg] = spaces(q)[old_leg]
             old_leg += 1
         end
     end

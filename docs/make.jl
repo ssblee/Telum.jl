@@ -13,6 +13,7 @@ makedocs(
         "DMRG tutorial" => "dmrg-tutorial.md",
         "Local spaces" => "local-spaces.md",
         "Advanced topics" => "advanced.md",
+        "AbstractTLArray accessors" => "abstract-tlarray-accessors.md",
     ],
 )
 

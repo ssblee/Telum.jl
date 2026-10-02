@@ -128,16 +128,16 @@ end
 _retag_qindex(idx::TLIndex, tag::AbstractString) = TLIndex(tag, idx.dir, idx.plev, idx.lock, idx.dual)
 
 function _retag_eigen_result(result::EigenResult, eig_tag::AbstractString)
-    d_inds = (_retag_qindex(result.D.inds[1], eig_tag), _retag_qindex(result.D.inds[2], eig_tag))
+    d_inds = (_retag_qindex(inds(result.D)[1], eig_tag), _retag_qindex(inds(result.D)[2], eig_tag))
     D = TLArray(result.D, d_inds)
 
-    v_inds = (result.V.inds[1], _retag_qindex(result.V.inds[2], eig_tag))
+    v_inds = (inds(result.V)[1], _retag_qindex(inds(result.V)[2], eig_tag))
     V = TLArray(result.V, v_inds)
 
     V_inv = if isnothing(result.V_inv)
         nothing
     else
-        vinv_inds = (_retag_qindex(result.V_inv.inds[1], eig_tag), result.V_inv.inds[2])
+        vinv_inds = (_retag_qindex(inds(result.V_inv)[1], eig_tag), inds(result.V_inv)[2])
         TLArray(result.V_inv, vinv_inds)
     end
 
@@ -263,18 +263,18 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT, PS, M, RMT},
 
     spaces_out = if mode == :diag
         (
-            build_selected_space(template.spaces[1], (_, count) -> count),
-            build_selected_space(template.spaces[2], (_, count) -> count),
+            build_selected_space(spaces(template)[1], (_, count) -> count),
+            build_selected_space(spaces(template)[2], (_, count) -> count),
         )
     elseif mode == :cols
         (
-            copy(template.spaces[1]),
-            build_selected_space(template.spaces[2], (_, count) -> count),
+            copy(spaces(template)[1]),
+            build_selected_space(spaces(template)[2], (_, count) -> count),
         )
     elseif mode == :firstdim
         (
-            build_selected_space(template.spaces[1], (_, count) -> count),
-            copy(template.spaces[2]),
+            build_selected_space(spaces(template)[1], (_, count) -> count),
+            copy(spaces(template)[2]),
         )
     else
         error("Unknown eig sector selection mode: $mode")
@@ -286,7 +286,7 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT, PS, M, RMT},
         qlabels_mat[2, sector_index] = sector
     end
     wmatdata_out, wmatinfo_out = _copy_wmat_storage(template, source_wmat_sectors; deep=true)
-    return TLArray(symm(template), qlabels_mat, wmatdata_out, wmatinfo_out, RMTs_out, template.inds, spaces_out)
+    return TLArray(symm(template), qlabels_mat, wmatdata_out, wmatinfo_out, RMTs_out, inds(template), spaces_out)
 end
 
 function _effective_eigen_keep_count(eig_entries,

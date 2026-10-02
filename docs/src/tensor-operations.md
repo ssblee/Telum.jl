@@ -34,9 +34,10 @@ This extra metadata also makes operations such as eigendecomposition and
 
 `permutedims` returns a lazy view in the requested logical-leg order. It shares
 the source tensor's stored `Index` objects, space lists, q-label tuples, and RMT
-payloads, while `inds`, `spaces`, and `qlabels` expose metadata in the permuted
-logical order. The logical q-label tuples are rebuilt on access; stored tuples
-remain in their original order. Present W-matrix slots are transformed as the
+payloads, while `inds(q)`, `spaces(q)`, and `logical_qlabels(q)` expose metadata
+in the permuted logical order. The fields `q.inds`, `q.spaces`, and
+`q.qlabels` remain in stored order. The logical q-label tuples are rebuilt on
+access; stored tuples remain in their original order. Present W-matrix slots are transformed as the
 view is created. Sector RMT payloads are reordered only when requested by a
 consumer; the source tensor is unchanged.
 
@@ -45,8 +46,8 @@ leg `perm[i]`.
 
 ```@repl tensor_operations
 qperm = permutedims(q.I, (2, 1))
-inds(qperm)
-spaces(qperm)
+Telum.inds(qperm)
+Telum.spaces(qperm)
 ```
 
 ```@repl tensor_operations
@@ -62,7 +63,7 @@ There are three symmetry sectors. In each tuple, the first entry is a q-label
 and the second is its multiplicity, which gives the corresponding RMT size.
 
 ```@repl tensor_operations
-q.I.spaces[1]
+Telum.spaces(q.I)[1]
 ```
 
 
@@ -71,14 +72,14 @@ lists still record all three sectors.
 
 ```@repl tensor_operations
 println(q.S)
-q.S.spaces[1]
+Telum.spaces(q.S)[1]
 ```
 
 
 The third leg has only one sector.
 
 ```@repl tensor_operations
-q.S.spaces[3]
+Telum.spaces(q.S)[3]
 ```
 
 
@@ -109,8 +110,8 @@ One difference is that the full space list of selected legs is considered. Even 
 println(ss)
 j = get1jtensor(ss, 2)
 println(j)
-println(j.inds[1])
-println(j.inds[2])
+println(Telum.inds(j)[1])
+println(Telum.inds(j)[2])
 ```
 
 
@@ -646,17 +647,17 @@ println(oplres)
 
 
 ```@repl tensor_operations
-qf.spaces[3]
+Telum.spaces(qf)[3]
 ```
 
 
 ```@repl tensor_operations
-qs.spaces[3]
+Telum.spaces(qs)[3]
 ```
 
 
 ```@repl tensor_operations
-oplres.spaces[3] # Two above spaces are added
+Telum.spaces(oplres)[3] # Two above spaces are added
 ```
 
 
@@ -694,12 +695,12 @@ t = oplus([qf, qf, qf], 3)
 
 
 ```@repl tensor_operations
-qf.spaces[3] # Only one copy of <charge=-1, spin=1> space
+Telum.spaces(qf)[3] # Only one copy of <charge=-1, spin=1> space
 ```
 
 
 ```@repl tensor_operations
-t.spaces[3] # Three copies of <charge=-1, spin=1> space
+Telum.spaces(t)[3] # Three copies of <charge=-1, spin=1> space
 ```
 
 
@@ -719,7 +720,7 @@ as = addSingleton(qf, 3; itag="new", dir='-') # Can specify itag and dir for the
 println(as)
 
 print("\nSpace of newly created leg: ")
-as.spaces[3] # One copy of vacuum space
+Telum.spaces(as)[3] # One copy of vacuum space
 ```
 
 
@@ -792,12 +793,12 @@ x->(expression including x) is the Julia syntax to define an anonymous function.
 # 'x->x[1]==(0,) ? (:) : nothing' is another way to write the criteria function.
 s = getsub(q.I, 2, x->x[1]==(0,) ? (:) : nothing)
 println(s)
-s.spaces[2] # Only the space with charge quantum number 0 survives.
+Telum.spaces(s)[2] # Only the space with charge quantum number 0 survives.
 ```
 
 
 ```@repl tensor_operations
-s.spaces[1] # Unselected leg is not truncated.
+Telum.spaces(s)[1] # Unselected leg is not truncated.
 ```
 
 
@@ -805,8 +806,8 @@ You can truncate multiple legs with the same criteria. If you want to use a diff
 
 ```@repl tensor_operations
 s = getsub(q.I, (1, 2), x->x[1]==(0,) ? (:) : nothing) # Both 1st and 2nd legs are truncated according to the same criteria. 
-println(s.spaces[1])
-println(s.spaces[2])
+println(Telum.spaces(s)[1])
+println(Telum.spaces(s)[2])
 ```
 
 
@@ -815,7 +816,7 @@ The keyword argument 'preserve_space' determines whether the space list is also 
 ```@repl tensor_operations
 s2 = getsub(q.I, 2, x->x[1]==(0,) ? (:) : nothing; preserve_space=true)
 println(s2) # RMTs with nonzero charge quantum numbers are truncated
-s2.spaces[2] # The spaces are preserved.
+Telum.spaces(s2)[2] # The spaces are preserved.
 ```
 
 

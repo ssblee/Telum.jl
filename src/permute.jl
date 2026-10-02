@@ -135,7 +135,7 @@ Return a lazy physical-leg permutation of `q`.
 `perm` uses Julia's `permutedims` convention: output leg `i` reads input leg
 `perm[i]`. The returned array shares the original stored indices, spaces, and
 RMT payloads, and records the new logical-to-stored leg mapping. Accordingly,
-`inds(q)`, `spaces(q)`, and `qlabels(q)` (or `q.qlabels`) are observed in the
+`inds(q)`, `spaces(q)`, and `logical_qlabels(q)` are observed in the
 permuted logical-leg order. The q-label tuples are rebuilt lazily on access;
 their stored tuples remain in the original order.
 

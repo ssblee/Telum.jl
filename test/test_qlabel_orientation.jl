@@ -62,7 +62,7 @@ function _assert_zero_sector_constructor_state(q::TLArray)
         RMTs[sector_index] = deepcopy(_test_sector_rmt(q, sector_index))
     end
 
-    with_zero = TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, q.spaces)
+    with_zero = TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, Telum.inds(q), Telum.spaces(q))
     @test Telum.nsectors(with_zero) == old_n
     @test Telum.sector_count(with_zero) == Telum.sector_count(q) + 1
     @test with_zero.isdefined[end] == false
@@ -76,7 +76,7 @@ function _assert_zero_sector_constructor_state(q::TLArray)
     fill!(zero_rmt, zero(eltype(zero_rmt)))
     RMTs_bad[end] = zero_rmt
     with_zero_rmt = TLArray(symm(q), qlabels, wmatdata_with_extra, wmatinfo_with_extra,
-                            RMTs_bad, q.inds, q.spaces)
+                            RMTs_bad, Telum.inds(q), Telum.spaces(q))
     @test with_zero_rmt.isdefined[end] == true
     @test with_zero_rmt.iszero[end] == true
 end
@@ -91,8 +91,8 @@ function _test_sort_sectors(q::TLArray{T, QD, N}) where {T, QD, N}
     qlabels = copy(q.qlabels[sorted_indices])
     wmatdata, wmatinfo = Telum._copy_wmat_storage(q, sorted_indices; deep=true)
     RMTs = Telum._copy_sector_RMTs(q, sorted_indices; deep=true)
-    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds,
-                   Telum._copy_spaces_tuple(q.spaces))
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, Telum.inds(q),
+                   Telum._copy_spaces_tuple(Telum.spaces(q)))
 end
 
 @testset "wmat slot mappings infer" begin
@@ -140,8 +140,8 @@ end
                 stored_to_phys = Telum._stored_leg_order(q, sector_index, n)
                 @test qlabels == ntuple(i -> Telum.sector_qlabel(q, sector_index, stored_to_phys[i])[n], ndims(q))
                 @test cgp == ntuple(leg -> findfirst(==(leg), stored_to_phys), ndims(q))
-                @test legdir == (count(leg -> q.inds[leg].dir == '+', 1:ndims(q)),
-                                 count(leg -> q.inds[leg].dir == '-', 1:ndims(q)))
+                @test legdir == (count(leg -> Telum.inds(q)[leg].dir == '+', 1:ndims(q)),
+                                 count(leg -> Telum.inds(q)[leg].dir == '-', 1:ndims(q)))
             end
         end
     end

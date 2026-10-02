@@ -152,26 +152,26 @@ function _apply_getsub_picks(q::TLArray{T, QD, N, RD, QT},
     end
 
     spaces_out = if preserve_space
-        _copy_spaces_tuple(q.spaces)
+        _copy_spaces_tuple(spaces(q))
     else
         ntuple(l -> begin
             if l in selected_leg_set
-                out = eltype(q.spaces[l])[]
+                out = eltype(spaces(q)[l])[]
                 picks = selected_picks[l]
-                for (sector, dim) in q.spaces[l]
+                for (sector, dim) in spaces(q)[l]
                     haskey(picks, sector) || continue
                     pick = picks[sector]
                     push!(out, (sector, pick isa Colon ? dim : length(pick)))
                 end
                 out
             else
-                copy(q.spaces[l])
+                copy(spaces(q)[l])
             end
         end, QD)
     end
 
     wmatdata, wmatinfo = _copy_wmat_storage(q, source_wmat_sectors; deep=true)
-    return TLArray(symm(q), qlabels_out, wmatdata, wmatinfo, RMTs_out, q.inds, spaces_out)
+    return TLArray(symm(q), qlabels_out, wmatdata, wmatinfo, RMTs_out, inds(q), spaces_out)
 end
 
 """
@@ -532,7 +532,7 @@ full sector, or an integer / integer range / integer tuple / integer vector to
 keep sector-local basis positions. Negative indices count from the end of the
 sector dimension, and zero is invalid.
 
-If `preserve_space=false` (the default), only `q.spaces[leg]` is truncated to
+If `preserve_space=false` (the default), only `spaces(q)[leg]` is truncated to
 the retained sectors and all other leg-space lists are copied unchanged. If
 `preserve_space=true`, all cached leg-space lists are preserved exactly and only
 the sectors are filtered. This requires `pred` to keep whole sectors, so any

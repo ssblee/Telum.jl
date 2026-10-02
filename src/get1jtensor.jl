@@ -56,8 +56,9 @@ function _legflip_abelian(q::TLArray{T, QD}, leg::Int) where {T, QD}
     inds = ntuple(l -> l == stored_leg ? change_dual(change_dir(stored_inds(q)[l])) :
                   stored_inds(q)[l], Val(QD))
 
+    wmatdata, wmatinfo = stored_wmat_storage(q)
     return TLArray(Val(:alias_storage_view_state), symmetries, qlabels,
-                   copy(q.wmatdata), copy(q.wmatinfo), copy(q.RMTs),
+                   copy(wmatdata), copy(wmatinfo), copy(q.RMTs),
                    copy(q.isdefined), copy(q.iszero), inds, spaces,
                    stored_conj(q), stored_scale(q), stored_perm(q))
 end

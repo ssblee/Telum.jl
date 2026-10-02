@@ -115,9 +115,9 @@ end
 
     @test converted isa TLArray
     @test Telum.is_sector_defined(lazy, 1)
-    @test converted.qlabels === lazy.qlabels
-    @test converted.wmatdata === lazy.wmatdata
-    @test converted.wmatinfo === lazy.wmatinfo
+    @test Telum.stored_qlabels(converted) === Telum.stored_qlabels(lazy)
+    @test first(Telum.stored_wmat_storage(converted)) === first(Telum.stored_wmat_storage(lazy))
+    @test last(Telum.stored_wmat_storage(converted)) === last(Telum.stored_wmat_storage(lazy))
     @test converted.RMTs === lazy.RMTs
     @test converted.isdefined === lazy.isdefined
     @test converted.iszero === lazy.iszero

@@ -30,8 +30,8 @@ function _test_svd_truncation_matches_full(q::TLArray, left_legs)
             @test kept_singular_values ≈ full_singular_values[1:nkeep]
             @test length(truncated.kept_list) == nkeep
             @test length(truncated.kept_list) + length(truncated.trunc_list) == length(full.kept_list)
-            @test truncated.U.spaces[end] == truncated.S.spaces[1]
-            @test truncated.Vd.spaces[1] == truncated.S.spaces[2]
+            @test Telum.spaces(truncated.U)[end] == Telum.spaces(truncated.S)[1]
+            @test Telum.spaces(truncated.Vd)[1] == Telum.spaces(truncated.S)[2]
         end
     end
 end

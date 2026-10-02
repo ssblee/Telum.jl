@@ -369,7 +369,7 @@ function central_bond_rmt_dimensions(MPS::AbstractVector{<:TLArray}; bond::Int=l
         "central bond index must satisfy 1 <= bond < $(length(MPS)), got $bond"))
     leg = findleg(MPS[bond]; itag="SB,$bond")
     isnothing(leg) && throw(ArgumentError("MPS[$bond] has no leg tagged SB,$bond"))
-    bond_space = MPS[bond].spaces[leg]
+    bond_space = Telum.spaces(MPS[bond])[leg]
     qlabels = first.(bond_space)
     dimensions = last.(bond_space)
     perm = sortperm(dimensions; rev=true)

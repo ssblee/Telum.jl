@@ -104,7 +104,7 @@ function _svd_symmetry_stored_leg_order(
     sizehint!(incoming, QD)
     sizehint!(outgoing, QD)
     for leg in 1:QD
-        if q.inds[leg].dir == '+'
+        if inds(q)[leg].dir == '+'
             push!(incoming, leg)
         else
             push!(outgoing, leg)
@@ -586,7 +586,7 @@ function _count_svd_symmetry_splits(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, 
     isabelian(S) && return 1
     physical_key = _svd_physical_qlabel_key(QT, q, sector_index, Val(n))
     upsp, dnsp, left_legs_canon =
-        _svd_physical_key_split_args(S, physical_key, q.inds, left_legs)
+        _svd_physical_key_split_args(S, physical_key, inds(q), left_legs)
     cache = _cgtsvd_cache_for(cgtsvd_caches, S, PS, Val(n))
     cgtsvd = _svd_get_cgtsvd(S, physical_key, upsp, dnsp, left_legs_canon, cache)
     return _svd_cgtsvd_split_count(cgtsvd)
@@ -2069,11 +2069,11 @@ function svd_std(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT},
     ]
     sort!(dual_bond_splist; by = first, alg=MergeSort)
 
-    inds_U = (ntuple(i -> q.inds[left_legs[i]], Val(L))..., TLIndex(left_tag, '-'))
-    inds_Vd = (TLIndex(right_tag, '-'), ntuple(i -> q.inds[right_legs[i]], Val(R))...)
+    inds_U = (ntuple(i -> inds(q)[left_legs[i]], Val(L))..., TLIndex(left_tag, '-'))
+    inds_Vd = (TLIndex(right_tag, '-'), ntuple(i -> inds(q)[right_legs[i]], Val(R))...)
 
-    spaces_U = (ntuple(i -> q.spaces[left_legs[i]], Val(L))..., bond_splist)
-    spaces_Vd = (dual_bond_splist, ntuple(i -> q.spaces[right_legs[i]], Val(R))...)
+    spaces_U = (ntuple(i -> spaces(q)[left_legs[i]], Val(L))..., bond_splist)
+    spaces_Vd = (dual_bond_splist, ntuple(i -> spaces(q)[right_legs[i]], Val(R))...)
 
     U_qlabels = Matrix{QT}(undef, L + 1, length(qlabels_U))
     for sector_index in eachindex(qlabels_U), leg in 1:(L + 1)
@@ -2119,8 +2119,8 @@ function _svd_unsymmetric(q::AbstractTLArray{T, QD, 0},
 
     Udata = reshape(F.U[:, keep], (left_dims..., k))
     Vddata = reshape(F.Vt[keep, :], (k, right_dims...))
-    Uinds = (ntuple(i -> q.inds[left_legs[i]], Val(L))..., TLIndex(left_tag, '-'))
-    Vdinds = (TLIndex(right_tag, '-'), ntuple(i -> q.inds[right_legs[i]], Val(QD - L))...)
+    Uinds = (ntuple(i -> inds(q)[left_legs[i]], Val(L))..., TLIndex(left_tag, '-'))
+    Vdinds = (TLIndex(right_tag, '-'), ntuple(i -> inds(q)[right_legs[i]], Val(QD - L))...)
     U = TLArray(Udata, Uinds)
     S = TLArray(Matrix(Diagonal(singular_values)),
                 (TLIndex(left_tag, '+'), TLIndex(right_tag, '+')))
@@ -2202,7 +2202,7 @@ function _select_svd_left_legs(q::AbstractTLArray; dir=nothing, itag=nothing, pl
     end
 
     legs = findlegs(q; dir=dir, itag=itag, plev=plev, lock=lock, rev=rev)
-    rank = length(q.inds)
+    rank = length(inds(q))
     1 <= length(legs) <= rank - 1 || throw(ArgumentError("keyword-based svd selected legs $legs, but the number of selected legs must be between 1 and $(rank - 1)"))
     return sort(legs)
 end

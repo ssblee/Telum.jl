@@ -2,8 +2,8 @@ using HDF5
 
 function _assert_tlarray_structural_equal(a::TLArray, b::TLArray)
     @test symm(a) == symm(b)
-    @test a.inds == b.inds
-    @test a.spaces == b.spaces
+    @test Telum.inds(a) == Telum.inds(b)
+    @test Telum.spaces(a) == Telum.spaces(b)
 end
 
 function _assert_tlarray_roundtrip(a::TLArray, b::TLArray; tol=1e-12)
@@ -23,8 +23,8 @@ function _with_saved_tlarray(f, q; name="tensor")
 end
 
 function _with_zero_sector(q::TLArray)
-    qlabels = copy(q.qlabels)
-    push!(qlabels, first(q.qlabels))
+    qlabels = copy(Telum.stored_qlabels(q))
+    push!(qlabels, first(Telum.stored_qlabels(q)))
 
     wmatdata = copy(q.wmatdata)
     wmatinfo = copy(q.wmatinfo)
@@ -36,7 +36,7 @@ function _with_zero_sector(q::TLArray)
         RMTs[sector] = deepcopy(_test_sector_rmt(q, sector))
     end
 
-    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, q.spaces)
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, Telum.inds(q), Telum.spaces(q))
 end
 
 function _push_copied_wmat_info!(wmatdata, wmatinfo, q::TLArray, sector::Int)
@@ -54,8 +54,8 @@ function _push_copied_wmat_info!(wmatdata, wmatinfo, q::TLArray, sector::Int)
 end
 
 function _with_defined_zero_sector(q::TLArray)
-    qlabels = copy(q.qlabels)
-    push!(qlabels, first(q.qlabels))
+    qlabels = copy(Telum.stored_qlabels(q))
+    push!(qlabels, first(Telum.stored_qlabels(q)))
 
     wmatdata = copy(q.wmatdata)
     wmatinfo = copy(q.wmatinfo)
@@ -71,7 +71,7 @@ function _with_defined_zero_sector(q::TLArray)
     fill!(zero_rmt, zero(eltype(zero_rmt)))
     RMTs[end] = zero_rmt
 
-    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, q.inds, q.spaces)
+    return TLArray(symm(q), qlabels, wmatdata, wmatinfo, RMTs, Telum.inds(q), Telum.spaces(q))
 end
 
 @testset "HDF5 TLArray round trip" begin
@@ -83,11 +83,11 @@ end
                       (TLIndex("in", '+'), TLIndex("out", '-')),
                       ([(() , 1)], [(() , 1)]))
     @test symm(q_nosym) == ()
-    @test q_nosym.qlabels == [((), ())]
+    @test Telum.stored_qlabels(q_nosym) == [((), ())]
     _with_saved_tlarray(q_nosym) do loaded
         _assert_tlarray_roundtrip(q_nosym, loaded)
         @test symm(loaded) == ()
-        @test loaded.qlabels == [((), ())]
+        @test Telum.stored_qlabels(loaded) == [((), ())]
     end
 
     q0 = getLocalSpace(FermionSOptions(1, :U1, :SU2, nothing), ("left", "right", "op"))
@@ -155,8 +155,8 @@ end
         q.iszero[sector] && continue
         complex_RMTs[sector] = ComplexF64.(_test_sector_rmt(q, sector))
     end
-    q_complex = TLArray(symm(q), copy(q.qlabels), copy(q.wmatdata), copy(q.wmatinfo),
-                        complex_RMTs, q.inds, q.spaces)
+    q_complex = TLArray(symm(q), copy(Telum.stored_qlabels(q)), copy(q.wmatdata), copy(q.wmatinfo),
+                        complex_RMTs, Telum.inds(q), Telum.spaces(q))
     _with_saved_tlarray(q_complex) do loaded
         _assert_tlarray_roundtrip(q_complex, loaded)
     end
@@ -167,8 +167,8 @@ end
         q.iszero[sector] && continue
         float32_RMTs[sector] = Float32.(_test_sector_rmt(q, sector))
     end
-    q_float32 = TLArray(symm(q), copy(q.qlabels), copy(q.wmatdata), copy(q.wmatinfo),
-                        float32_RMTs, q.inds, q.spaces)
+    q_float32 = TLArray(symm(q), copy(Telum.stored_qlabels(q)), copy(q.wmatdata), copy(q.wmatinfo),
+                        float32_RMTs, Telum.inds(q), Telum.spaces(q))
     q_complex_scaled = (1.0 + 2.0im) * q_float32
     _with_saved_tlarray(q_complex_scaled) do loaded
         _assert_tlarray_roundtrip(q_complex_scaled, loaded; tol=1e-6)
