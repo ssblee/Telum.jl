@@ -477,16 +477,7 @@ end
 
 # ─── TLArray invariant checkers ─────────────────────────────────────────────
 
-# Condition 1: an index with empty itags must have lock == 0
-function _check_empty_tag_lock(inds::NTuple{QD, TLIndex}) where QD
-    for idx in inds
-        if isempty(idx.itags)
-            @assert idx.lock == 0 "TLArray: index with empty itag has nonzero lock=$(idx.lock)"
-        end
-    end
-end
-
-# Condition 2: no two TLIndex objects with non-empty itags in the inds tuple
+# No two TLIndex objects with non-empty itags in the inds tuple
 # may be equal (as determined by ==, which compares itags, dir, plev, dual).
 function _check_unique_inds(inds::NTuple{QD, TLIndex}) where QD
     tagged = [idx for idx in inds if !isempty(idx.itags)]
@@ -604,7 +595,6 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{<:Any, R
             typed_qlabels, wmatdata, wmatinfo, RMTs, sector_isdefined, sector_iszero,
             inds, typed_spaces, false, one(T), ntuple(identity, Val(QD)))
         _check_unique_inds(getfield(q, :inds))
-        _check_empty_tag_lock(getfield(q, :inds))
         return q
     end
 
@@ -648,7 +638,6 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{<:Any, R
             qlabels, wmatdata, wmatinfo, RMTs, isdefined, iszero, inds, spaces,
             false, one(T), ntuple(identity, Val(QD)))
         _check_unique_inds(getfield(q, :inds))
-        _check_empty_tag_lock(getfield(q, :inds))
         return q
     end
 
@@ -696,7 +685,6 @@ struct TLArray{T, QD, N, RD, QT, PS<:ProductSymm, M, RMT<:AbstractArray{<:Any, R
             qlabels, wmatdata, wmatinfo, RMTs, isdefined, iszero, inds, spaces,
             conj_flag, scale, perm)
         _check_unique_inds(getfield(q, :inds))
-        _check_empty_tag_lock(getfield(q, :inds))
         return q
     end
 end
@@ -1796,6 +1784,98 @@ The returned tensor owns copies of the selected sector metadata and payloads.
 Base.getindex(q::TLArray,
               selector::Union{Colon, AbstractRange{<:Integer},
                               AbstractVector{<:Integer}, AbstractVector{Bool}}) = TLArray(q, selector)
+
+function _unsymmetric_index_sector(q::TLArray{T, QD, 0}) where {T, QD}
+    active = findall(!, q.iszero)
+    length(active) <= 1 || throw(ArgumentError(
+        "an unsymmetric TLArray must have at most one active sector"))
+    return isempty(active) ? 0 : only(active)
+end
+
+function _unsymmetric_dense_data(q::TLArray{T, QD, 0}) where {T, QD}
+    sector = _unsymmetric_index_sector(q)
+    sector == 0 && return zeros(T, size(q))
+    q.isdefined[sector] || throw(ArgumentError(
+        "cannot index an unevaluated unsymmetric TLArray sector"))
+    rmt, scale = sector_rmt_permuted(q, sector, _identity_rmt_perm(Val(QD)))
+    data = Array{T, QD}(undef, size(q))
+    data .= scale .* rmt
+    return data
+end
+
+Base.Array(q::TLArray{T, QD, 0}) where {T, QD} = _unsymmetric_dense_data(q)
+
+@inline _inverse_phys_perm(perm::NTuple{QD, Int}) where {QD} =
+    ntuple(i -> findfirst(==(i), perm)::Int, Val(QD))
+
+@inline _unsymmetric_trivial_view(q::TLArray{T, QD, 0}) where {T, QD} =
+    !stored_conj(q) && stored_scale(q) == one(T) &&
+    stored_perm(q) == _identity_phys_perm(Val(QD))
+
+function _unsymmetric_getindex(q::TLArray{T, QD, 0}, I...) where {T, QD}
+    indices = Base.to_indices(q, axes(q), I)
+    result = getindex(_unsymmetric_dense_data(q), indices...)
+    result isa Number && return result
+
+    retained_legs = Int[]
+    for (leg, index) in enumerate(indices)
+        index isa Integer || push!(retained_legs, leg)
+    end
+    ndims(result) == length(retained_legs) || return result
+    result_inds = Tuple(inds(q)[leg] for leg in retained_legs)
+    return TLArray(Array(result), result_inds; copy=false)
+end
+
+"""Read elements of an unsymmetric `TLArray` using ordinary Julia array indexing.
+
+Integer indexing on symmetric tensors selects sector slots; for unsymmetric
+tensors it indexes the tensor elements. Use `TLArray(q, selector)` to select
+sector slots explicitly.
+"""
+Base.getindex(q::TLArray{T, QD, 0}, I...) where {T, QD} =
+    _unsymmetric_getindex(q, I...)
+Base.getindex(q::TLArray{T, QD, 0}, I::Union{Colon,
+              AbstractRange{<:Integer}, AbstractVector{<:Integer},
+              AbstractVector{Bool}}) where {T, QD} =
+    _unsymmetric_getindex(q, I)
+Base.length(q::TLArray{T, QD, 0}) where {T, QD} = prod(size(q); init=1)
+Base.firstindex(q::TLArray{T, QD, 0}) where {T, QD} = 1
+Base.lastindex(q::TLArray{T, QD, 0}) where {T, QD} = length(q)
+Base.IndexStyle(::Type{<:TLArray{T, QD, 0}}) where {T, QD} = IndexLinear()
+
+function Base.setindex!(q::TLArray{T, QD, 0}, value, I...) where {T, QD}
+    sector = _unsymmetric_index_sector(q)
+    if sector == 0
+        defined = findall(q.isdefined)
+        length(defined) == 1 && (sector = only(defined))
+    end
+    sector == 0 && throw(ArgumentError(
+        "cannot assign into an unsymmetric TLArray with no defined sector"))
+    q.isdefined[sector] || throw(ArgumentError(
+        "cannot assign into an unevaluated unsymmetric TLArray sector"))
+    scale = stored_scale(q)
+    iszero(scale) && throw(ArgumentError(
+        "cannot assign through an unsymmetric TLArray view with zero scale"))
+
+    raw = q.RMTs[sector]
+    if _unsymmetric_trivial_view(q)
+        setindex!(raw, value, I...)
+        q.iszero[sector] = _rmt_iszero(raw)
+        return q
+    end
+
+    data = _unsymmetric_dense_data(q)
+    setindex!(data, value, I...)
+    logical = data ./ scale
+    if stored_conj(q) && !(T <: Real)
+        logical .= conj.(logical)
+    end
+    stored_data = stored_perm(q) == _identity_phys_perm(Val(QD)) ? logical :
+                  permutedims(logical, _inverse_phys_perm(stored_perm(q)))
+    copyto!(raw, stored_data)
+    q.iszero[sector] = _rmt_iszero(raw)
+    return q
+end
 
 """
     _scalar_wmat_product(q, sector_index::Int) -> Float64
@@ -3255,3 +3335,4 @@ include("qr.jl")
 include("eig.jl")
 include("permute.jl")
 include("lazy.jl")
+include("fuselegs.jl")

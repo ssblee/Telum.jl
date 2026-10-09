@@ -52,6 +52,16 @@ end
     @test norm(tuple_sum - q.Sz) < 1e-12
 end
 
+@testset "lazy contraction dimensions with deferred permutation" begin
+    A = reshape(collect(1.0:6.0), 2, 3)
+    B = reshape(collect(1.0:12.0), 3, 4)
+    left = permutedims(TLArray(A, (TLIndex("free", '+'), TLIndex("bond", '-'))), (2, 1))
+    right = TLArray(B, (TLIndex("bond", '+'), TLIndex("out", '-')))
+
+    result = contract(left, (1,), right, (1,))
+    @test Array(to_sparse_array(result)) ≈ A * B
+end
+
 @testset "lazy contraction materialization" begin
     q = getLocalSpace(SpinOptions(nothing, 1))
     left = TLArray(q.I, ("left", "bond"))

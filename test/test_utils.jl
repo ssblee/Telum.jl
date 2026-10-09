@@ -487,7 +487,7 @@ function test_getIdentity_direct_contract(option::LocalSpaceOptions)
     @test Telum.inds(a) == Telum.inds(a_pairs)
     @test Telum.spaces(a) == Telum.spaces(a_pairs)
     _test_tlarrays_same_sector_storage(a, a_pairs)
-    @test Telum.inds(a)[1] == TLIndex(Telum.inds(qi)[1].itags, '-', Telum.inds(qi)[1].plev, Telum.inds(qi)[1].lock, Telum.inds(qi)[1].dual)
+    @test Telum.inds(a)[1] == TLIndex(Telum.inds(qi)[1].itag, '-', Telum.inds(qi)[1].plev, Telum.inds(qi)[1].lock, Telum.inds(qi)[1].dual)
     @test Telum.spaces(a)[1] == Telum.spaces(qi)[1]
     @test Telum.inds(a)[2] == TLIndex("fused", '-')
 
@@ -599,8 +599,8 @@ function test_abelian_legflip_views()
     u1_space = getLocalSpace(FermionOptions(U1), ("left", "right", "op"))
     no_symm_data = reshape(ComplexF64.(1:24) .+ im .* ComplexF64.(24:-1:1), 2, 3, 4)
     no_symm = TLArray(no_symm_data;
-                      itags=("dense1", "dense2", "dense3"),
-                      dirs=('+', '-', '+'))
+                      itag=("dense1", "dense2", "dense3"),
+                      dir=('+', '-', '+'))
 
     sources = (
         (u1_space.F, 2),
@@ -878,7 +878,7 @@ function test_eigen_multi_sector()
             Matrix(Symmetric(randn(5, 5))),
             Matrix(Symmetric(randn(10, 10))),
         ]
-        hermitian_q = _test_multi_sector_matrix_tlarray(hermitian_blocks)
+        hermitian_q = _test_multi_sector_matrix_tlarray(hermitian_block)
         hermitian_result = _test_eigen_assert_reconstructs(hermitian_q; hermitian=true)
         @test _test_eigen_expanded_eigenvalues(hermitian_result) ≈
               _test_eigen_dense_eigenvalues(hermitian_q; hermitian=true) atol=1e-10 rtol=1e-10
@@ -891,7 +891,7 @@ function test_eigen_multi_sector()
         complex_blocks[1][2, 1] -= 0.25 + 1.0im
         complex_blocks[2][1, 2] += 2.0 - 0.5im
         complex_blocks[2][2, 1] -= 1.0 + 1.5im
-        complex_q = _test_multi_sector_matrix_tlarray(complex_blocks)
+        complex_q = _test_multi_sector_matrix_tlarray(complex_block)
         complex_result = _test_eigen_assert_reconstructs(complex_q; tol=1e-8)
         @test !isnothing(complex_result.V_inv)
         @test _test_eigen_expanded_eigenvalues(complex_result) ≈
@@ -917,7 +917,7 @@ function test_eigen_tlarrayview()
             Matrix(Symmetric(randn(5, 5))),
             Matrix(Symmetric(randn(10, 10))),
         ]
-        hermitian_q = _test_multi_sector_matrix_tlarray(hermitian_blocks)
+        hermitian_q = _test_multi_sector_matrix_tlarray(hermitian_block)
         hermitian_view = 2.0 * hermitian_q
         @test hermitian_view isa TLArray
         @test hermitian_view.scale == 2.0
@@ -932,7 +932,7 @@ function test_eigen_tlarrayview()
         complex_blocks[1][2, 1] -= 0.25 + 1.0im
         complex_blocks[2][1, 2] += 2.0 - 0.5im
         complex_blocks[2][2, 1] -= 1.0 + 1.5im
-        complex_q = _test_multi_sector_matrix_tlarray(complex_blocks)
+        complex_q = _test_multi_sector_matrix_tlarray(complex_block)
         complex_view = (1.5 - 0.25im) * complex_q
         @test complex_view isa TLArray
         @test complex_view.scale == 1.5 - 0.25im
@@ -954,7 +954,7 @@ end
 #   ct   – rank-4 tensor   (QD = 4, after F * identity contraction)
 #
 # For (b) to work every pair (q leg l, conj(q) leg l) must form a valid
-# contraction pair: same itags, opposite directions.  conj() flips all
+# contraction pair: same itag, opposite directions.  conj() flips all
 # directions, so the pairing is always leg-for-leg given that all legs of q
 # already carry distinct TLIndex values (full-rank contraction → 0D scalar).
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1011,8 +1011,8 @@ function test_lock_reduce(option::LocalSpaceOptions)
     q = getLocalSpace(option, ("lur", "lur", "op"))
 
     # ── Scenario 1: matching leg present → lock decrements ───────────────────
-    # q.I has legs ('+', '-').  A1 is built from q.I (same dirs), B1 from q.I'
-    # (dirs flipped to ('-', '+')) so they can be contracted on "ct".
+    # q.I has legs ('+', '-').  A1 is built from q.I (same dir), B1 from q.I'
+    # (dir flipped to ('-', '+')) so they can be contracted on "ct".
     # A1: ("ct" '+' lock=0,  "free" '-' lock=1)
     # B1: ("ct" '-' lock=0,  "free" '+' lock=0)
     # Contract A1*B1 on "ct"; A1's "free" lock=1 has a match in B1 → lock → 0.

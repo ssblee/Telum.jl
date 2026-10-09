@@ -527,6 +527,44 @@ function _eigen_general(q::AbstractTLArray{T, 2, N, RD, QT},
     return EigenResult(V, D, Vinv, eig_list)
 end
 
+function _eigen_unsymmetric(q::AbstractTLArray{T, 2, 0, RD},
+                            eig_tag::AbstractString = "eig";
+                            hermitian::Bool=false) where {T, RD}
+    qinds = inds(q)
+    dirs = (qinds[1].dir, qinds[2].dir)
+    sL, sR = size(q)
+    sL == sR || throw(ArgumentError("eigen: RMT must be square for eigendecomposition, got ($sL, $sR)"))
+    # Unsymmetric TLArrays have no sector decomposition. In particular, a
+    # zero tensor can have no evaluated RMT at all, so read its logical dense
+    # value (which supplies zeros for absent sectors) instead of requesting
+    # sector 1 directly.
+    mat = Matrix(reshape(_unsymmetric_dense_data(q), sL, sR))
+
+    F = hermitian ? eigen(Hermitian(mat)) : eigen(mat)
+    vals = F.values
+    vectors = F.vectors
+    vectors_inv = hermitian ? nothing : inv(vectors)
+    T_out = eltype(vals)
+    eig_list = Tuple{T_out, Int, Tuple{}, Int}[(vals[j], 1, (), j) for j in eachindex(vals)]
+    sort!(eig_list; by = x -> _eig_sort_value(x[1], hermitian))
+
+    orig_out = qinds[2]
+    orig_in = qinds[1]
+    inds_D = (TLIndex(eig_tag, dirs[1]), TLIndex(eig_tag, dirs[2]))
+    inds_V = (TLIndex(orig_out.itags, dirs[1], orig_out.plev, orig_out.lock, orig_out.dual),
+              TLIndex(eig_tag, dirs[2]))
+    D = TLArray(Matrix(Diagonal(vals)), inds_D)
+    V = TLArray(vectors, inds_V)
+    Vinv = if hermitian
+        nothing
+    else
+        inds_Vinv = (TLIndex(eig_tag, dirs[1]),
+                     TLIndex(orig_in.itags, dirs[2], orig_in.plev, orig_in.lock, orig_in.dual))
+        TLArray(vectors_inv, inds_Vinv)
+    end
+    return EigenResult(V, D, Vinv, eig_list)
+end
+
 function LinearAlgebra.eigen(q::AbstractTLArray{T, 2, N, RD},
                              eig_tag::AbstractString = "eig";
                              hermitian::Bool = false) where {T, N, RD}
@@ -537,6 +575,8 @@ function LinearAlgebra.eigen(q::AbstractTLArray{T, 2, N, RD},
     if !use_hermitian
         use_hermitian = _hermiticity_ratio(q_work) <= _EIG_HERMITIAN_RTOL
     end
+
+    N == 0 && return _eigen_unsymmetric(q_work, eig_tag; hermitian=use_hermitian)
 
     return use_hermitian ? _eigen_hermitian(q_work, eig_tag) : _eigen_general(q_work, eig_tag)
 end

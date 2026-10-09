@@ -146,7 +146,7 @@ builds a type encoding that product symmetry.
   symmetry tuple and index tuple.
 - `empty_tlarray(q; T=Float64)`: create an empty tensor with `q`'s symmetries and
   indices.
-- `getvac(q, itags=("", ""))`: build a rank-2 vacuum tensor with one incoming
+- `getvac(q, itag=("", ""))`: build a rank-2 vacuum tensor with one incoming
   and one outgoing trivial leg.
 - `getIdentity((q, leg)...; itag="", plev=0, lock=0)`: build a fused identity
   tensor for one or more selected legs.

@@ -111,7 +111,7 @@ end
     end
 
     q4 = TLArray(reshape(collect(1.0:36.0), 2, 3, 2, 3);
-                 itags=("u1", "u2", "u3", "u4"))
+                 itag=("u1", "u2", "u3", "u4"))
     @testset "rank-four noncontiguous bipartition" begin
         diff = test_svdQS(q4, (1, 3); cutoff=0.0, verbose=false)
         @test diff < 1e-10
@@ -188,7 +188,7 @@ end
     _test_qr_reconstructs(q0.Sm, (1,))
 
     q4 = TLArray(reshape(collect(1.0:36.0), 2, 3, 2, 3);
-                 itags=("qr_u1", "qr_u2", "qr_u3", "qr_u4"))
+                 itag=("qr_u1", "qr_u2", "qr_u3", "qr_u4"))
     _test_qr_reconstructs(q4, (1, 3); tol=1e-10)
 
     q_u1 = getLocalSpace(SpinOptions(:U1, 1))

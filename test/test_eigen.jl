@@ -75,6 +75,42 @@ end
     @test !isnothing(general_result.V_inv)
 end
 
+@testset "eigen diagonalizes unsymmetric tensors" begin
+    A = [1.0 2.0 0.0; -3.0 4.0 1.0; 0.5 0.0 2.0]
+    q = TLArray(A, (TLIndex("phys", '+'), TLIndex("phys", '-')))
+    result = eigen(q)
+    @test !isnothing(result.V_inv)
+    @test sort([entry[1] for entry in result.eig_list]; by=abs) ≈
+          sort(eigvals(A); by=abs)
+    @test _dense_matrix(_eigen_reconstruction(result)) ≈ A
+
+    H = [2.0 1.0; 1.0 3.0]
+    qH = TLArray(H, (TLIndex("phys", '+'), TLIndex("phys", '-')))
+    resultH = eigen(qH)
+    @test isnothing(resultH.V_inv)
+    @test _dense_matrix(_eigen_reconstruction(resultH)) ≈ H
+
+    result_zero = eigen(zero(qH))
+    @test isnothing(result_zero.V_inv)
+    @test all(iszero, _expanded_eigenvalues(result_zero))
+end
+
+@testset "unsymmetric matrix operations honor deferred views" begin
+    data = ComplexF64[1 + 2im 3 - im; -2 + 0.5im 4 - 3im]
+    base = TLArray(data, (TLIndex("row", '+'), TLIndex("col", '-')))
+    q = 2.5 * conj(permutedims(base, (2, 1)))
+    dense = 2.5 .* conj.(transpose(data))
+
+    @test Array(q) ≈ dense
+    @test diag(q) ≈ LinearAlgebra.diag(dense)
+    @test tr(q) ≈ LinearAlgebra.tr(dense)
+    @test det(q) ≈ LinearAlgebra.det(dense)
+
+    qinv = inv(q)
+    @test _dense_matrix(qinv) ≈ LinearAlgebra.inv(dense)
+    @test inds(qinv) == (Telum.change_dir(inds(q)[2]), Telum.change_dir(inds(q)[1]))
+end
+
 @testset "eigen accepts lazy contraction input" begin
     left = _one_sector_matrix_tlarray(Matrix(Symmetric(randn(5, 5)));
                                      tags=("phys", "bond"))

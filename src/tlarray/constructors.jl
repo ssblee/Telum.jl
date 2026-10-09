@@ -25,12 +25,12 @@ end
 
 """
     TLArray(A::AbstractArray, inds::NTuple{QD, TLIndex}; copy=nothing) -> TLArray
-    TLArray(A::AbstractArray; itags="", dirs='+', copy=nothing) -> TLArray
+    TLArray(A::AbstractArray; itag="", dir='+', copy=nothing) -> TLArray
 
 Copy a Julia array into a tensor with no symmetry. Each leg has the single
 trivial q-label `()` and multiplicity equal to the corresponding array
 dimension; the full array is stored as the tensor's sole RMT block. `inds`
-provides complete per-leg metadata. In the keyword form, `itags` and `dirs`
+provides complete per-leg metadata. In the keyword form, `itag` and `dir`
 may be scalars broadcast to every leg or tuples/vectors with one entry per
 leg. Directions must be `'+'` or `'-'` and default to `'+'`.
 
@@ -72,12 +72,12 @@ function _array_tensor_leg_values(value, qd::Int, name::AbstractString)
     return values
 end
 
-function TLArray(A::AbstractArray{T, QD}; itags="", dirs='+',
+function TLArray(A::AbstractArray{T, QD}; itag="", dir='+',
                  copy::Union{Nothing, Bool}=nothing) where {T<:Number, QD}
-    itag_values = _array_tensor_leg_values(itags, QD, "itags")
-    dir_values = _array_tensor_leg_values(dirs, QD, "dirs")
+    itag_values = _array_tensor_leg_values(itag, QD, "itag")
+    dir_values = _array_tensor_leg_values(dir, QD, "dir")
     all(dir -> dir == '+' || dir == '-', dir_values) || throw(ArgumentError(
-        "dirs entries must be '+' or '-', got $dir_values"))
+        "dir entries must be '+' or '-', got $dir_values"))
     inds = ntuple(leg -> TLIndex(String(itag_values[leg]), dir_values[leg]), Val(QD))
     return TLArray(A, inds; copy=copy)
 end
@@ -178,13 +178,13 @@ function _allsectors_oms(symm::NTuple{N, Any}, inds::NTuple{QD, TLIndex},
 end
 
 """
-    allsectors_tlarray(symm, spaces, dirs; itags="", plev=0, lock=0,
+    allsectors_tlarray(symm, spaces, dirs; itag="", plev=0, lock=0,
                        dual=false, T=Float64) -> TLArray
 
 Construct a concrete invariant tensor containing every q-label sector allowed
 by `spaces` and `dirs`. `symm` is the tuple of symmetry types; each entry of
 `spaces` is a leg space list of `(qlabel, multiplicity)` pairs; and `dirs`
-contains `+` or `-` for each leg. `itags`, `plev`, `lock`, and `dual` may each
+contains `+` or `-` for each leg. `itag`, `plev`, `lock`, and `dual` may each
 be a scalar or have one entry per leg.
 
 Every allowed sector owns a zero RMT whose physical dimensions are the supplied
@@ -195,13 +195,13 @@ sectors. Use `random_allsectors_tlarray` to fill the same sector structure with
 random RMT data.
 """
 function allsectors_tlarray(symm::NTuple{N, Any}, spaces::NTuple{QD, AbstractVector}, dirs;
-                            itags="", plev=0, lock=0, dual=false,
+                            itag="", plev=0, lock=0, dual=false,
                             T::Type{<:Number}=Float64) where {N, QD}
     dir_values = Tuple(dirs)
-    length(dir_values) == QD || throw(ArgumentError("dirs must have one entry per leg ($QD)"))
+    length(dir_values) == QD || throw(ArgumentError("dir must have one entry per leg ($QD)"))
     all(dir -> dir == '+' || dir == '-', dir_values) ||
-        throw(ArgumentError("dirs entries must be '+' or '-', got $dir_values"))
-    itag_values = _allsectors_property(itags, QD, "itags")
+        throw(ArgumentError("dir entries must be '+' or '-', got $dir_values"))
+    itag_values = _allsectors_property(itag, QD, "itag")
     plev_values = _allsectors_property(plev, QD, "plev")
     lock_values = _allsectors_property(lock, QD, "lock")
     dual_values = _allsectors_property(dual, QD, "dual")
@@ -1009,16 +1009,16 @@ function addSingleton(q::AbstractTLArray{T, QD, N, RD, QT, PS, M, RMT}, legs;
 end
 
 """
-    getvac(q::TLArray, itags::Tuple{Vararg{AbstractString, 2}}=("", "")) -> TLArray
+    getvac(q::TLArray, itag::Tuple{Vararg{AbstractString, 2}}=("", "")) -> TLArray
 
 Build the rank-2 vacuum TLArray associated with `q`.
 
 The result keeps the same symmetry tuple as `q`, has one incoming leg and one
 outgoing leg, and contains exactly one trivial sector with RMT dimension 1 on
-each leg. If `itags` is provided, it is used as the tags of the two legs.
+each leg. If `itag` is provided, it is used as the tags of the two legs.
 """
 function getvac(q::TLArray{T, QD, N, RD},
-                itags::Tuple{Vararg{AbstractString, 2}}=("", "")) where {T, QD, N, RD}
+                itag::Tuple{Vararg{AbstractString, 2}}=("", "")) where {T, QD, N, RD}
     trivial_qlabels = zero_qlabels(q)
     space_entry = (trivial_qlabels, 1)
 
@@ -1028,7 +1028,7 @@ function getvac(q::TLArray{T, QD, N, RD},
     wmatdata, wmatinfo = _unit_wmat_storage(productsymm(q), 1)
     rmt_data = fill(one(T), ntuple(_ -> 1, N + 2))
     RMTs = Array{T, N + 2}[rmt_data]
-    inds = (TLIndex(itags[1], '+'), TLIndex(itags[2], '-'))
+    inds = (TLIndex(itag[1], '+'), TLIndex(itag[2], '-'))
     QT = qlabeltype(q)
     space_template = Vector{Tuple{QT, Int}}([space_entry])
     spaces = (copy(space_template), copy(space_template))

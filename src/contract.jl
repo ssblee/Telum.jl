@@ -298,6 +298,7 @@ may define specialized accessors when they can expose compatible dense storage
 without changing the contraction preparation interface.
 """
 @inline _rmt_array_data(rmt::Array{T, RD}) where {T, RD} = rmt
+@inline _rmt_array_data(rmt::AbstractArray) = Array(rmt)
 
 """
     _permuted_rmt_type(::Type{RMT}) -> Type
@@ -310,6 +311,7 @@ represented in the grouped `(free, contracted, om)` layout.
 """
 @inline _permuted_rmt_type(::Type{<:Array{T,RD}}) where {T,RD} = Array{T,3}
 @inline _permuted_rmt_type(::Type{<:DiagRMT{T,RD}}) where {T,RD} = DiagRMT{T,3}
+@inline _permuted_rmt_type(::Type{<:AbstractArray{T,RD}}) where {T,RD} = Array{T,3}
 
 """
     _prepared_axis_group(axis, perm, ::Val{NF}, ::Val{CN}) -> Int
@@ -592,9 +594,9 @@ end
 Return grouped prepared dimensions for one source sector.
 
 `q` supplies the source sector shape and any deferred physical permutation.
-`sector` is the stable source slot. `perm` is expressed in visible RMT axes and
-is translated through `_effective_rmt_perm` before collapsing dimensions with
-`_prepared_rmt_dims_from_size`.
+`sector` is the stable source slot. `_sector_rmt_size` returns dimensions in
+visible logical-axis order, so `perm` is applied directly when collapsing
+dimensions with `_prepared_rmt_dims_from_size`.
 """
 function _prepared_rmt_dims(q::AbstractTLArray{T, QD, N, RD},
                             sector::Int,
@@ -602,8 +604,11 @@ function _prepared_rmt_dims(q::AbstractTLArray{T, QD, N, RD},
                             ::Val{NF},
                             ::Val{CN},
                             ::Val{N}) where {T, QD, N, RD, NF, CN}
-    eff_perm = _effective_rmt_perm(q, perm, Val(RD))
-    return _prepared_rmt_dims_from_size(_sector_rmt_size(q, sector), eff_perm,
+    # `_sector_rmt_size` already reports logical-axis dimensions, including
+    # any deferred physical permutation. Apply the contraction layout in that
+    # same logical axis space; translating through stored_perm here would
+    # permute the dimensions a second time.
+    return _prepared_rmt_dims_from_size(_sector_rmt_size(q, sector), perm,
                                         Val(NF), Val(CN), Val(N))
 end
 

@@ -103,6 +103,7 @@ export svd_leg, svd_cgtsvd
 export empty_tlarray, qlabeltype, zero_qlabels, getvac, random_similar
 export allsectors_tlarray, random_allsectors_tlarray
 export addSingleton, deleteSingleton, ⊗
+export fuselegs, splitleg
 export oplus, getsub
 export complete_oplus_matrix
 export printmeta

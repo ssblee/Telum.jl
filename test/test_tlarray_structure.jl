@@ -97,9 +97,9 @@ end
 
 @testset "TLArray array storage copy option" begin
     data = reshape(collect(1.0:6.0), 2, 3)
-    copied = TLArray(data; itags=("copy_left", "copy_right"), copy=true)
-    shared_default = TLArray(data; itags=("default_left", "default_right"))
-    shared = TLArray(data; itags=("share_left", "share_right"), copy=false)
+    copied = TLArray(data; itag=("copy_left", "copy_right"), copy=true)
+    shared_default = TLArray(data; itag=("default_left", "default_right"))
+    shared = TLArray(data; itag=("share_left", "share_right"), copy=false)
 
     @test copied.RMTs[1] !== data
     @test shared_default.RMTs[1] === data
@@ -190,7 +190,7 @@ end
         [(((0,), (0,)), 3), (((1,), (1,)), 4)],
     )
     q = allsectors_tlarray(symmetries, spaces, ('+', '-');
-                            itags=("left", "right"), plev=(1, 0), lock=(2, 0))
+                            itag=("left", "right"), plev=(1, 0), lock=(2, 0))
 
     @test Telum.inds(q) == (TLIndex("left", '+', 1, 2), TLIndex("right", '-', 0, 0))
     @test Telum.spaces(q) == spaces
@@ -712,7 +712,7 @@ end
     add_tagged = additag(add_lazy, 1, "marked")
     @test add_tagged isa Telum.AddSingletonTLArray
     @test add_tagged.arr === add_lazy.arr
-    @test occursin("marked", String(Telum.inds(add_tagged)[1].itags))
+    @test occursin("marked", String(Telum.inds(add_tagged)[1].itag))
 
     aux = TLArray((), [((),)], Float64[], [Telum._empty_wmat_info(Val(0))],
                   [reshape([1.0], 1)], (TLIndex("aux", '-'),), ([((), 1)],))
@@ -751,13 +751,13 @@ end
     @test Telum.inds(delete_noprime)[1].plev == 0
     delete_retagged = replaceitag(additag(delete_lazy, 1, "old"), 1, "old"=>"new")
     @test delete_retagged isa Telum.DeleteSingletonTLArray
-    @test occursin("new", String(Telum.inds(delete_retagged)[1].itags))
+    @test occursin("new", String(Telum.inds(delete_retagged)[1].itag))
     delete_cleared = removeitag(delete_retagged, 1, "new")
     @test delete_cleared isa Telum.DeleteSingletonTLArray
-    @test !occursin("new", String(Telum.inds(delete_cleared)[1].itags))
+    @test !occursin("new", String(Telum.inds(delete_cleared)[1].itag))
     delete_settag = setitag(delete_lazy, 1, "only")
     @test delete_settag isa Telum.DeleteSingletonTLArray
-    @test String(Telum.inds(delete_settag)[1].itags) == "only"
+    @test String(Telum.inds(delete_settag)[1].itag) == "only"
 
     lazy_view_source = Telum._lazy_contract(left, (2,), right, (1,))
     view = 2 * permutedims(addSingleton(lazy_view_source, 3; itag="aux", dir='+'), (2, 1, 3))
@@ -861,7 +861,7 @@ end
 
     # Scalar arithmetic is defined as adding/subtracting a scaled identity on the
     # same rank-2 space, not as touching every stored sector directly.
-    idq = getIdentity(q, 2; itag=Telum.inds(q)[2].itags)
+    idq = getIdentity(q, 2; itag=Telum.inds(q)[2].itag)
     idq = TLArray(idq, Telum.inds(q))
 
     @test norm((q + 2.5) - (q + 2.5 * idq)) < 1e-10
@@ -1001,4 +1001,31 @@ end
         out = String(take!(buf))
         @test occursin("4D TLArray", out)
     end
+end
+@testset "unsymmetric element indexing preserves tensor legs" begin
+    data = reshape(collect(1.0:24.0), 2, 3, 4)
+    q = TLArray(data, (TLIndex("a", '+'), TLIndex("b", '-'), TLIndex("c", '+')))
+
+    @test q[1, 2, 3] == data[1, 2, 3]
+    sliced = q[2:2, 2, 3]
+    @test sliced isa TLArray
+    @test size(sliced) == (1,)
+    @test inds(sliced) == (inds(q)[1],)
+
+    sliced2 = q[:, 3, :]
+    @test sliced2 isa TLArray
+    @test Array(sliced2) == data[:, 3, :]
+    @test inds(sliced2) == (inds(q)[1], inds(q)[3])
+end
+
+@testset "unsymmetric matrix linear algebra" begin
+    data = [2.0 1.0; 3.0 4.0]
+    q = TLArray(data, (TLIndex("row", '+'), TLIndex("col", '-')))
+
+    @test diag(q) == diag(data)
+    @test tr(q) == tr(data)
+    @test det(q) ≈ det(data)
+    @test Array(inv(q)) ≈ inv(data)
+    @test inds(inv(q)) == (Telum.change_dir(inds(q)[2]), Telum.change_dir(inds(q)[1]))
+    @test _dense_matrix(q * inv(q)) ≈ Matrix{Float64}(I, 2, 2)
 end

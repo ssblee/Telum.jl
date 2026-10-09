@@ -27,6 +27,8 @@ Pkg.develop(path = ".")
   and leg utilities.
 - [DMRG tutorial](dmrg-tutorial.md): a complete two-site DMRG calculation for the
   Majumdar--Ghosh model.
+- [Hubbard port requirements](hubbard-port-requirements.md): scope and design
+  requirements for porting the QSMPSLib Hubbard MPO and initial MPS setup.
 - [Local spaces](local-spaces.md): mixed symmetries and custom local-space definitions.
 - [Advanced topics](advanced.md): shared tensor storage, lazy expressions, and LurCGT database usage.
 

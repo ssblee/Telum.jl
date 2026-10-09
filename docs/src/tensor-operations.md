@@ -206,6 +206,122 @@ getIdentity(ss, (1, 2); itag="out") # Keyword arguments are for the properties o
 ```
 
 
+# `fuselegs` behavior and design notes
+
+The `fuselegs` operation combines selected legs of one tensor into a single
+leg and preserves this ordering contract.
+
+The interface is `fuselegs(q, legs; itag="", dir='-', plev=0, lock=0)`.
+The fused-leg keywords are scalar: `itag` is a string, `dir` is a character,
+and `plev` and `lock` are integers. The default fused-leg direction is
+outgoing (`dir='-'`). At least two distinct legs must be selected.
+
+1. Unselected legs keep their relative order.
+2. The fused leg occupies the position of the earliest selected leg in the
+   input's logical order. For example, fusing legs `(2, 4)` of a six-leg tensor
+   produces logical leg order `(1, fused, 3, 5, 6)`.
+3. The order of `legs` is significant and determines the selected-leg order in
+   the fused basis. Do not sort the selected legs before constructing the
+   fusion.
+4. For a tensor with no symmetries, resolve its deferred view state, then
+   permute its logical legs into this order: unselected legs before the earliest
+   selected leg, selected legs in caller-specified order, and all remaining
+   unselected legs in their original relative order. Reshape the now-contiguous
+   selected axes into the fused leg. This directly produces the required final
+   leg order. Allocate new RMT storage unless both (a) `conj`, `perm`, and
+   `scale` are trivial and (b) the selected legs are adjacent in the same order
+   as `legs`; only then may the reshape share RMT storage. Do not mutate the
+   input. Return the result with default `perm`, `conj`, and `scale` state.
+5. For a symmetric tensor, including one with only Abelian symmetries, use the
+   symmetry-aware route: construct the fusion isometry with `getIdentity` and
+   contract the selected legs against it, taking the input's view state into
+   account. If the requested fused-leg direction is incoming, call `legflip`
+   on the fused result after contraction. The result has trivial `conj` and
+   `scale` state. A reshape alone does not encode the symmetry labels,
+   Clebsch–Gordan basis, or fusion multiplicities.
+6. For the symmetric path, apply the final placement permutation through the
+   result's `perm` field only; do not reorder or copy RMT payload just to place
+   the fused leg.
+7. Return a pair `(fused_tensor, isometry)`. For symmetric tensors, `isometry`
+   is the isometry returned by the `getIdentity` call used for the fusion. For
+   an unsymmetric tensor, return `(fused_tensor, nothing)`.
+
+## Risks and recommendation
+
+The principal risk is an order mismatch between the fused basis and the
+logical leg order. That can leave the tensor's values numerically plausible
+while making later contractions use the wrong basis. Non-Abelian fusion adds
+Clebsch–Gordan and outer-multiplicity conventions; the symmetric route must
+preserve those conventions while the final logical permutation remains a
+metadata-only change. The returned isometry must use the same caller-specified
+selected-leg ordering and fused-leg convention as `fused_tensor`.
+
+Place the fused leg at the minimum selected logical position while preserving
+the caller's selected-leg order for the fusion basis. Test contiguous and
+noncontiguous selections, including reversed caller-supplied order. For
+symmetric inputs, include Abelian and non-Abelian cases and check that the
+returned `perm` changes while the underlying RMT storage does not. A useful
+non-Abelian check reconstructs the original tensor from the fused tensor and
+returned isometry and verifies that their difference has small norm. If the
+fused leg is incoming, contract a 1j-tensor with the `getIdentity` result to
+orient the isometry for reconstruction. For unsymmetric inputs, check the
+prefix/selected/suffix permutation, the storage-sharing exception, allocation
+otherwise, and that all deferred view state is resolved in the result.
+
+
+## `splitleg` for unsymmetric tensors
+
+`splitleg` supports unsymmetric tensors. It replaces one selected leg with two
+or more legs by reshaping that axis; it does not apply symmetry-aware fusion or
+splitting isometries. Symmetric inputs raise an error for now.
+
+The interface is:
+
+```julia
+splitleg(q, leg, dims; itag="", dir=nothing, plev=0, lock=0)
+```
+
+`dims` is a tuple or vector with at least two entries. Entries must be positive
+integers, except that at most one entry may be `-1`; that dimension is inferred
+from the original leg size and the other dimensions. The inferred dimension
+must be a positive integer. Without `-1`, the product of `dims` must equal the
+size of `q` along `leg`.
+
+The replacement legs occupy the selected leg's position, in the order given
+by `dims`; all unselected legs retain their relative order. The leg properties
+use the canonical keyword names: `itag`, `dir`, `plev`, and `lock`. Each keyword
+may be a scalar broadcast to all replacement legs or a tuple/vector with one
+value per replacement leg. `itag`, `plev`, and `lock` default to the
+corresponding `addSingleton` defaults; `dir` defaults to the selected leg's
+logical direction. Explicit keyword values override these defaults. Empty tag
+values are allowed, though distinct nonempty tags are recommended when the new
+legs need to be matched later. `splitleg` returns the tensor only.
+
+For an unsymmetric tensor, splitting does not copy, reorder, or mutate the RMT
+elements. The result represents the new logical dimensions as a view of the
+same underlying storage. Interpret `dims` using Julia's column-major reshape
+order, so the first new leg varies fastest. Preserve the tensor's deferred
+permutation, conjugation, and scale state. In-place mutation of tensor data is
+discouraged.
+
+### Risks and recommendation
+
+The original leg size alone does not determine a unique factorization, so the
+caller must specify `dims`. Invalid products, multiple `-1`
+entries, nonintegral inferred dimensions, repeated output tags, or inconsistent
+directions can produce malformed tensor metadata or later contraction errors.
+Reshaping a tensor with deferred `perm` risks confusing logical axis order with
+stored RMT axis order; preserving that mapping is essential.
+
+The implementation validates `dims` and keyword lengths before constructing
+the result, and preserves input leg order while representing the split as a
+no-copy view. Tests should cover explicit dimensions and `-1` inference, column-major
+axis order, splitting the first, middle, and last legs, deferred permutation,
+conjugation and scale, and every generated `TLIndex` property. Verify that the
+result shares the original RMT storage and that symmetric inputs raise the
+documented error.
+
+
 ### What if incoming legs are selected?
 
 When an incoming leg is selected, Telum inserts a 1j tensor to invert the

@@ -11,6 +11,7 @@ makedocs(
         "Migrating from QSpace" => "qspace-migration.md",
         "Tensor operations" => "tensor-operations.md",
         "DMRG tutorial" => "dmrg-tutorial.md",
+        "Hubbard port requirements" => "hubbard-port-requirements.md",
         "Local spaces" => "local-spaces.md",
         "Advanced topics" => "advanced.md",
         "AbstractTLArray accessors" => "abstract-tlarray-accessors.md",

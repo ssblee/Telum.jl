@@ -76,6 +76,24 @@ function LinearAlgebra.norm(q::TLArray{T, QD, N}) where {T, QD, N}
     return sqrt(s)
 end
 
+function _unsymmetric_matrix(q::TLArray{T, 2, 0}) where {T}
+    size(q, 1) == size(q, 2) || throw(ArgumentError("linear algebra operation requires a square rank-2 TLArray"))
+    return reshape(_unsymmetric_dense_data(q), size(q, 1), size(q, 2))
+end
+
+function LinearAlgebra.diag(q::TLArray{T, 2, 0}) where {T}
+    return collect(LinearAlgebra.diag(
+        reshape(_unsymmetric_dense_data(q), size(q, 1), size(q, 2))))
+end
+
+LinearAlgebra.tr(q::TLArray{T, 2, 0}) where {T} = LinearAlgebra.tr(_unsymmetric_matrix(q))
+LinearAlgebra.det(q::TLArray{T, 2, 0}) where {T} = LinearAlgebra.det(_unsymmetric_matrix(q))
+
+function LinearAlgebra.inv(q::TLArray{T, 2, 0}) where {T}
+    inv_inds = (change_dir(inds(q)[2]), change_dir(inds(q)[1]))
+    return TLArray(LinearAlgebra.inv(_unsymmetric_matrix(q)), inv_inds)
+end
+
 """
     norm(q::TLArrayContraction) -> Float64
 
