@@ -18,3 +18,4 @@ docs/*
 !docs/make.jl
 !docs/src/
 !docs/src/index.md
+!docs/*.md
