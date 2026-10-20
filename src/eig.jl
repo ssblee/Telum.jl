@@ -289,38 +289,82 @@ function _select_eig_sectors(template::TLArray{T, 2, N, RD, QT, PS, M, RMT},
     return TLArray(symm(template), qlabels_mat, wmatdata_out, wmatinfo_out, RMTs_out, inds(template), spaces_out)
 end
 
+"""
+    _effective_eigen_keep_count(eig_entries, Nkeep, tol; keep_low=true)
+
+Choose a retained count from the count-expansion window. Entries must already
+be stably sorted in the selection direction. Use signed adjacent gaps, choosing
+the earliest cut on ties; a window reaching the spectrum end keeps everything.
+Callers validate the nonnegative count and finite, nonnegative `tol`.
+"""
 function _effective_eigen_keep_count(eig_entries,
                                      Nkeep::Integer,
                                      tol::Real;
-                                     hermitian::Bool)
+                                     keep_low::Bool=true)
     total = length(eig_entries)
-    nkeep_eff = min(Nkeep, total)
-    if !(tol > 0) || nkeep_eff == 0 || nkeep_eff == total
+    nkeep_eff = Int(min(Nkeep, total))
+    if iszero(tol) || nkeep_eff == 0 || nkeep_eff == total
         return nkeep_eff
     end
 
-    candidate_end = min(total, ceil(Int, Nkeep * (1 + Float64(tol))))
+    # Clamp before converting to Int, even if a large finite tol overflows the product.
+    candidate_end = ceil(Int, min(total, nkeep_eff * (1 + Float64(tol))))
     candidate_end <= nkeep_eff && return nkeep_eff
     candidate_end == total && return candidate_end
 
-    sort_vals = [_eig_sort_value(eig_entries[i][1], hermitian) for i in nkeep_eff:candidate_end+1]
-    _, gap_idx = findmax(diff(sort_vals))
-    return nkeep_eff + gap_idx - 1
+    best_cut = nkeep_eff
+    gap = first(eig_entries[best_cut + 1]) - first(eig_entries[best_cut])
+    best_gap = keep_low ? gap : -gap
+    for i in nkeep_eff+1:candidate_end
+        gap = first(eig_entries[i + 1]) - first(eig_entries[i])
+        directed_gap = keep_low ? gap : -gap
+        if directed_gap > best_gap
+            best_gap = directed_gap
+            best_cut = i
+        end
+    end
+    return best_cut
 end
 
-function _split_eigen_result(result::EigenResult,
-                             Nkeep::Integer;
-                             tol::Real=0.1,
-                             hermitian::Bool = isnothing(result.V_inv))
-    @assert Nkeep >= 0 "Nkeep must be non-negative"
-    @assert isfinite(tol) && tol >= 0 "tol must be finite and nonnegative"
+"""
+    _split_eigen_result(result; Nkeep=nothing, threshold=nothing,
+                        keep_low=true, tol=0.1)
+
+Partition real eigenvalues globally by a count window or an inclusive threshold.
+Exactly one selection argument is required. Preserve ascending output lists and
+renumber local indices to match the selected factor storage without mutating
+`result`. Irrep degeneracy does not multiply the selection count.
+"""
+function _split_eigen_result(result::EigenResult;
+                             Nkeep::Union{Nothing, Integer}=nothing,
+                             threshold::Union{Nothing, Real}=nothing,
+                             keep_low::Bool=true,
+                             tol::Real=0.1)
+    isnothing(Nkeep) != isnothing(threshold) ||
+        throw(ArgumentError("supply exactly one of Nkeep and threshold"))
+    isfinite(tol) && tol >= 0 ||
+        throw(ArgumentError("tol must be finite and nonnegative"))
+    if !isnothing(Nkeep)
+        Nkeep >= 0 || throw(ArgumentError("Nkeep must be nonnegative"))
+    else
+        isfinite(threshold) || throw(ArgumentError("threshold must be finite"))
+    end
 
     eig_entries = copy(result.eig_list)
-    sort!(eig_entries; by = x -> _eig_sort_value(x[1], hermitian))
-
-    nkeep_eff = _effective_eigen_keep_count(eig_entries, Nkeep, tol; hermitian=hermitian)
+    # Stable sorting preserves the source order of ties in either direction.
+    sort!(eig_entries; by=first, rev=!keep_low, alg=Base.Sort.MergeSort)
+    nkeep_eff = if isnothing(threshold)
+        _effective_eigen_keep_count(eig_entries, Nkeep, tol; keep_low=keep_low)
+    else
+        count(entry -> keep_low ? first(entry) <= threshold : first(entry) >= threshold,
+              eig_entries)
+    end
     kept_entries = eig_entries[1:nkeep_eff]
     discarded_entries = eig_entries[nkeep_eff+1:end]
+    if !keep_low
+        sort!(kept_entries; by=first, alg=Base.Sort.MergeSort)
+        sort!(discarded_entries; by=first, alg=Base.Sort.MergeSort)
+    end
 
     N = length(symm(result.D))
     kept_picks = Dict{NTuple{N, Tuple{Vararg{Int}}}, Vector{Int}}()
@@ -582,31 +626,38 @@ function LinearAlgebra.eigen(q::AbstractTLArray{T, 2, N, RD},
 end
 
 """
-    discard_eigen(result::EigenResult, Nkeep, tol, kept_tag, discarded_tag; hermitian=isnothing(result.V_inv))
+    discard_eigen(result::EigenResult, kept_tag="eigK", discarded_tag="eigD";
+                  Nkeep=nothing, threshold=nothing, keep_low=true, tol=0.1)
 
-Keep the `Nkeep` smallest eigenvalues, ignoring degeneracy, and return two
-`EigenResult` objects: the kept part and the discarded part.
+Return `(kept, discarded)` eigen-subspaces without mutating `result`. Supply
+exactly one of `Nkeep` and `threshold`. Compare real eigenvalues by signed value:
+`keep_low=true` selects the lowest values, and `false` selects the highest.
+Each eigenvalue entry counts once regardless of its irrep degeneracy.
 
-If `tol > 0`, keep at least `Nkeep` eigenvalues and consider up to
-`ceil(Int, Nkeep * (1 + tol))` total next-smallest eigenvalues, capped by the
-total number available. The actual cut is chosen from that window by the largest
-adjacent gap, so the truncation can move later but never earlier than `Nkeep`.
+With a nonnegative integer `Nkeep`, retain that many entries (or all available).
+`tol=0` uses the exact count; positive `tol` chooses the largest adjacent gap
+between cuts at `Nkeep` and `ceil(Nkeep * (1 + tol))`. Equal gaps choose the
+smaller count. A window reaching the spectrum end keeps everything. `Nkeep=0`
+keeps nothing; eigenvalues equal to zero are counted normally.
+
+With a finite real `threshold`, keep values `<= threshold` when `keep_low=true`
+or `>= threshold` otherwise, using direct comparisons. `tol` does not adjust an
+explicit threshold, but must be finite and nonnegative in either mode. Invalid
+selection combinations, negative counts, or invalid bounds raise `ArgumentError`.
+
+Both results have ascending eigenvalue lists and matching renumbered factor
+indices. `kept_tag` and `discarded_tag` label their eigenvector bonds. Preserve
+`V_inv === nothing` when absent in the input. Complex spectra are outside this
+interface's current scope.
 """
 function discard_eigen(result::EigenResult,
-                       Nkeep::Integer,
-                       tol::Real,
                        kept_tag::AbstractString = "eigK",
                        discarded_tag::AbstractString = "eigD";
-                       hermitian::Bool = isnothing(result.V_inv))
-    kept, discarded = _split_eigen_result(result, Nkeep; tol=tol, hermitian=hermitian)
+                       Nkeep::Union{Nothing, Integer}=nothing,
+                       threshold::Union{Nothing, Real}=nothing,
+                       keep_low::Bool=true,
+                       tol::Real=0.1)
+    kept, discarded = _split_eigen_result(result; Nkeep=Nkeep, threshold=threshold,
+                                         keep_low=keep_low, tol=tol)
     return _retag_eigen_result(kept, kept_tag), _retag_eigen_result(discarded, discarded_tag)
-end
-
-function discard_eigen(result::EigenResult,
-                       Nkeep::Integer,
-                       kept_tag::AbstractString = "eigK",
-                       discarded_tag::AbstractString = "eigD";
-                       tol::Real=0.1,
-                       hermitian::Bool = isnothing(result.V_inv))
-    return discard_eigen(result, Nkeep, tol, kept_tag, discarded_tag; hermitian=hermitian)
 end

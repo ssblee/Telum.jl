@@ -227,8 +227,8 @@ function init_MPS(MPO::Vector{<:TLArray}, Nkeep::Int, Nkeep_last::Int=1;
         end
         e = eigen((Hmat + Hmat') / 2; hermitian=true)
 
-        ek, _ = discard_eigen(e, i == N ? Nkeep_last : Nkeep,
-                              i == N ? "SRight" : "SB,$i", "SD,$i"; tol)
+        ek, _ = discard_eigen(e, i == N ? "SRight" : "SB,$i", "SD,$i";
+                              Nkeep=i == N ? Nkeep_last : Nkeep, tol=tol)
         if i == N && target_sector !== nothing
             alli = findleg(Anow; itag="SL,$i")
             Anow = getsub(Anow, alli, x -> x == target_sector ? Colon() : nothing)

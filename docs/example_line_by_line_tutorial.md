@@ -514,8 +514,8 @@ Purpose:
 Examples:
 
 ```julia
-ek, _ = discard_eigen(e, i==N ? 1 : Nkeep, i==N ? "SRight" : "SB,$i", "SD,$i")
-ek, ed = discard_eigen(e, Nkeep, "K,$si", "D,$si")
+ek, _ = discard_eigen(e, i==N ? "SRight" : "SB,$i", "SD,$i"; Nkeep=i==N ? 1 : Nkeep)
+ek, ed = discard_eigen(e, "K,$si", "D,$si"; Nkeep=Nkeep)
 ```
 
 Typical role:

@@ -224,7 +224,7 @@ Output:
 
 Diagonalize and keep only the 'Nkeep' smallest eigenvalues and eigenvectors. This function 1) checks whether the array is Hermitian, then 2) divides cases and treats them separately. If the input array is Hermitian, it skips checking and run Hermitian version.
 
-There is an argument 'tol' for the discard_eigen function, 0.1 by default. If tol > 0, look at 'Nkeep * tol' more eigenvalues, then find the largest difference between adjacent entries. This becomes the new cutoff. This is introduced to keep the degeneracy near threshold as much as possible.
+Pass `Nkeep` as a keyword to `discard_eigen`. Its `tol` keyword defaults to `0.1`: it expands the count window and selects the largest adjacent eigenvalue gap. If the window reaches the spectrum's end, all entries are kept. Set `tol=0` for an exact count. Alternatively, supply `threshold` instead of `Nkeep` to keep eigenvalues at or below an explicit boundary. Use `keep_low=false` to keep high eigenvalues instead.
 
 The code below has no discarded space because there is only one eigenvalue.
 
@@ -232,7 +232,7 @@ The code below has no discarded space because there is only one eigenvalue.
 
 ```@repl dmrg_tutorial
 e = eigen((Hmat + Hmat') / 2; hermitian=true)
-ek, ed = discard_eigen(e, Nkeep_init, "SB,1", "SD,1"; tol=0.0);
+ek, ed = discard_eigen(e, "SB,1", "SD,1"; Nkeep=Nkeep_init, tol=0.0);
 ```
 
 The last step is to 1) complete the MPS for the first site, and 2) prepare for the next iteration. The tensors created in this step are shown in the figure below.
@@ -271,7 +271,7 @@ function init_MPS(MPO::Vector{<:TLArray}, Nkeep::Int, Nkeep_last::Int=1; tol=0.0
         Hmat = deleteSingleton(getsub(Hnow, bli, x->x==zq ? 1 : nothing), bli)
         e = eigen((Hmat + Hmat') / 2)
 
-        ek, _ = discard_eigen(e, i==N ? Nkeep_last : Nkeep, i==N ? "SRight" : "SB,$i", "SD,$i"; tol)
+        ek, _ = discard_eigen(e, i==N ? "SRight" : "SB,$i", "SD,$i"; Nkeep=i==N ? Nkeep_last : Nkeep, tol=tol)
         MPS[i] = Aprev = Anow * ek.V
         if i < N Hprev = lock(ek.V * Hnow; itag="SB") * ek.V'
         else E, sp = ek.eig_list[1][1], ek.eig_list[1][3] end

@@ -15,7 +15,7 @@ through `svd_cgtsvd`:
 
 ```julia
 svd(q, left_legs; randomize=false, random_mode=:proportional,
-    random_tol=0.1, Nkeep=nothing, random_niter=2, ...)
+    random_tol=0.1, Nkeep=nothing, random_niter=2, random_rng=Random.default_rng(), ...)
 ```
 
 - `randomize=false` preserves today's exact behavior and default results.
@@ -33,6 +33,8 @@ svd(q, left_legs; randomize=false, random_mode=:proportional,
 - Under `random_mode=:per_class`, each class requests up to `Nkeep` candidates.
 - `random_niter` sets the number of power iterations, with a modest default
   (initially 2).
+- `random_rng` supplies the random-number generator, so callers can make
+  results repeatable with a seeded RNG.
 
 When `randomize=false`, ignore all `random_*` options; they must not change
 exact SVD behavior or trigger randomized-option validation. When
@@ -42,15 +44,21 @@ In randomized mode, validate positive `Nkeep`, positive `random_tol`, and
 nonnegative `random_niter`. Reject `randomize=true` with `Nkeep=nothing` using
 an explanatory `ArgumentError`. Validate `random_mode` against `:proportional`
 and `:per_class`. The keyword-only leg-selector overload must forward all
-randomized options. For each class matrix `Aᵢ` with dimensions `mᵢ × nᵢ`,
-define its available singular-value count as `dᵢ = min(mᵢ, nᵢ)`. These counts
-must be derived from class metadata before constructing the dense class
-matrices. In proportional mode, request
-`ceil(Nkeep * (1 + random_tol) * dᵢ / sumⱼ(dⱼ))` candidates from class `i`, then
-cap the request at `dᵢ`. Per-class rounding up can make the summed requests
+randomized options. Use `randomize` as the enable flag. All other randomized SVD options
+start with `random_`; `Nkeep` remains the existing shared SVD keyword. For each
+class matrix `Aᵢ` with dimensions `mᵢ × nᵢ`, define its available singular-value
+count as `dᵢ = min(mᵢ, nᵢ)`. Derive these counts from class metadata before
+constructing the dense class matrices. In proportional mode, request the
+`ceil(Nkeep * (1 + random_tol) * dᵢ / sumⱼ(dⱼ))` largest singular values from
+class `i`, capped at `dᵢ`. Per-class rounding up can make the summed requests
 slightly greater than the nominal `Nkeep * (1 + random_tol)` budget. In
-per-class mode, request `min(dᵢ, Nkeep)` from every class. Use exact SVD for a
-class when its requested candidate count reaches `dᵢ`.
+per-class mode, request the `min(dᵢ, Nkeep)` largest singular values from every
+class. Per-class mode is the accuracy-oriented policy: each class has enough
+candidate slots to contribute to the global top `Nkeep`, though randomized
+approximation can still affect accuracy. Use exact SVD for a class when its
+requested candidate count reaches `dᵢ`. Sort combined candidates and return at
+most the globally selected `Nkeep` values and vectors, subject to existing
+cutoff behavior.
 
 ## Matrix-level library choice
 
@@ -60,8 +68,10 @@ Telum. It exposes a partial SVD API and supports sketching and power iterations.
 Do not use `RandomizedLinAlg.jl`'s `rsvd` as the default: its documentation
 warns that the routine may return large singular pairs without reliably
 finding the largest ones. Before implementation, verify that the selected
-LowRankApprox API supports the planned rank, power-iteration count, and
-complex matrices.
+LowRankApprox API supports the planned rank, power-iteration count, complex
+matrices, and explicit RNG. If it does not, use a small Telum helper based on
+Gaussian sketching, QR orthogonalization, and exact SVD of the projected
+matrix.
 
 ## Algorithm and symmetry boundary
 
@@ -76,41 +86,29 @@ Feed the resulting approximate singular values and factors into the existing
 selection and output-building stages.
 
 Because `Nkeep` is global while randomized subspaces are local to classes,
-using `Nkeep + oversampling` as the rank for every class can still be costly
-and can over-allocate. The implementation should first establish a safe,
-documented allocation policy. A practical first version can cap each class
-sketch rank by `min(size(A)..., Nkeep + oversampling)` and retain the current
-global selection across the approximate candidates. This is a valid candidate
-pool but may miss globally important values if a class needs more candidates;
-measure and document this limitation, and consider adaptive per-class growth
-until the global top `Nkeep` is stable in a later iteration.
-
-Per-class allocation requests at least `Nkeep` candidates from each class and
-therefore gives every class enough candidates to contribute to the global top
-`Nkeep`. Proportional allocation is the default and can be much faster, but
-may allocate fewer than `Nkeep` candidates to a class and miss large singular
-values from that class. Zero matrices and empty classes should follow existing
-exact-path output conventions. `Nkeep=0` is invalid when `randomize=true`.
+allocation affects both cost and the candidate values available to global
+selection. Per-class allocation requests up to `Nkeep` candidates from each
+class and guarantees enough candidate slots for each class to contribute
+to the global top `Nkeep`, subject to randomized approximation error.
+Proportional allocation is the default and can be much faster, but may allocate fewer than `Nkeep` candidates to a class and
+miss large singular values from that class. Skip zero class matrices. As in
+the existing path, singular values smaller than `10^-12` times the largest
+singular value are automatically truncated; empty classes contribute no
+candidates. `Nkeep=0` is invalid when `randomize=true`.
 
 ## Unsymmetric tensor path
 
-The feature also applies to unsymmetric tensors. The implementation must locate
-and route the unsymmetric tensor SVD's dense matrix factorization through the
-same randomized matrix-SVD helper; changing only the symmetric CGT class SVD
-call site is insufficient if the unsymmetric path factors its matrix
-separately. Preserve the unsymmetric path's existing factor shapes, index and
-bond conventions, cutoff behavior, `Nkeep` behavior, `get_lists` semantics,
-and input nonmutation.
+The feature also applies to unsymmetric tensors. Route its dense matrix
+factorization through the randomized matrix-SVD helper; changing only the
+symmetric CGT class call site is insufficient. Preserve the unsymmetric path's
+existing factor shapes, index and bond conventions, cutoff behavior, `Nkeep`
+behavior, `get_lists` semantics, and input nonmutation.
 
-Use the unsymmetric path's actual factorization units for candidate allocation.
-If it produces one dense matrix, treat that as one class with
-`d = min(m, n)`: proportional mode requests up to
-`ceil(Nkeep * (1 + random_tol))` candidates, capped at `d`, while per-class
-mode requests up to `Nkeep`, also capped at `d`. If the path has multiple
-independent blocks, apply the same per-block `dᵢ` allocation formula used for
-symmetry classes. Add integration coverage for both symmetric and unsymmetric
-inputs so enabling randomization does not leave one path on exact SVD by
-accident.
+For an unsymmetric tensor, use the randomized method to find the global
+`Nkeep` largest singular values and corresponding vectors of its dense matrix.
+Add integration coverage for both symmetric and
+unsymmetric inputs so enabling randomization does not leave one path on exact
+SVD by accident.
 
 ## Accuracy and truncation semantics
 
@@ -127,8 +125,8 @@ accident.
 - Reconstructing `U * S * Vd` is approximate when randomization is active.
 - The randomized path must preserve output shapes, index tags, bond-sector
   conventions, `get_lists` structure, and nonmutation of the input.
-- Explain that `oversampling`, `niter`, and `rng` affect approximation quality
-  and reproducibility, while exact mode remains deterministic under the
+- Explain that `random_tol`, `random_niter`, and `random_rng` affect
+  approximation quality and reproducibility, while exact mode remains deterministic under the
   existing dense linear algebra backend.
 
 ## Implementation outline
@@ -138,8 +136,9 @@ accident.
 2. Implement/test a randomized matrix SVD helper for real and complex element
    types, rank-deficient and zero matrices, and dimensions smaller than the
    requested rank. Use QR/orthogonalization at each power iteration.
-3. Thread `randomize`, `oversampling`, `niter`, and `rng` through both public
-   overloads, `svd_std`, and the compatibility alias forwarding path.
+3. Thread `randomize`, `random_mode`, `random_tol`, `random_niter`, and
+   `random_rng` through both public overloads, `svd_std`, and the compatibility
+   alias forwarding path.
 4. Preserve the existing global candidate selection, accounting for the
    per-class sketch rank policy described above.
 5. Document the API and approximation guarantees in `docs/src/tensor-operations.md`
@@ -157,14 +156,16 @@ accident.
   conventions, approximate reconstruction error, global `Nkeep`, cutoff
   bookkeeping, `get_lists`, and input nonmutation.
 - Invalid options: check missing `Nkeep`, nonpositive randomized `Nkeep` or
-  `oversampling`, and invalid `niter` produce clear errors.
+  `random_tol`, and negative `random_niter` produce clear errors.
 - Performance check: compare exact and randomized paths on representative
   large, low-rank cases; do not promise speedups for small or full-rank blocks.
 
-## Open design question
+## Allocation limitation
 
 The first release defaults to proportional allocation with no adaptive
-candidate growth. Users can select `allocation=:per_class` for a more
-conservative candidate pool. Global top-`Nkeep` selection in proportional mode
+candidate growth. Users can select `random_mode=:per_class` for the
+accuracy-oriented candidate pool. Global top-`Nkeep` selection in proportional mode
 is approximate: a class may have important singular values outside its
-computed candidate pool.
+computed candidate pool. Confirm LowRankApprox's rank, iteration, complex
+matrix, and RNG support before implementation; if any are unavailable, use
+the small Telum helper described above.

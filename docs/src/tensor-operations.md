@@ -558,6 +558,62 @@ res.kept_list
 res.trunc_list # Empty vector
 ```
 
+## Randomized SVD
+
+For a large split requiring a small bond dimension, opt into an approximate
+factorization with a positive global `Nkeep`:
+
+```julia
+using Random
+res = svd(ss, (1, 2); randomize=true, Nkeep=20,
+          random_mode=:proportional, random_tol=0.1, random_niter=2,
+          random_oversampling=10,
+          random_rng=MersenneTwister(42), get_lists=true)
+```
+
+Exact SVD remains the default. Both leg-selector overloads and `svd_cgtsvd`
+accept these options. Randomized SVD factors each symmetry class independently
+and preserves the same tensor indices, symmetry metadata, and bond conventions.
+For an unsymmetric tensor, it requests the `Nkeep` largest singular pairs of
+the dense matrix directly.
+
+For a class matrix with `dᵢ = min(mᵢ, nᵢ)`, the default
+`random_mode=:proportional` requests its
+`min(dᵢ, ceil(Nkeep * (1 + random_tol) * dᵢ / sum(dⱼ)))` largest singular-value
+candidates. The default `random_tol=0.1` adds approximately 10% to the candidate
+budget, with rounding up per class. This allocation can omit globally important
+values from a class receiving too few candidates. For the accuracy-oriented
+allocation, use `random_mode=:per_class`: each class requests
+`min(dᵢ, Nkeep)` candidates, guaranteeing enough slots for its contribution to
+the global top `Nkeep`. Values and vectors remain randomized approximations.
+`random_tol` does not affect per-class allocation or unsymmetric input.
+
+`random_oversampling` (default `10`) is a nonnegative integer controlling extra
+Gaussian sketch columns. For `k` requested candidates from an `m × n` class
+matrix, the sketch width is `min(k + random_oversampling, m, n)`. Only the
+leading `k` pairs are returned, so oversampling does not increase class candidate
+budgets or change global `Nkeep`. It applies to both allocation modes and
+unsymmetric tensors. Set it to `0` to use the original sketch width. Larger
+sketches require more memory and computation. Increasing
+`random_niter` adds power iterations, with QR orthogonalization on both sides
+of each iteration, to improve separation of leading singular directions.
+`random_rng` controls randomness; provide a freshly seeded RNG for repeatable
+results. Full-rank requests use exact SVD, and zero class matrices are skipped.
+Speedups depend on class sizes and requested rank; small or nearly full-rank
+classes may not benefit.
+
+Candidates are selected globally in descending order, keeping at most `Nkeep`.
+The existing relative `cutoff` (default `1e-12`) removes small values from this
+candidate pool. If cutoff removes candidates, the result can contain fewer
+than `Nkeep`; the pool is not grown to replace them. With `get_lists=true`,
+`kept_list` and `trunc_list` include only computed candidates. Uncomputed
+singular values appear in neither list, so `trunc_list` does not measure the
+entire discarded spectrum. Reconstruction from `U * S * Vd` is approximate.
+
+Randomized mode validates positive `Nkeep`, finite positive `random_tol`,
+nonnegative integer `random_niter`, a supported `random_mode`, and an
+`AbstractRNG` for `random_rng`. Exact mode ignores all `random_*` options.
+
 
 # QR decomposition
 
@@ -700,17 +756,27 @@ In the Hermitian case, the two legs of the given tensor should have the same ita
 a = eigen(q.I + q.Z; hermitian=true); # Hermiticity check is skipped
 ```
 
-The function 'discard_eigen' truncates the result of eigendecomposition. It is frequently used in iterative diagonalization, a key step in NRG and DMRG. The first argument is the EigenResult object, and the second one is Nkeep, the number of kept eigenvalues. 
+The function `discard_eigen` splits an `EigenResult` into kept and discarded
+subspaces. The two optional positional arguments label their eigenvector bonds.
+Supply exactly one keyword: `Nkeep` for a target count, or `threshold` for an
+explicit eigenvalue boundary. Counts are global across sectors and count each
+multiplet once, regardless of its irrep degeneracy. Zero eigenvalues count normally.
 
-For now, 'Nkeep' lowest eigenvalues survive. More options (keep the highest ones, etc.) will be available in the near future.
+By default, `keep_low=true` retains the algebraically lowest real eigenvalues.
+Set `keep_low=false` to keep the highest. Threshold mode uses direct inclusive
+comparisons: `λ <= threshold` for low values and `λ >= threshold` for high values.
+The returned eigenvalue lists are ascending in both cases.
 
-The next two arguments are the itags of the kept and discarded eigenvalues tensor, similar to svd.
-
+```julia
+low, high = discard_eigen(a; threshold=0.0)
+high, low = discard_eigen(a; threshold=0.0, keep_low=false)
+high, rest = discard_eigen(a; Nkeep=4, keep_low=false, tol=0)
+```
 
 ![settag_eig.png](assets/settag_eig.png)
 
 ```@repl tensor_operations
-k, d = discard_eigen(a, 4, "kkk", "ddd")
+k, d = discard_eigen(a, "kkk", "ddd"; Nkeep=4)
 println("kept spaces: ")
 println(k.V)
 println("kept eigenvalues: ")
@@ -723,7 +789,14 @@ println(d.D)
 ```
 
 
-There is another argument 'tol', which helps keep degeneracy near the threshold. It looks at 'Nkeep * tol' more eigenvalues, then cuts where the maximal difference occurs.
+In count mode, `tol=0.1` expands the retained-count window up to
+`min(total, ceil(Nkeep * (1 + tol)))` and chooses the largest adjacent gap in the
+selection direction, with the smaller retained count winning ties. A window
+reaching the end keeps everything. Set `tol=0` for exactly `min(Nkeep, total)`
+entries; `Nkeep=0` always keeps nothing. In threshold mode, `tol` does not adjust
+the boundary. `tol` must be finite and nonnegative; thresholds must be finite.
+The old positional-count signatures and the `discard_eigen` keyword `hermitian`
+have been removed. Complex spectra are outside the current selection scope.
 
 ![tol_eig.png](assets/tol_eig.png)
 

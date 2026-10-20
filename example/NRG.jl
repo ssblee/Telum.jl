@@ -284,7 +284,7 @@ function NRG_IterDiag(H0::TLArray{T, 2, N},
             AK[itN] = A0
             # Do not update AD since there is no discarded states
             e = eigen(H0)
-            ek, ed = discard_eigen(e, Nkeep, "K,$si", "D,$si")
+            ek, ed = discard_eigen(e, "K,$si", "D,$si"; Nkeep=Nkeep)
             push!(EK, ek.eig_list)
             push!(ED, ed.eig_list)
 
@@ -311,7 +311,7 @@ function NRG_IterDiag(H0::TLArray{T, 2, N},
             e0 = e.eig_list[1][1] # Ground state energy
             E0[itN] = e0
 
-            ek, ed = discard_eigen(e, Nkeep, "K,$si", "D,$si"; tol=0.1)
+            ek, ed = discard_eigen(e, "K,$si", "D,$si"; Nkeep=Nkeep, tol=0.1)
 
             # Shift energies to make the lowest energy value be 0
             Hprev = ek.D - e0
