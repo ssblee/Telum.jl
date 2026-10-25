@@ -38,6 +38,41 @@ end
     @test !hasproperty(q3, :F123)
 end
 
+@testset "three-channel SO(3) local space" begin
+    opts = FermionSOptions(3, :U1, :SU2, :SO3)
+    symmetries, weights, lowering, mwirops = getSymmetryInfo(opts)
+    @test symmetries == (U1, SU{2}, SO{3})
+
+    basic = Telum.FermionS_basicops(3)
+    n1 = basic.NN[1, 1] + basic.NN[2, 1]
+    n3 = basic.NN[1, 3] + basic.NN[2, 3]
+    z = 2 * (n1 - n3)
+    minus = sqrt(2) * sum(
+        basic.FF[spin, to]' * basic.FF[spin, from]
+        for spin in 1:2 for (to, from) in ((2, 1), (3, 2)))
+    @test weights[3] == [(Int(value),) for value in diag(z)]
+    @test lowering[3][1] ≈ minus
+    @test LurCGT.comm(z, minus) ≈ -2 * minus
+    @test LurCGT.comm(minus', minus) ≈ z
+    @test mwirops[:F] == basic.FF[2, 3]
+    @test mwirops[:S] ≈ -sum(basic.SS[i]' for i in 1:3) / sqrt(2)
+
+    q = getLocalSpace(opts)
+    @test symm(q.I) == (U1, SU{2}, SO{3})
+    @test hasproperty(q, :F)
+    @test hasproperty(q, :S)
+    @test Array(to_sparse_array(q.I)) ≈ Matrix{Float64}(I, 64, 64)
+    @test any(x -> !iszero(x), Array(to_sparse_array(q.F)))
+    @test any(x -> !iszero(x), Array(to_sparse_array(q.S)))
+
+    alias_q = getLocalSpace(FermionSOptions(3, :U1, :SU2, :SO))
+    @test symm(alias_q.I) == symm(q.I)
+    so_only = getLocalSpace(FermionSOptions(3, nothing, nothing, :SO3))
+    @test symm(so_only.I) == (SO{3},)
+    @test_throws ArgumentError getSymmetryInfo(FermionSOptions(3, :U1, :SU2, :SO4))
+    @test_throws ArgumentError getSymmetryInfo(FermionSOptions(2, :U1, :SU2, :SO3))
+end
+
 @testset "Fermion local space IROPs" begin
     q1 = getLocalSpace(FermionOptions(U1))
     @test hasproperty(q1, :F)

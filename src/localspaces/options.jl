@@ -122,8 +122,9 @@ channels, so `FermionSOptions(3, :U1, :SU2, :SU3)` is equivalent to
 - `spin_symm` – spin symmetries on selected channel groups.  Supported symbols
   are currently `:U1` and `:SU2`; `nothing` disables spin symmetry.
 - `channel_symm` – channel / flavor symmetry groups on selected channels.
-  Symbols of the form `:SU3`, `:SU4`, ... request the corresponding SU(N)
-  channel symmetry; `nothing` disables channel symmetry.
+  `:SU` uses the number of selected channels; `:SU3`, `:SU4`, ... specify it.
+  `:SO` and `:SO3` select SO(3) on exactly three ordered channels, with
+  doubled z weights `+2`, `0`, `-2`; `nothing` disables channel symmetry.
 """
 struct FermionSOptions <: LocalSpaceOptions
     nchannels   ::Int

@@ -169,31 +169,44 @@ function spin_symmops(opts::FermionSOptions, basic_ops)
     return weights, symms, lops
 end
 
-# For now, we only implement SU(N) channel symmetry
-# TODO: generalize to another channel symmetry
 """
     chan_symmops(opts::FermionSOptions, basic_ops)
 
 Build channel-symmetry data for each channel group in `opts.channel_symm`.
 
-The current implementation supports symbols of the form `:SU2`, `:SU3`, ...
-where the SU(N) rank must match the number of listed channels.  It returns the
-Dynkin-basis channel weights and adjacent channel-lowering operators.
+The current implementation supports `:SU`, `:SU2`, `:SU3`, ... with the SU(N)
+size matching the number of listed channels, and `:SO` or `:SO3` for exactly
+three channels. It returns channel weights and lowering operators in the
+corresponding symmetry convention.
 """
 function chan_symmops(opts::FermionSOptions, basic_ops)
     N = opts.nchannels; FF = basic_ops.FF
     weights, symms, lops = [], [], []
     for (ssymbol, channs) in opts.channel_symm
 
+        if ssymbol == :SO || ssymbol == :SO3
+            _check_channels(channs, opts.nchannels, "Channel symmetry $ssymbol")
+            length(channs) == 3 || throw(ArgumentError(
+                "Channel symmetry $ssymbol requires exactly three channels"))
+            a, b, c = channs
+            zvals = Int.(diag(2 * (basic_ops.NN[1, a] + basic_ops.NN[2, a] -
+                                     basic_ops.NN[1, c] - basic_ops.NN[2, c])))
+            lop = sqrt(2) * sum(FF[spin, to]' * FF[spin, from]
+                for spin in 1:2 for (to, from) in ((b, a), (c, b)))
+            push!(symms, SO{3})
+            push!(weights, [(z,) for z in zvals])
+            push!(lops, [lop])
+            continue
+        end
+
         # Get symmetry type and number of channels involved
         str = String(ssymbol)
-        if startswith(str, "SU")
-            num_part = str[3:end]
-            if isempty(num_part) N = length(channs)
-            else N = parse(Int, num_part) end
-            @assert N >= 2 && N == length(channs)
-            push!(symms, SU{N})
-        end
+        startswith(str, "SU") || throw(ArgumentError("Unsupported channel symmetry: $ssymbol"))
+        num_part = str[3:end]
+        if isempty(num_part) N = length(channs)
+        else N = parse(Int, num_part) end
+        @assert N >= 2 && N == length(channs)
+        push!(symms, SU{N})
 
         lop = Vector{SparseMatrixCSC{Float64, Int}}(undef, N-1)
         zvals = Vector{Vector{Int}}(undef, N-1)
@@ -298,7 +311,7 @@ function add_spin_irop!(mwirops::Dict{Symbol, SparseMatrixCSC{Float64, Int}},
 
     for (ssymbol, channs) in channel_groups
         _check_channels(channs, N, "Channel symmetry $ssymbol")
-        startswith(String(ssymbol), "SU") ||
+        (startswith(String(ssymbol), "SU") || ssymbol in (:SO, :SO3)) ||
             error("Unsupported channel symmetry for spin IROPs: $ssymbol")
 
         overlap_with_channel = intersect(channel_selected, channs)
@@ -417,7 +430,7 @@ function _split_annihilation_blocks_by_channel_symmetry(blocks, opts::FermionSOp
     channel_selected = Set{Int}()
 
     for (ssymbol, channs) in channel_groups
-        startswith(String(ssymbol), "SU") ||
+        (startswith(String(ssymbol), "SU") || ssymbol in (:SO, :SO3)) ||
             error("Unsupported channel symmetry for annihilation IROPs: $ssymbol")
         _check_channels(channs, N, "Channel symmetry $ssymbol")
 
